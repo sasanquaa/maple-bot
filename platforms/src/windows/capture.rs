@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::mem;
 use std::ptr;
@@ -7,9 +8,7 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Gdi::BI_BITFIELDS;
 use windows::Win32::Graphics::Gdi::BITMAPV4HEADER;
-use windows::Win32::Graphics::Gdi::HALFTONE;
-use windows::Win32::Graphics::Gdi::SetStretchBltMode;
-use windows::Win32::Graphics::Gdi::StretchBlt;
+use windows::Win32::Graphics::Gdi::BitBlt;
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, HBITMAP,
     HDC, ReleaseDC, SRCCOPY, SelectObject,
@@ -27,6 +26,34 @@ pub struct Frame {
 }
 
 #[derive(Clone, Debug)]
+pub struct DynamicCapture {
+    capture: RefCell<Capture>,
+}
+
+impl DynamicCapture {
+    pub fn new(handle: Handle) -> Result<Self, Error> {
+        Ok(Self {
+            capture: RefCell::new(Capture::new(handle, 1, 1)?),
+        })
+    }
+
+    pub fn grab(&self) -> Result<Frame, Error> {
+        let result = self.capture.borrow().grab();
+        if let Err(error) = &result {
+            match error {
+                Error::InvalidWindowSize(width, height) => {
+                    let capture = self.capture.borrow().clone().into_size(*width, *height)?;
+                    self.capture.replace(capture);
+                    return self.capture.borrow().grab();
+                }
+                _ => (),
+            };
+        }
+        result
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Capture {
     handle: Handle,
     dc: HDC,
@@ -38,16 +65,24 @@ pub struct Capture {
 }
 
 impl Capture {
-    pub fn new(
-        class: Option<&'static str>,
-        title: Option<&'static str>,
-        width: i32,
-        height: i32,
-    ) -> Result<Self, Error> {
-        let handle = Handle::new(class, title)?;
+    pub fn new(handle: Handle, width: i32, height: i32) -> Result<Self, Error> {
         let dc = create_dc()?;
-        let (bm, bm_buf) = create_bitmap(dc, width, height)?;
-        let bm_size = width as usize * height as usize * 4;
+        let (bm, bm_buf, bm_size) = create_bitmap(dc, width, height)?;
+        Ok(Self {
+            handle,
+            dc,
+            bm,
+            bm_width: width,
+            bm_height: height,
+            bm_size,
+            bm_buf,
+        })
+    }
+
+    fn into_size(self, width: i32, height: i32) -> Result<Self, Error> {
+        let handle = self.handle.clone();
+        let dc = create_dc()?;
+        let (bm, bm_buf, bm_size) = create_bitmap(dc, width, height)?;
         Ok(Self {
             handle,
             dc,
@@ -64,19 +99,22 @@ impl Capture {
         let handle_dc = get_dc(&self.handle, handle)?;
         let rect = get_rect(handle);
         if rect.is_err() {
-            unsafe {
-                let _ = ReleaseDC(handle.into(), handle_dc);
-            }
+            let _ = unsafe { ReleaseDC(handle.into(), handle_dc) };
             return Err(rect.unwrap_err());
         }
         let rect = rect.expect("unexpected get_rect error");
+        let width = rect.right - rect.left;
+        let height = rect.bottom - rect.top;
+        if width != self.bm_width || height != self.bm_height {
+            return Err(Error::InvalidWindowSize(width, height));
+        }
         let result = unsafe {
             let obj = SelectObject(self.dc, self.bm.into());
             if obj.is_invalid() {
                 let _ = ReleaseDC(handle.into(), handle_dc);
                 return Err(Error::from_last_win_error());
             }
-            let result = StretchBlt(
+            let result = BitBlt(
                 self.dc,
                 0,
                 0,
@@ -85,11 +123,11 @@ impl Capture {
                 handle_dc.into(),
                 rect.left,
                 rect.top,
-                rect.right - rect.left,
-                rect.bottom - rect.top,
                 SRCCOPY,
-            )
-            .ok();
+            );
+            if cfg!(debug_assertions) {
+                println!("grab(): {:?}", rect);
+            }
             let _ = SelectObject(self.dc, obj);
             let _ = ReleaseDC(handle.into(), handle_dc);
             result
@@ -137,16 +175,11 @@ fn create_dc() -> Result<HDC, Error> {
     if dc.is_invalid() {
         return Err(unsafe { Error::from_last_win_error() });
     }
-    if unsafe { SetStretchBltMode(dc, HALFTONE) } == 0 {
-        unsafe {
-            let _ = DeleteDC(dc);
-        }
-        return Err(unsafe { Error::from_last_win_error() });
-    }
     Ok(dc)
 }
 
-fn create_bitmap(dc: HDC, width: i32, height: i32) -> Result<(HBITMAP, *const u8), Error> {
+fn create_bitmap(dc: HDC, width: i32, height: i32) -> Result<(HBITMAP, *const u8, usize), Error> {
+    let size = width as usize * height as usize * 4;
     let mut buffer = ptr::null_mut::<c_void>();
     let mut info = BITMAPV4HEADER::default();
     info.bV4Size = mem::size_of::<BITMAPV4HEADER>() as u32;
@@ -169,5 +202,5 @@ fn create_bitmap(dc: HDC, width: i32, height: i32) -> Result<(HBITMAP, *const u8
             0,
         )?
     };
-    return Ok((bitmap, buffer.cast()));
+    return Ok((bitmap, buffer.cast(), size));
 }

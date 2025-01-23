@@ -7,7 +7,7 @@ use windows::Win32::{
 
 use super::error::Error;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Handle {
     class: Option<&'static str>,
     title: Option<&'static str>,
@@ -26,14 +26,14 @@ impl Handle {
         })
     }
 
-    pub fn to_inner(&self) -> Result<HWND, Error> {
+    pub(crate) fn to_inner(&self) -> Result<HWND, Error> {
         if self.inner.get().is_invalid() {
             self.inner.set(self.query_handle()?);
         }
         Ok(self.inner.get())
     }
 
-    pub fn reset_inner(&self) {
+    pub(crate) fn reset_inner(&self) {
         self.inner.set(HWND::default());
     }
 

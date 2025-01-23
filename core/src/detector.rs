@@ -2,23 +2,17 @@ use std::sync::LazyLock;
 
 use opencv::{
     core::{
-        Mat, MatTrait, MatTraitConst, Point, Range, Scalar, Vec3b, Vector, add_weighted_def,
-        min_max_loc, no_array,
+        Mat, MatTrait, MatTraitConst, Point, Range, Vector, add_weighted_def, min_max_loc, no_array,
     },
-    highgui::{imshow, wait_key},
     imgcodecs::{self, IMREAD_GRAYSCALE},
-    imgproc::{
-        COLOR_BGR2GRAY, LINE_8, TM_CCOEFF_NORMED, cvt_color_def, match_template_def,
-        rectangle_points,
-    },
+    imgproc::{COLOR_BGR2GRAY, TM_CCOEFF_NORMED, cvt_color_def, match_template_def},
 };
-use platforms::windows::capture::Frame;
 
 use crate::error::Error;
 
 static MINIMAP_TOP_LEFT: LazyLock<Mat> = LazyLock::new(|| {
     imgcodecs::imdecode(
-        include_bytes!("..\\resources\\minimap_top_left.png"),
+        include_bytes!("..\\resources\\minimap_top_left_3.png"),
         IMREAD_GRAYSCALE,
     )
     .unwrap()
@@ -26,7 +20,7 @@ static MINIMAP_TOP_LEFT: LazyLock<Mat> = LazyLock::new(|| {
 
 static MINIMAP_BOTTOM_RIGHT: LazyLock<Mat> = LazyLock::new(|| {
     imgcodecs::imdecode(
-        include_bytes!("..\\resources\\minimap_bottom_right.png"),
+        include_bytes!("..\\resources\\minimap_bottom_right_3.png"),
         IMREAD_GRAYSCALE,
     )
     .unwrap()
@@ -40,20 +34,11 @@ static PLAYER: LazyLock<Mat> = LazyLock::new(|| {
     .unwrap()
 });
 
-fn to_ranges(minimap: (Point, Point)) -> Result<Vector<Range>, Error> {
-    let mut vec = Vector::new();
-    let rows = Range::new(minimap.0.y, minimap.1.y)?;
-    let cols = Range::new(minimap.0.x, minimap.1.x)?;
-    vec.push(rows);
-    vec.push(cols);
-    Ok(vec)
-}
-
-pub fn detect_player(frame: &Frame, minimap: (Point, Point)) -> Result<(Point, Point), Error> {
+pub fn detect_player(mat: &Mat, minimap: (Point, Point)) -> Result<(Point, Point), Error> {
     let template = &*PLAYER;
     let ranges = to_ranges(minimap)?;
-    let mut mat = with_contrast(to_grayscale(frame)?)?;
-    let mut sub_mat = mat.ranges_mut(&ranges)?;
+    let mat = to_grayscale(mat, Some(1.5), Some(-100.))?;
+    let sub_mat = mat.ranges(&ranges)?;
     let mut result = Mat::default();
     let mut score = 0f64;
     let mut top_left = Point::default();
@@ -68,29 +53,20 @@ pub fn detect_player(frame: &Frame, minimap: (Point, Point)) -> Result<(Point, P
         &no_array(),
     )?;
 
+    let top_left = top_left + minimap.0;
     let bottom_right = top_left + Point::from_size(template.size().unwrap());
-    let _ = rectangle_points(
-        &mut sub_mat,
-        top_left,
-        bottom_right,
-        Scalar::from_array([255., 0., 0., 255.]),
-        2,
-        LINE_8,
-        0,
-    )
-    .unwrap();
-    imshow("hmm", &sub_mat);
-    wait_key(0);
-    println!("{:?}", score);
-    // if score >= 0.88 {
-    Ok((top_left + minimap.0, bottom_right + minimap.0))
-    // } else {
-    //     Err(Error::PlayerNotFound)
-    // }
+    if cfg!(debug_assertions) {
+        println!("Player: {:?} - {:?} -> {}", top_left, bottom_right, score);
+    }
+    if score >= 0.80 {
+        Ok((top_left, bottom_right))
+    } else {
+        Err(Error::PlayerNotFound)
+    }
 }
 
-pub fn detect_minimap(frame: &Frame) -> Result<(Point, Point), Error> {
-    let mat = with_contrast(to_grayscale(frame)?)?;
+pub fn detect_minimap(mat: &Mat) -> Result<(Point, Point), Error> {
+    let mat = to_grayscale(mat, Some(1.5), Some(-80.))?;
     let top_left_template = &*MINIMAP_TOP_LEFT;
     let bottom_right_template = &*MINIMAP_BOTTOM_RIGHT;
     let bottom_right_size = bottom_right_template.size().unwrap();
@@ -133,34 +109,47 @@ pub fn detect_minimap(frame: &Frame) -> Result<(Point, Point), Error> {
     let score = (top_left_score + bottom_right_score) / 2.;
     if cfg!(debug_assertions) {
         println!(
-            "{:?} / {} - {:?} / {} -> {}",
+            "Minimap: {:?} / {} - {:?} / {} -> {}",
             top_left, top_left_score, bottom_right, bottom_right_score, score
         );
     }
 
-    // if score >= 0.88 {
-    Ok((top_left, bottom_right + Point::from_size(bottom_right_size)))
-    // } else {
-    //     Err(Error::MinimapNotFound)
-    // }
+    if score >= 0.8 {
+        Ok((top_left, bottom_right + Point::from_size(bottom_right_size)))
+    } else {
+        Err(Error::MinimapNotFound)
+    }
 }
 
-fn with_contrast(gray_mat: Mat) -> Result<Mat, Error> {
-    let mut mat = Mat::default();
-    add_weighted_def(&gray_mat, 1.5, &gray_mat, 0., -40., &mut mat)?;
-    Ok(mat)
+fn to_ranges(minimap: (Point, Point)) -> Result<Vector<Range>, Error> {
+    let mut vec = Vector::new();
+    let rows = Range::new(minimap.0.y, minimap.1.y)?;
+    let cols = Range::new(minimap.0.x, minimap.1.x)?;
+    vec.push(rows);
+    vec.push(cols);
+    Ok(vec)
 }
 
-fn to_grayscale(frame: &Frame) -> Result<Mat, Error> {
-    let sizes = [frame.height, frame.width];
-    let data = frame
-        .data
-        .iter()
-        .array_chunks::<4>()
-        .map(|chunk| Vec3b::from_array([*chunk[0], *chunk[1], *chunk[2]]))
-        .collect::<Vec<_>>();
-    let mat = Mat::new_nd_with_data(&sizes, data.as_slice())?;
+pub fn to_grayscale(
+    mat: &Mat,
+    contrast: Option<f64>,
+    brightness: Option<f64>,
+) -> Result<Mat, Error> {
     let mut gray_mat = Mat::default();
-    cvt_color_def(&mat, &mut gray_mat, COLOR_BGR2GRAY)?;
+    cvt_color_def(mat, &mut gray_mat, COLOR_BGR2GRAY)?;
+    if contrast.is_some() || brightness.is_some() {
+        let mut contrast_mat = Mat::default();
+        let contrast = contrast.unwrap_or(1.);
+        let brightness = brightness.unwrap_or(0.);
+        add_weighted_def(
+            &gray_mat,
+            contrast,
+            &gray_mat,
+            0.,
+            brightness,
+            &mut contrast_mat,
+        )?;
+        gray_mat = contrast_mat;
+    }
     Ok(gray_mat)
 }

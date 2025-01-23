@@ -6,6 +6,8 @@ use windows::{Win32::Foundation::GetLastError, core::HRESULT};
 pub enum Error {
     #[error("at least either class or title must be provided")]
     InvalidHandle,
+    #[error("the window size `{0} {1}` does not match provided size")]
+    InvalidWindowSize(i32, i32),
     #[error("window matching provided class and title cannot be found")]
     WindowNotFound,
     #[error("win32 API failed: `{0}`")]

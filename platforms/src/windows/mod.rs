@@ -1,9 +1,9 @@
 pub mod capture;
 
-mod handle;
+pub mod handle;
 
 mod string;
 
-mod keys;
+pub mod keys;
 
 pub mod error;
