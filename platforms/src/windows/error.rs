@@ -1,0 +1,19 @@
+use thiserror::Error;
+
+use windows::{Win32::Foundation::GetLastError, core::HRESULT};
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("at least either class or title must be provided")]
+    InvalidHandle,
+    #[error("window matching provided class and title cannot be found")]
+    WindowNotFound,
+    #[error("win32 API failed: `{0}`")]
+    Win32(#[from] windows::core::Error),
+}
+
+impl Error {
+    pub unsafe fn from_last_win_error() -> Error {
+        Error::Win32(HRESULT::from(unsafe { GetLastError() }).into())
+    }
+}
