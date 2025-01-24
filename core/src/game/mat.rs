@@ -1,4 +1,9 @@
-use opencv::core::{CV_8UC4, Mat};
+use std::ops::{Deref, DerefMut};
+
+use opencv::{
+    boxed_ref::BoxedRef,
+    core::{_InputArray, CV_8UC4, Mat, ToInputArray},
+};
 use platforms::windows::capture::Frame;
 
 #[derive(Debug)]
@@ -21,12 +26,25 @@ impl OwnedMat {
         .expect("failed to convert Frame to Mat");
         Self { mat, data }
     }
+}
 
-    pub fn get(&self) -> &Mat {
+impl ToInputArray for OwnedMat {
+    fn input_array(&self) -> opencv::Result<BoxedRef<_InputArray>> {
+        self.mat.input_array()
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Deref for OwnedMat {
+    type Target = Mat;
+    fn deref(&self) -> &Self::Target {
         &self.mat
     }
+}
 
-    pub fn get_mut(&mut self) -> &mut Mat {
+#[cfg(debug_assertions)]
+impl DerefMut for OwnedMat {
+    fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.mat
     }
 }

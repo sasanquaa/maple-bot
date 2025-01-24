@@ -10,7 +10,7 @@ pub enum Error {
     InvalidWindowSize(i32, i32),
     #[error("window matching provided class and title cannot be found")]
     WindowNotFound,
-    #[error("win32 API failed: `{0}`")]
+    #[error("window matching provided class and title cannot be found")]
     Win32(#[from] windows::core::Error),
 }
 

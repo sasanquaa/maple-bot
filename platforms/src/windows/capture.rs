@@ -125,9 +125,6 @@ impl Capture {
                 rect.top,
                 SRCCOPY,
             );
-            if cfg!(debug_assertions) {
-                println!("grab(): {:?}", rect);
-            }
             let _ = SelectObject(self.dc, obj);
             let _ = ReleaseDC(handle.into(), handle_dc);
             result
