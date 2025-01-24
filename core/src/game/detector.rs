@@ -2,8 +2,8 @@ use std::sync::LazyLock;
 
 use opencv::{
     core::{
-        Mat, MatTraitConst, NORM_MINMAX, Point, Range, Size, ToInputArray, Vector,
-        add_weighted_def, min_max_loc, no_array, normalize,
+        Mat, MatTraitConst, Point, Range, Rect, Size, ToInputArray, Vector, add_weighted_def,
+        min_max_loc, no_array,
     },
     imgcodecs::{self, IMREAD_GRAYSCALE},
     imgproc::{COLOR_BGR2GRAY, TM_CCOEFF_NORMED, cvt_color_def, match_template_def},
@@ -43,10 +43,7 @@ pub fn minimap_bottom_right_template_size() -> Size {
         .expect("failed to retrieve minimap template size")
 }
 
-pub fn detect_player(
-    grayscale: &impl ToInputArray,
-    threshold: f64,
-) -> Result<(Point, Point), Error> {
+pub fn detect_player(grayscale: &impl ToInputArray, threshold: f64) -> Result<Rect, Error> {
     let template = &*PLAYER;
     let mut result = Mat::default();
     let mut score = 0f64;
@@ -67,16 +64,13 @@ pub fn detect_player(
         println!("player detection: {:?} - {:?} -> {}", tl, br, score);
     }
     if score >= threshold {
-        Ok((tl, br))
+        Ok(Rect::from_points(tl, br))
     } else {
         Err(Error::PlayerNotFound)
     }
 }
 
-pub fn detect_minimap(
-    grayscale: &impl ToInputArray,
-    threshold: f64,
-) -> Result<(Point, Point), Error> {
+pub fn detect_minimap(grayscale: &impl ToInputArray, threshold: f64) -> Result<Rect, Error> {
     let tl_template = &*MINIMAP_TOP_LEFT;
     let br_template = &*MINIMAP_BOTTOM_RIGHT;
     let br_size = br_template.size().unwrap();
@@ -115,16 +109,16 @@ pub fn detect_minimap(
     }
 
     if score >= threshold {
-        Ok((tl, br + Point::from_size(br_size)))
+        Ok(Rect::from_points(tl, br + Point::from_size(br_size)))
     } else {
         Err(Error::MinimapNotFound)
     }
 }
 
-pub fn to_ranges(pos: &(Point, Point)) -> Result<Vector<Range>, Error> {
+pub fn to_ranges(rect: &Rect) -> Result<Vector<Range>, Error> {
     let mut vec = Vector::new();
-    let rows = Range::new(pos.0.y, pos.1.y)?;
-    let cols = Range::new(pos.0.x, pos.1.x)?;
+    let rows = Range::new(rect.tl().y, rect.br().y)?;
+    let cols = Range::new(rect.tl().x, rect.br().x)?;
     vec.push(rows);
     vec.push(cols);
     Ok(vec)

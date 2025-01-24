@@ -1,7 +1,7 @@
 #![feature(str_from_raw_parts)]
 #![feature(iter_array_chunks)]
 
-use game::state::{Context, update_loop};
+use game::state::update_loop;
 
 mod error;
 mod game;
