@@ -25,7 +25,7 @@ pub struct Frame {
     pub data: Vec<u8>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct DynamicCapture {
     capture: RefCell<Capture>,
 }
@@ -42,8 +42,8 @@ impl DynamicCapture {
         if let Err(error) = &result {
             match error {
                 Error::InvalidWindowSize(width, height) => {
-                    let capture = self.capture.borrow().clone().into_size(*width, *height)?;
-                    self.capture.replace(capture);
+                    let capture = Capture::new_from(&self.capture.borrow(), *width, *height)?;
+                    let _ = self.capture.replace(capture);
                     return self.capture.borrow().grab();
                 }
                 _ => (),
@@ -53,7 +53,7 @@ impl DynamicCapture {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Capture {
     handle: Handle,
     dc: HDC,
@@ -79,8 +79,8 @@ impl Capture {
         })
     }
 
-    fn into_size(self, width: i32, height: i32) -> Result<Self, Error> {
-        let handle = self.handle.clone();
+    fn new_from(from: &Capture, width: i32, height: i32) -> Result<Self, Error> {
+        let handle = from.handle.clone();
         let dc = create_dc()?;
         let (bm, bm_buf, bm_size) = create_bitmap(dc, width, height)?;
         Ok(Self {

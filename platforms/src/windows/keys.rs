@@ -5,8 +5,8 @@ use windows::Win32::{
     UI::{
         Input::KeyboardAndMouse::{
             INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
-            KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW, SendInput, VIRTUAL_KEY, VK_LEFT,
-            VK_RIGHT, VK_SPACE,
+            KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW, SendInput, VIRTUAL_KEY, VK_C,
+            VK_DOWN, VK_F, VK_LEFT, VK_RIGHT, VK_SPACE,
         },
         WindowsAndMessaging::{GetForegroundWindow, PostMessageW, WM_KEYDOWN, WM_KEYUP},
     },
@@ -14,7 +14,7 @@ use windows::Win32::{
 
 use super::{error::Error, handle::Handle};
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Keys {
     handle: Handle,
     input_key_down: Cell<u128>,
@@ -23,9 +23,11 @@ pub struct Keys {
 #[derive(Clone, Copy, Debug)]
 pub enum KeyKind {
     LEFT,
+    DOWN,
     RIGHT,
     SPACE,
     F,
+    C,
 }
 
 impl Keys {
@@ -37,16 +39,16 @@ impl Keys {
     }
 
     pub fn send(&self, kind: KeyKind) -> Result<(), Error> {
-        self.send_key_up(kind)?;
-        self.send_key_down(kind)?;
+        self.send_down(kind)?;
+        self.send_up(kind)?;
         Ok(())
     }
 
-    pub fn send_key_up(&self, kind: KeyKind) -> Result<(), Error> {
+    pub fn send_up(&self, kind: KeyKind) -> Result<(), Error> {
         self.send_post_or_input(kind, true)
     }
 
-    pub fn send_key_down(&self, kind: KeyKind) -> Result<(), Error> {
+    pub fn send_down(&self, kind: KeyKind) -> Result<(), Error> {
         self.send_post_or_input(kind, false)
     }
 
@@ -54,8 +56,12 @@ impl Keys {
         let key = to_vkey(kind);
         let (scan_code, is_extended) = to_scan_code(key);
         match kind {
-            KeyKind::LEFT | KeyKind::RIGHT => self.send_input(key, scan_code, is_extended, is_up),
-            KeyKind::SPACE | KeyKind::F => self.send_post(key, scan_code, is_extended, is_up),
+            KeyKind::LEFT | KeyKind::RIGHT | KeyKind::DOWN => {
+                self.send_input(key, scan_code, is_extended, is_up)
+            }
+            KeyKind::SPACE | KeyKind::F | KeyKind::C => {
+                self.send_post(key, scan_code, is_extended, is_up)
+            }
         }
     }
 
@@ -79,22 +85,18 @@ impl Keys {
         is_extended: bool,
         is_up: bool,
     ) -> Result<(), Error> {
-        let foreground = unsafe { GetForegroundWindow() };
+        let handle_fg = unsafe { GetForegroundWindow() };
         let handle = self.handle.to_inner()?;
-        if foreground.is_invalid() || foreground != handle {
+        if handle_fg.is_invalid() || handle_fg != handle {
             return Err(Error::KeyNotSent);
         }
-        let input = to_input(key, scan_code, is_extended, is_up);
-        let key_down = self.input_key_down.get();
-        let key_down_mask = 1u128 << key.0;
-        let is_down = !is_up;
-        let was_down = (key_down & key_down_mask) != 0;
-        if is_down && was_down {
+        if !is_up && was_key_down(key, self.input_key_down.get()) {
             return Err(Error::KeyNotSent);
         } else {
             self.input_key_down
-                .set((key_down & !key_down_mask) | ((is_down as u128) << key.0));
+                .set(set_key_down(key, self.input_key_down.get(), is_up));
         }
+        let input = to_input(key, scan_code, is_extended, is_up);
         let result = unsafe { SendInput(&input, size_of::<INPUT>() as i32) };
         // could be UIPI
         if result == 0 {
@@ -105,12 +107,22 @@ impl Keys {
     }
 }
 
+fn was_key_down(key: VIRTUAL_KEY, key_down: u128) -> bool {
+    (key_down & (1u128 << key.0)) != 0
+}
+
+fn set_key_down(key: VIRTUAL_KEY, key_down: u128, is_up: bool) -> u128 {
+    (key_down & !(1u128 << key.0)) | (!is_up as u128) << key.0
+}
+
 fn to_vkey(kind: KeyKind) -> VIRTUAL_KEY {
     match kind {
         KeyKind::LEFT => VK_LEFT,
         KeyKind::RIGHT => VK_RIGHT,
+        KeyKind::DOWN => VK_DOWN,
         KeyKind::SPACE => VK_SPACE,
-        KeyKind::F => VIRTUAL_KEY(0x46),
+        KeyKind::F => VK_F,
+        KeyKind::C => VK_C,
     }
 }
 

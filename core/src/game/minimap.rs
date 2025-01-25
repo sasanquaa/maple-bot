@@ -1,3 +1,8 @@
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+};
+
 use opencv::{
     core::{MatTraitConst, Point, Rect},
     prelude::Mat,
@@ -19,15 +24,18 @@ pub struct Anchors {
     br: (Point, u8),
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct MinimapIdle {
-    pub anchors: Anchors,
+    anchors: Anchors,
     pub rect: Rect,
 }
 
+#[derive(Debug)]
 pub struct MinimapChanging {
     anchors: Anchors,
 }
 
+#[derive(Debug)]
 pub enum MinimapState {
     Idle(MinimapIdle),
     Detecting,
@@ -63,7 +71,8 @@ impl UpdateState for MinimapState {
                 }
                 MinimapState::Idle(MinimapIdle { anchors, rect })
             }
-            MinimapState::Idle(MinimapIdle { anchors, rect }) => {
+            MinimapState::Idle(idle) => {
+                let MinimapIdle { anchors, rect } = idle;
                 let tl_pixel = pixel_at(grayscale, anchors.tl.0);
                 let br_pixel = pixel_at(grayscale, anchors.br.0);
                 if tl_pixel != anchors.tl.1 && br_pixel != anchors.br.1 {
@@ -85,17 +94,14 @@ impl UpdateState for MinimapState {
                             let br_diff = br_pixel as i32 - anchors.br.1 as i32;
                             if tl_diff < 0 && br_diff < 0 {
                                 return MinimapState::Changing(MinimapChanging {
-                                    anchors: anchors.clone(),
+                                    anchors: *anchors,
                                 });
                             }
                         }
                         Err(_) => return MinimapState::Detecting, // UI block
                     };
                 }
-                MinimapState::Idle(MinimapIdle {
-                    anchors: anchors.clone(),
-                    rect: rect.clone(),
-                })
+                MinimapState::Idle(*idle)
             }
             MinimapState::Changing(MinimapChanging { anchors }) => {
                 let tl_pixel = pixel_at(grayscale, anchors.tl.0);

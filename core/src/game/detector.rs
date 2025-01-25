@@ -61,7 +61,7 @@ pub fn detect_player(grayscale: &impl ToInputArray, threshold: f64) -> Result<Re
 
     let br = tl + Point::from_size(template.size().unwrap());
     if cfg!(debug_assertions) {
-        println!("player detection: {:?} - {:?} -> {}", tl, br, score);
+        // println!("player detection: {:?} - {:?} -> {}", tl, br, score);
     }
     if score >= threshold {
         Ok(Rect::from_points(tl, br))
