@@ -1,28 +1,32 @@
+use std::cell::LazyCell;
+
 use opencv::{
-    core::{MatTraitConst, Point},
+    core::{MatTraitConst, Point, Rect},
     prelude::Mat,
 };
 use platforms::windows::keys::KeyKind;
 
 use super::{
-    detector::{detect_player, to_ranges},
+    detect::detect_player,
     minimap::MinimapState,
     state::{Context, UpdateState},
 };
 
-const PLAYER_DETECTION_THRESHOLD: f64 = 0.8;
+const PLAYER_DETECTION_THRESHOLD: f64 = 0.4;
 const PLAYER_MOVE_THRESHOLD: i32 = 2;
 const PLAYER_DOUBLE_JUMP_THRESHOLD: i32 = 20;
 const PLAYER_GRAPPLING_THRESHOLD: i32 = 25;
 const PLAYER_UP_JUMP_THRESHOLD: i32 = 10;
 const PLAYER_JUMP_THRESHOLD: i32 = 7;
 const PLAYER_MOVEMENT_TIMEOUT: u32 = 3;
-const PLAYER_GRAPPLING_TIMEOUT: u32 = 30;
+const PLAYER_GRAPPLING_TIMEOUT: u32 = 60;
+const PLAYER_GRAPPLING_STOPPING_TIMEOUT: u32 = 5;
 const PLAYER_UP_JUMP_TIMEOUT: u32 = 7;
 
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerIdle {
-    pos: Point,
+    pub bbox: Rect,
+    pub pos: Point,
     pos_dest: Option<Point>,
 }
 
@@ -40,6 +44,11 @@ pub struct PlayerMoving {
     pos_dest: Point,
     timeout: u32,
 }
+#[derive(Clone, Copy, Debug)]
+pub struct PlayerGrappling {
+    moving: PlayerMoving,
+    stopping: bool,
+}
 
 #[derive(Debug)]
 pub enum PlayerState {
@@ -47,7 +56,7 @@ pub enum PlayerState {
     Moving(PlayerMoving),
     HorizontalMoving(PlayerMoving),
     VerticalMoving(PlayerMoving),
-    Grappling(PlayerMoving),
+    Grappling(PlayerGrappling),
     Jumping(PlayerMoving),
     UpJumping(PlayerMoving),
     Falling(PlayerMoving),
@@ -55,14 +64,15 @@ pub enum PlayerState {
 }
 
 impl UpdateState for PlayerState {
-    fn update(&self, context: &Context, grayscale: &Mat) -> Self {
-        let Some(cur_pos) = update_pos(context, grayscale) else {
+    fn update(&self, context: &Context, mat: &Mat) -> Self {
+        let Some((cur_pos, bbox)) = update_pos(context, mat) else {
             return PlayerState::Detecting;
         };
         // TODO: detect if a point is reachable after number of retries?
         // TODO: add unit tests
         match self {
             PlayerState::Detecting => PlayerState::Idle(PlayerIdle {
+                bbox,
                 pos: cur_pos,
                 pos_dest: None,
             }),
@@ -75,7 +85,7 @@ impl UpdateState for PlayerState {
                         timeout: 0,
                     })
                 })
-                .unwrap_or_else(|| PlayerState::Idle(update_idle(idle, cur_pos))),
+                .unwrap_or_else(|| PlayerState::Idle(update_idle(idle, cur_pos, bbox))),
             PlayerState::Moving(moving) => {
                 let _ = context.keys.send_up(KeyKind::RIGHT);
                 let _ = context.keys.send_up(KeyKind::LEFT);
@@ -96,6 +106,7 @@ impl UpdateState for PlayerState {
                             );
                         }
                         PlayerState::Idle(PlayerIdle {
+                            bbox,
                             pos: cur_pos,
                             pos_dest: None,
                         })
@@ -162,7 +173,10 @@ impl UpdateState for PlayerState {
                     // TODO: fallback to grappling if up jump fails
                     (y, d) if y > 0 && d >= PLAYER_GRAPPLING_THRESHOLD => {
                         let _ = context.keys.send(KeyKind::F);
-                        return PlayerState::Grappling(update_moving(&moving, cur_pos, 0));
+                        return PlayerState::Grappling(PlayerGrappling {
+                            moving: update_moving(&moving, cur_pos, 0),
+                            stopping: false,
+                        });
                     }
                     (y, d) if y > 0 && d >= PLAYER_UP_JUMP_THRESHOLD => {
                         // TODO: Compound keys up jump
@@ -189,14 +203,37 @@ impl UpdateState for PlayerState {
                     PlayerState::VerticalMoving(moving)
                 }
             }
-            PlayerState::Grappling(moving) => update_vertical_state(
-                self,
-                context,
-                moving,
-                cur_pos,
-                moving.timeout,
-                PLAYER_GRAPPLING_TIMEOUT,
-            ),
+            PlayerState::Grappling(grappling) => {
+                let (distance, _) = y_distance_direction(&grappling.moving.pos_dest, &cur_pos);
+                if distance <= 2 && !grappling.stopping {
+                    let _ = context.keys.send(KeyKind::F);
+                    return PlayerState::Grappling(PlayerGrappling {
+                        moving: update_moving(&grappling.moving, cur_pos, 0),
+                        stopping: true,
+                    });
+                }
+                let timeout_max = if grappling.stopping {
+                    PLAYER_GRAPPLING_STOPPING_TIMEOUT
+                } else {
+                    PLAYER_GRAPPLING_TIMEOUT
+                };
+                let moving = update_moving_and_timeout(
+                    &grappling.moving,
+                    cur_pos,
+                    grappling.moving.timeout,
+                    false,
+                );
+                if moving.timeout >= timeout_max {
+                    return PlayerState::VerticalMoving(PlayerMoving {
+                        timeout: 0,
+                        ..moving
+                    });
+                }
+                PlayerState::Grappling(PlayerGrappling {
+                    moving,
+                    ..*grappling
+                })
+            }
             PlayerState::UpJumping(moving) => update_vertical_state(
                 self,
                 context,
@@ -276,11 +313,11 @@ fn update_vertical_state(
         });
     }
     match state {
-        PlayerState::Grappling(_) => PlayerState::Grappling(moving),
         PlayerState::UpJumping(_) => PlayerState::UpJumping(moving),
         PlayerState::Jumping(_) => PlayerState::Jumping(moving),
         PlayerState::Falling(_) => PlayerState::Falling(moving),
         PlayerState::Idle(_)
+        | PlayerState::Grappling(_)
         | PlayerState::Moving(_)
         | PlayerState::HorizontalMoving(_)
         | PlayerState::VerticalMoving(_)
@@ -289,8 +326,8 @@ fn update_vertical_state(
 }
 
 #[inline]
-fn update_idle(idle: &PlayerIdle, pos: Point) -> PlayerIdle {
-    PlayerIdle { pos, ..*idle }
+fn update_idle(idle: &PlayerIdle, pos: Point, bbox: Rect) -> PlayerIdle {
+    PlayerIdle { pos, bbox, ..*idle }
 }
 
 #[inline]
@@ -302,17 +339,20 @@ fn update_moving(moving: &PlayerMoving, pos: Point, timeout: u32) -> PlayerMovin
     }
 }
 
-fn update_pos(context: &Context, grayscale: &Mat) -> Option<Point> {
+fn update_pos(context: &Context, mat: &Mat) -> Option<(Point, Rect)> {
     let MinimapState::Idle(idle) = &context.minimap else {
         return None;
     };
-    let minimap_rect = idle.rect;
-    let vec = to_ranges(&minimap_rect).expect("unable to extract minimap rectangle");
-    let minimap = grayscale.ranges(&vec).expect("unable to extract minimap");
-    let Ok(rect) = detect_player(&minimap, PLAYER_DETECTION_THRESHOLD) else {
+    let minimap_bbox = idle.bbox;
+    let Ok(bbox) = detect_player(mat, &minimap_bbox, PLAYER_DETECTION_THRESHOLD) else {
         return None;
     };
-    let pos = (rect.tl() + rect.br()) / 2;
-    let pos = Point::new(pos.x, minimap_rect.height - pos.y);
-    Some(pos)
+    let tl = bbox.tl() - minimap_bbox.tl();
+    let br = bbox.br() - minimap_bbox.tl();
+    let pos = (tl + br) / 2;
+    let pos = Point::new(pos.x, minimap_bbox.height - pos.y);
+    if cfg!(debug_assertions) {
+        println!("player pos: {:?} / {:?}", pos, minimap_bbox);
+    }
+    Some((pos, bbox))
 }

@@ -5,5 +5,7 @@ edition = "2024"
 
 [dependencies]
 platforms = { workspace = true }
+ort = { version = "2.0.0-rc.9", features = ["cuda", "ndarray", "load-dynamic"] }
 opencv = "0.94.1"
+ndarray = "0.16.1"
 thiserror = "2"

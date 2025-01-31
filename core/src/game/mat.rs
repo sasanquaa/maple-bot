@@ -1,8 +1,8 @@
 use std::ops::{Deref, DerefMut};
 
 use opencv::{
-    boxed_ref::BoxedRef,
-    core::{_InputArray, CV_8UC4, Mat, ToInputArray},
+    boxed_ref::{BoxedRef, BoxedRefMut},
+    core::{_InputArray, _OutputArray, CV_8UC4, Mat, ToInputArray, ToOutputArray},
 };
 use platforms::windows::capture::Frame;
 
@@ -34,7 +34,12 @@ impl ToInputArray for OwnedMat {
     }
 }
 
-#[cfg(debug_assertions)]
+impl ToOutputArray for OwnedMat {
+    fn output_array(&mut self) -> opencv::Result<BoxedRefMut<_OutputArray>> {
+        self.mat.output_array()
+    }
+}
+
 impl Deref for OwnedMat {
     type Target = Mat;
     fn deref(&self) -> &Self::Target {
@@ -42,7 +47,6 @@ impl Deref for OwnedMat {
     }
 }
 
-#[cfg(debug_assertions)]
 impl DerefMut for OwnedMat {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.mat

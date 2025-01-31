@@ -2,7 +2,9 @@ use std::{cell::Cell, ffi::OsString, os::windows::ffi::OsStringExt, ptr, slice, 
 
 use windows::Win32::{
     Foundation::{BOOL, GetLastError, HWND, LPARAM},
-    UI::WindowsAndMessaging::{EnumWindows, GetClassNameW, GetWindowTextW},
+    UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId,
+    },
 };
 
 use super::error::Error;
@@ -11,7 +13,7 @@ use super::error::Error;
 pub struct Handle {
     class: Option<&'static str>,
     title: Option<&'static str>,
-    inner: Cell<HWND>,
+    inner: Cell<(HWND, u32)>,
 }
 
 impl Handle {
@@ -22,22 +24,36 @@ impl Handle {
         Ok(Handle {
             class,
             title,
-            inner: Cell::new(HWND::default()),
+            inner: Cell::new((HWND::default(), 0)),
         })
     }
 
     pub(crate) fn to_inner(&self) -> Result<HWND, Error> {
-        if self.inner.get().is_invalid() {
+        if self.inner.get().0.is_invalid() {
             self.inner.set(self.query_handle()?);
+        } else {
+            if !self.validate_handle() {
+                self.invalidate();
+                return Err(Error::WindowNotFound);
+            }
         }
-        Ok(self.inner.get())
+        Ok(self.inner.get().0)
     }
 
-    pub(crate) fn reset_inner(&self) {
-        self.inner.set(HWND::default());
+    #[inline(always)]
+    fn validate_handle(&self) -> bool {
+        let pid = 0u32;
+        let inner = self.inner.get();
+        let _ = unsafe { GetWindowThreadProcessId(inner.0, Some((&raw const pid).cast_mut())) };
+        pid == inner.1
     }
 
-    fn query_handle(&self) -> Result<HWND, Error> {
+    #[inline(always)]
+    fn invalidate(&self) {
+        self.inner.set((HWND::default(), 0));
+    }
+
+    fn query_handle(&self) -> Result<(HWND, u32), Error> {
         #[repr(C)]
         #[derive(Clone, Copy)]
         struct Params {
@@ -48,8 +64,10 @@ impl Handle {
             buf: *mut u16,
             buf_len: usize,
             handle_out: *mut HWND,
+            pid_out: *mut u32,
         }
         let mut handle = HWND::default();
+        let mut pid = 0u32;
         let mut buf = [0u16; 256];
         let params = Params {
             title: self.title.map(str::as_ptr).unwrap_or(ptr::null()),
@@ -59,6 +77,7 @@ impl Handle {
             buf: buf.as_mut_ptr(),
             buf_len: buf.len(),
             handle_out: &raw mut handle,
+            pid_out: &raw mut pid,
         };
 
         fn class_or_title_matched(
@@ -107,6 +126,7 @@ impl Handle {
 
             if class_matched && title_matched {
                 unsafe { ptr::write(params.handle_out, handle) };
+                unsafe { GetWindowThreadProcessId(handle, Some(params.pid_out)) };
                 return false.into();
             }
             true.into()
@@ -115,7 +135,7 @@ impl Handle {
         if handle.is_invalid() {
             Err(Error::WindowNotFound)
         } else {
-            Ok(handle)
+            Ok((handle, pid))
         }
     }
 }
