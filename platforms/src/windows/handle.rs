@@ -31,11 +31,9 @@ impl Handle {
     pub(crate) fn to_inner(&self) -> Result<HWND, Error> {
         if self.inner.get().0.is_invalid() {
             self.inner.set(self.query_handle()?);
-        } else {
-            if !self.validate_handle() {
-                self.invalidate();
-                return Err(Error::WindowNotFound);
-            }
+        } else if !self.validate_handle() {
+            self.invalidate();
+            return Err(Error::WindowNotFound);
         }
         Ok(self.inner.get().0)
     }

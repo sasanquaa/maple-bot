@@ -1,9 +1,5 @@
-use opencv::{core::Rect, prelude::Mat};
+use opencv::core::Rect;
 
-use super::{
-    detect::detect_erda_shower,
-    state::{Context, UpdateState},
-};
 
 #[derive(Debug)]
 pub enum SkillState {

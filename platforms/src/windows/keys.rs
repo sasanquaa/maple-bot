@@ -101,7 +101,7 @@ fn was_key_down(key: VIRTUAL_KEY, key_down: u128) -> bool {
 
 #[inline(always)]
 fn set_key_down(key: VIRTUAL_KEY, key_down: u128, is_up: bool) -> u128 {
-    (key_down & !(1u128 << key.0)) | (!is_up as u128) << key.0
+    (key_down & !(1u128 << key.0)) | ((!is_up as u128) << key.0)
 }
 
 #[inline(always)]
@@ -135,11 +135,11 @@ fn to_params(
     let is_extended = is_extended as u32;
     let was_down = was_down as u32;
     let scan_code = scan_code as u32;
-    let flags = scan_code << 16 | is_extended << 24;
+    let flags = (scan_code << 16) | (is_extended << 24);
     let flags = if is_up {
         0xC0000001 | flags
     } else {
-        0x00000001 | flags | was_down << 30
+        0x00000001 | flags | (was_down << 30)
     };
     (WPARAM(key.0 as usize), LPARAM(flags as isize))
 }

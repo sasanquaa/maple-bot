@@ -38,7 +38,6 @@ pub fn update_loop() -> Result<()> {
         };
         context.minimap = context.minimap.update(&context, &mat);
         context.player = context.player.update(&context, &mat);
-        println!("{:?}", context.player);
         // context.skill = context.skill.update(&context, &grayscale);
         draw_debug(&mut context, &mat);
         clock.tick();
@@ -53,82 +52,76 @@ fn draw_debug(context: &mut Context, mat: &Mat) {
 
     let mut mat = mat.clone();
 
-    match &context.minimap {
-        MinimapState::Idle(idle) => {
-            let rect = idle.bbox;
-            let _ = rectangle_points(
-                &mut mat,
-                rect.tl(),
-                rect.br(),
-                Scalar::from_array([255., 0., 0., 255.]),
-                1,
-                LINE_8,
-                0,
-            )
-            .unwrap();
-            let _ = rectangle_points(
-                &mut mat,
-                idle.bbox_name.tl(),
-                idle.bbox_name.br(),
-                Scalar::from_array([255., 0., 0., 255.]),
-                1,
-                LINE_8,
-                0,
-            )
-            .unwrap();
-        }
-        _ => (),
+    if let MinimapState::Idle(idle) = &context.minimap {
+        let rect = idle.bbox;
+        rectangle_points(
+            &mut mat,
+            rect.tl(),
+            rect.br(),
+            Scalar::from_array([255., 0., 0., 255.]),
+            1,
+            LINE_8,
+            0,
+        )
+        .unwrap();
+        rectangle_points(
+            &mut mat,
+            idle.bbox_name.tl(),
+            idle.bbox_name.br(),
+            Scalar::from_array([255., 0., 0., 255.]),
+            1,
+            LINE_8,
+            0,
+        )
+        .unwrap();
     }
 
-    match &mut context.player {
-        PlayerState::Idle(idle) => {
-            // 0.9098039, 0.54285717 -> 0.12109375, 0.60294116 -> 0.5234375, 0.27941176
-            let _ = rectangle_points(
-                &mut mat,
-                idle.bbox.tl(),
-                idle.bbox.br(),
-                Scalar::from_array([255., 0., 0., 255.]),
-                1,
-                LINE_8,
-                0,
-            )
-            .unwrap();
-            match unsafe { COUNTER } {
-                c if c == 0 => {
-                    // idle.move_to(Point2f::new(0.9098039, 0.54285717));
-                    // idle.move_to(Point::new(193, 65));
-                    idle.move_to(Point::new(223, 37));
-                }
-                c if c == 1 => {
-                    // idle.move_to(Point2f::new(0.12109375, 0.60294116));
-                    // idle.move_to(Point::new(183, 65));
-                    idle.move_to(Point::new(113, 32));
-                }
-                c if c == 2 => {
-                    // idle.move_to(Point2f::new(0.5234375, 0.27941176));
-                    // idle.move_to(Point::new(193, 22));
-                    idle.move_to(Point::new(22, 19));
-                }
-                // c if c == 3 => {
-                //     idle.move_to(Point::new(172, 22));
-                // }
-                // c if c == 4 => {
-                //     idle.move_to(Point::new(50, 65));
-                // }
-                // c if c == 5 => {
-                //     idle.move_to(Point::new(50, 36));
-                // }
-                // c if c == 6 => {
-                //     idle.move_to(Point::new(65, 22));
-                // }
-                _ => (),
+    if let PlayerState::Idle(idle) = &mut context.player {
+        // 0.9098039, 0.54285717 -> 0.12109375, 0.60294116 -> 0.5234375, 0.27941176
+        rectangle_points(
+            &mut mat,
+            idle.bbox.tl(),
+            idle.bbox.br(),
+            Scalar::from_array([255., 0., 0., 255.]),
+            1,
+            LINE_8,
+            0,
+        )
+        .unwrap();
+        match unsafe { COUNTER } {
+            c if c == 0 => {
+                // idle.move_to(Point2f::new(0.9098039, 0.54285717));
+                // idle.move_to(Point::new(193, 65));
+                idle.move_to(Point::new(223, 37));
             }
-            unsafe {
-                COUNTER += 1;
-                COUNTER = COUNTER % 3;
-            };
+            c if c == 1 => {
+                // idle.move_to(Point2f::new(0.12109375, 0.60294116));
+                // idle.move_to(Point::new(183, 65));
+                idle.move_to(Point::new(113, 32));
+            }
+            c if c == 2 => {
+                // idle.move_to(Point2f::new(0.5234375, 0.27941176));
+                // idle.move_to(Point::new(193, 22));
+                idle.move_to(Point::new(22, 19));
+            }
+            // c if c == 3 => {
+            //     idle.move_to(Point::new(172, 22));
+            // }
+            // c if c == 4 => {
+            //     idle.move_to(Point::new(50, 65));
+            // }
+            // c if c == 5 => {
+            //     idle.move_to(Point::new(50, 36));
+            // }
+            // c if c == 6 => {
+            //     idle.move_to(Point::new(65, 22));
+            // }
+            _ => (),
         }
-        _ => (),
+        unsafe {
+            COUNTER += 1;
+            COUNTER %= 3;
+        };
     }
     let _ = imshow("Debug", &mat);
     let _ = wait_key(1);

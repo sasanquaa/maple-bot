@@ -460,7 +460,7 @@ fn from_session_output_value<'a>(result: &SessionOutputs) -> Result<BoxedRef<'a,
 fn to_session_input_value(mat: &Mat) -> Result<SessionInputValue> {
     let shape = [1]
         .into_iter()
-        .chain(mat.mat_size().iter().map(|&dim| dim))
+        .chain(mat.mat_size().iter().copied())
         .chain([mat.channels()])
         .collect::<Vec<i32>>();
     let shape_n = (shape.len() - 1) as i32;
@@ -468,7 +468,7 @@ fn to_session_input_value(mat: &Mat) -> Result<SessionInputValue> {
         .into_iter()
         .chain(1..shape_n)
         .collect::<Vector<i32>>();
-    let mat = mat.reshape_nd(1, &shape.as_slice())?;
+    let mat = mat.reshape_nd(1, shape.as_slice())?;
     let mut mat_t = Mat::default();
     // TODO: how to consume mat_t into a Vec so that Tensor::from_array won't copy?
     transpose_nd(&mat, &order, &mut mat_t)?;

@@ -182,7 +182,7 @@ impl UpdateState for PlayerState {
                     {
                         let _ = context.keys.send(KeyKind::F);
                         return PlayerState::Grappling(PlayerGrappling {
-                            moving: update_moving(&moving, cur_pos, 0),
+                            moving: update_moving(moving, cur_pos, 0),
                             stopping: false,
                         });
                     }
@@ -192,20 +192,20 @@ impl UpdateState for PlayerState {
                         // return PlayerState::UpJumping(update_moving(&moving, cur_pos, 0));
                         let _ = context.keys.send(KeyKind::F);
                         return PlayerState::Grappling(PlayerGrappling {
-                            moving: update_moving(&moving, cur_pos, 0),
+                            moving: update_moving(moving, cur_pos, 0),
                             stopping: false,
                         });
                     }
                     (y, d) if y > 0 && d < PLAYER_JUMP_THRESHOLD => {
                         let _ = context.keys.send(KeyKind::SPACE);
-                        return PlayerState::Jumping(update_moving(&moving, cur_pos, 0));
+                        return PlayerState::Jumping(update_moving(moving, cur_pos, 0));
                     }
                     (y, _) if y < 0 => {
                         // this probably won't work if the platforms are far apart,
                         // which is weird to begin with and only happen in very rare place (e.g. Haven)
                         let _ = context.keys.send_down(KeyKind::DOWN);
                         let _ = context.keys.send(KeyKind::SPACE);
-                        return PlayerState::Falling(update_moving(&moving, cur_pos, 0));
+                        return PlayerState::Falling(update_moving(moving, cur_pos, 0));
                     }
                     _ => (),
                 }
@@ -302,8 +302,8 @@ fn update_moving_and_timeout(
         pos.y != moving.pos.y
     };
     let timeout = if moved { 0 } else { timeout + 1 };
-    let moving = update_moving(moving, pos, timeout);
-    moving
+    
+    update_moving(moving, pos, timeout)
 }
 
 #[inline]

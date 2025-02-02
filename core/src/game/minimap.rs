@@ -80,7 +80,7 @@ impl UpdateState for MinimapState {
 
 fn pixel_at(mat: &Mat, point: Point) -> Vec4b {
     *mat.at_pt::<Vec4b>(point)
-        .expect(format!("unable to read pixel at {:?}", point).as_str())
+        .unwrap_or_else(|_| panic!("unable to read pixel at {:?}", point))
 }
 
 fn anchor_at(mat: &Mat, offset: Point, size: usize, sign: i32) -> Option<(Point, Vec4b)> {

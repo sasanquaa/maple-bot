@@ -133,8 +133,8 @@ impl Capture {
                 self.dc.inner,
                 0,
                 0,
-                self.bm.width as i32,
-                self.bm.height as i32,
+                self.bm.width,
+                self.bm.height,
                 handle_dc.inner.into(),
                 rect.left,
                 rect.top,
@@ -158,7 +158,7 @@ impl Capture {
 #[inline(always)]
 fn get_rect(handle: HWND) -> Result<RECT, Error> {
     let mut rect = RECT::default();
-    let _ = unsafe { GetClientRect(handle, &raw mut rect) }?;
+    unsafe { GetClientRect(handle, &raw mut rect) }?;
     Ok(rect)
 }
 
@@ -203,11 +203,11 @@ fn create_bitmap(dc: HDC, width: i32, height: i32) -> Result<Bitmap, Error> {
             0,
         )?
     };
-    return Ok(Bitmap {
+    Ok(Bitmap {
         inner,
         width,
         height,
         size,
         buffer: buffer.cast(),
-    });
+    })
 }
