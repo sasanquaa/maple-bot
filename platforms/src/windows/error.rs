@@ -12,7 +12,7 @@ pub enum Error {
     KeyNotSent,
     #[error("window matching provided class and title cannot be found")]
     WindowNotFound,
-    #[error("window matching provided class and title cannot be found")]
+    #[error("win32 API error: {0}")]
     Win32(#[from] windows::core::Error),
 }
 

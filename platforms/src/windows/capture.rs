@@ -33,7 +33,7 @@ pub struct DynamicCapture {
 impl DynamicCapture {
     pub fn new(handle: Handle) -> Result<Self, Error> {
         Ok(Self {
-            capture: RefCell::new(Capture::new(handle, 1, 1)?),
+            capture: RefCell::new(Capture::new(handle, 1024, 768)?),
         })
     }
 
@@ -72,9 +72,7 @@ struct OwnedDeviceContext {
 
 impl Drop for OwnedDeviceContext {
     fn drop(&mut self) {
-        let _ = unsafe {
-            let _ = DeleteDC(self.inner);
-        };
+        let _ = unsafe { DeleteDC(self.inner) };
     }
 }
 
@@ -116,13 +114,16 @@ impl Capture {
 
     pub fn grab(&self) -> Result<Frame, Error> {
         let handle = self.handle.to_inner()?;
-        let handle_dc = get_dc(handle)?;
         let rect = get_rect(handle)?;
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
+        if width == 0 || height == 0 {
+            return Err(Error::WindowNotFound);
+        }
         if width != self.bm.width || height != self.bm.height {
             return Err(Error::InvalidWindowSize(width, height));
         }
+        let handle_dc = get_dc(handle)?;
         let result = unsafe {
             let obj = SelectObject(self.dc.inner, self.bm.inner.into());
             if obj.is_invalid() {

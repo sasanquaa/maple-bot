@@ -1,7 +1,7 @@
-use std::cell::LazyCell;
+use std::ops::Range;
 
 use opencv::{
-    core::{MatTraitConst, Point, Rect},
+    core::{Point, Rect},
     prelude::Mat,
 };
 use platforms::windows::keys::KeyKind;
@@ -17,6 +17,8 @@ const PLAYER_MOVE_THRESHOLD: i32 = 2;
 const PLAYER_DOUBLE_JUMP_THRESHOLD: i32 = 20;
 const PLAYER_GRAPPLING_THRESHOLD: i32 = 25;
 const PLAYER_UP_JUMP_THRESHOLD: i32 = 10;
+const PLAYER_JUMP_TO_UP_JUMP_RANGE_THRESHOLD: Range<i32> =
+    PLAYER_JUMP_THRESHOLD..PLAYER_UP_JUMP_THRESHOLD;
 const PLAYER_JUMP_THRESHOLD: i32 = 7;
 const PLAYER_MOVEMENT_TIMEOUT: u32 = 3;
 const PLAYER_GRAPPLING_TIMEOUT: u32 = 60;
@@ -79,6 +81,9 @@ impl UpdateState for PlayerState {
             PlayerState::Idle(idle) => idle
                 .pos_dest
                 .map(|pos_dest| {
+                    if cfg!(debug_assertions) {
+                        println!("player move to: {:?}", pos_dest);
+                    }
                     PlayerState::Moving(PlayerMoving {
                         pos: cur_pos,
                         pos_dest,
@@ -170,8 +175,11 @@ impl UpdateState for PlayerState {
                 // y > 0: cur_pos is below pos_dest
                 // y < 0: cur_pos is above of pos_dest
                 match (direction, y_distance) {
-                    // TODO: fallback to grappling if up jump fails
-                    (y, d) if y > 0 && d >= PLAYER_GRAPPLING_THRESHOLD => {
+                    (y, d)
+                        if y > 0
+                            && (d >= PLAYER_GRAPPLING_THRESHOLD
+                                || PLAYER_JUMP_TO_UP_JUMP_RANGE_THRESHOLD.contains(&d)) =>
+                    {
                         let _ = context.keys.send(KeyKind::F);
                         return PlayerState::Grappling(PlayerGrappling {
                             moving: update_moving(&moving, cur_pos, 0),
@@ -180,8 +188,13 @@ impl UpdateState for PlayerState {
                     }
                     (y, d) if y > 0 && d >= PLAYER_UP_JUMP_THRESHOLD => {
                         // TODO: Compound keys up jump
-                        let _ = context.keys.send(KeyKind::C);
-                        return PlayerState::UpJumping(update_moving(&moving, cur_pos, 0));
+                        // let _ = context.keys.send(KeyKind::C);
+                        // return PlayerState::UpJumping(update_moving(&moving, cur_pos, 0));
+                        let _ = context.keys.send(KeyKind::F);
+                        return PlayerState::Grappling(PlayerGrappling {
+                            moving: update_moving(&moving, cur_pos, 0),
+                            stopping: false,
+                        });
                     }
                     (y, d) if y > 0 && d < PLAYER_JUMP_THRESHOLD => {
                         let _ = context.keys.send(KeyKind::SPACE);
@@ -352,7 +365,20 @@ fn update_pos(context: &Context, mat: &Mat) -> Option<(Point, Rect)> {
     let pos = (tl + br) / 2;
     let pos = Point::new(pos.x, minimap_bbox.height - pos.y);
     if cfg!(debug_assertions) {
-        println!("player pos: {:?} / {:?}", pos, minimap_bbox);
+        let prev_pos = match context.player {
+            PlayerState::Idle(idle) => idle.pos.into(),
+            PlayerState::Moving(moving) => moving.pos.into(),
+            PlayerState::HorizontalMoving(moving) => moving.pos.into(),
+            PlayerState::VerticalMoving(moving) => moving.pos.into(),
+            PlayerState::Grappling(grappling) => grappling.moving.pos.into(),
+            PlayerState::Jumping(moving) => moving.pos.into(),
+            PlayerState::UpJumping(moving) => moving.pos.into(),
+            PlayerState::Falling(moving) => moving.pos.into(),
+            PlayerState::Detecting => None,
+        };
+        if prev_pos.is_none() || prev_pos.unwrap() != pos {
+            println!("player pos: {:?} / {:?}", pos, minimap_bbox);
+        }
     }
     Some((pos, bbox))
 }

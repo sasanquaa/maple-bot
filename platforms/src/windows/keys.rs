@@ -18,6 +18,7 @@ use super::{error::Error, handle::Handle};
 pub struct Keys {
     handle: Handle,
     input_key_down: Cell<u128>,
+    post_key_down: Cell<u128>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -35,6 +36,7 @@ impl Keys {
         Self {
             handle,
             input_key_down: Cell::new(0),
+            post_key_down: Cell::new(0),
         }
     }
 
@@ -79,7 +81,11 @@ impl Keys {
                 }
             }
             KeyKind::SPACE | KeyKind::F | KeyKind::C => {
-                let params = to_params(key, scan_code, is_extended, is_up);
+                let key_down =
+                    self.post_key_down
+                        .replace(set_key_down(key, self.post_key_down.get(), is_up));
+                let was_down = was_key_down(key, key_down);
+                let params = to_params(key, scan_code, is_extended, is_up, was_down);
                 let message = if is_up { WM_KEYUP } else { WM_KEYDOWN };
                 unsafe { PostMessageW(Some(handle), message, params.0, params.1) }
                     .map_err(Error::from)
@@ -119,13 +125,21 @@ fn to_scan_code(key: VIRTUAL_KEY) -> (u16, bool) {
 }
 
 #[inline(always)]
-fn to_params(key: VIRTUAL_KEY, scan_code: u16, is_extended: bool, is_up: bool) -> (WPARAM, LPARAM) {
+fn to_params(
+    key: VIRTUAL_KEY,
+    scan_code: u16,
+    is_extended: bool,
+    is_up: bool,
+    was_down: bool,
+) -> (WPARAM, LPARAM) {
     let is_extended = is_extended as u32;
-    let flags = 1 | ((scan_code as u32) << 16);
+    let was_down = was_down as u32;
+    let scan_code = scan_code as u32;
+    let flags = scan_code << 16 | is_extended << 24;
     let flags = if is_up {
-        flags | (3 << 30)
+        0xC0000001 | flags
     } else {
-        flags | is_extended << 30
+        0x00000001 | flags | was_down << 30
     };
     (WPARAM(key.0 as usize), LPARAM(flags as isize))
 }
