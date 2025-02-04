@@ -3,6 +3,7 @@ use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
+/// A clock that ticks in sync with the provided frame rate.
 #[derive(Debug)]
 pub struct FpsClock {
     last_tick_time: Cell<Instant>,
@@ -13,7 +14,7 @@ impl FpsClock {
     pub fn new(fps: u32) -> FpsClock {
         FpsClock {
             last_tick_time: Cell::new(Instant::now()),
-            fps_in_nanos: (1. / fps as f32) * 1_000_000_000.,
+            fps_in_nanos: (1.0 / fps as f32) * 1_000_000_000.,
         }
     }
 
@@ -21,7 +22,7 @@ impl FpsClock {
         let t = self.last_tick_time.get().elapsed();
         let total_nanos = t.as_secs() * 1_000_000_000 + t.subsec_nanos() as u64;
         let diff = self.fps_in_nanos - (total_nanos as f32);
-        if diff > 0. {
+        if diff > 0.0 {
             thread::sleep(Duration::new(0, diff as u32))
         };
         self.last_tick_time.set(Instant::now());

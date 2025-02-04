@@ -1,8 +1,7 @@
 use opencv::core::Rect;
 
-
 #[derive(Debug)]
-pub enum SkillState {
+pub enum Skill {
     Detecting,
     Idle(Rect),
 }

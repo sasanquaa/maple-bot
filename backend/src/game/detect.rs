@@ -198,7 +198,7 @@ pub fn detect_minimap(mat: &Mat, confidence_threshold: f32) -> Result<Rect> {
         .ok_or(anyhow!("minimap not found"))
 }
 
-pub fn detect_minimap_name<'a>(mat: &Mat, minimap: &Rect, score_threshold: f64) -> Result<Rect> {
+pub fn detect_minimap_name(mat: &Mat, minimap: &Rect, score_threshold: f64) -> Result<Rect> {
     fn extract_bboxes(
         mat: &BoxedRef<Mat>,
         w_ratio: f32,
@@ -206,22 +206,30 @@ pub fn detect_minimap_name<'a>(mat: &Mat, minimap: &Rect, score_threshold: f64) 
         offset: i32,
         score_threshold: f64,
     ) -> Result<Vec<Rect>> {
-        let text_score_ranges =
-            Vector::from_iter([Range::all()?, Range::all()?, Range::new(0, 1)?]);
-        let text_score = mat.ranges(&text_score_ranges)?.clone_pointee();
+        let text_score = mat
+            .ranges(&Vector::from_iter([
+                Range::all()?,
+                Range::all()?,
+                Range::new(0, 1)?,
+            ]))?
+            .clone_pointee();
         let text_score = text_score.reshape_nd(1, &text_score.mat_size().as_slice()[..2])?;
         let mut text_lower_score = Mat::default();
         threshold(&text_score, &mut text_lower_score, 0.4, 1.0, 0)?;
-        let link_score_ranges =
-            Vector::from_iter([Range::all()?, Range::all()?, Range::new(1, 2)?]);
+
         let mut link_score = Mat::default();
         threshold(
-            &mat.ranges(&link_score_ranges)?,
+            &mat.ranges(&Vector::from_iter([
+                Range::all()?,
+                Range::all()?,
+                Range::new(1, 2)?,
+            ]))?,
             &mut link_score,
             0.4,
             1.0,
             0,
         )?;
+
         let mut combined_score = Mat::default();
         add(
             &text_lower_score,
@@ -230,6 +238,7 @@ pub fn detect_minimap_name<'a>(mat: &Mat, minimap: &Rect, score_threshold: f64) 
             &no_array(),
             CV_8U,
         )?;
+
         let mut bboxes = Vec::<Rect>::new();
         let mut labels = Mat::default();
         let mut stats = Mat::default();
@@ -340,14 +349,16 @@ pub fn detect_minimap_name<'a>(mat: &Mat, minimap: &Rect, score_threshold: f64) 
         .ok_or(anyhow!("minimap name not found"))?;
     let bbox = bboxes
         .into_iter()
-        .filter_map(|bbox| {
-            if bboxes_max_y - (bbox.y + bbox.height) <= 5 {
-                Some(bbox)
-            } else {
-                None
-            }
-        })
-        .reduce(|a, b| a | b);
+        .filter(|bbox| bboxes_max_y - (bbox.y + bbox.height) <= 5)
+        .reduce(|a, b| a | b)
+        .map(|bbox| {
+            Rect::new(
+                bbox.x,
+                bbox.y,
+                minimap.x + minimap.width - bbox.x,
+                bbox.height,
+            )
+        });
     if cfg!(debug_assertions) {
         println!("minimap name detection: {:?}", bbox);
     }

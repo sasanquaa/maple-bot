@@ -1,46 +1,67 @@
+mod clock;
+mod detect;
+mod mat;
+mod minimap;
+mod player;
+mod skill;
+
 use anyhow::Result;
 use opencv::{
     core::{Mat, Scalar},
-    highgui::{imshow, wait_key},
     imgproc::{LINE_8, rectangle_points},
 };
 use platforms::windows::{capture::DynamicCapture, handle::Handle, keys::Keys};
 
-use super::{
-    clock::FpsClock, mat::OwnedMat, minimap::MinimapState, player::PlayerState, skill::SkillState,
-};
+use clock::FpsClock;
+use mat::OwnedMat;
+use minimap::Minimap;
+use player::Player;
+use skill::Skill;
 
-pub struct Context {
-    pub keys: Keys,
-    pub minimap: MinimapState,
-    pub player: PlayerState,
-    pub skill: SkillState,
-}
-
-pub trait UpdateState {
+pub(crate) trait Contextual {
     fn update(&self, context: &Context, mat: &Mat) -> Self;
 }
 
-pub fn update_loop() -> Result<()> {
-    let handle = Handle::new(Some("MapleStoryClass"), None)?;
-    let capture = DynamicCapture::new(handle.clone())?;
-    let keys = Keys::new(handle);
-    let clock = FpsClock::new(30);
-    let mut context = Context {
-        keys,
-        minimap: MinimapState::Detecting,
-        player: PlayerState::Detecting,
-        skill: SkillState::Detecting,
-    };
-    loop {
-        let Ok(mat) = capture.grab().map(OwnedMat::new) else {
-            continue;
-        };
-        context.minimap = context.minimap.update(&context, &mat);
-        context.player = context.player.update(&context, &mat);
-        // context.skill = context.skill.update(&context, &grayscale);
-        draw_debug(&mut context, &mat);
-        clock.tick();
+pub trait Callback {
+    fn on_minimap();
+}
+
+pub struct Context {
+    clock: FpsClock,
+    pub(crate) keys: Keys,
+    capture: DynamicCapture,
+    pub minimap: Minimap,
+    pub player: Player,
+    pub skill: Skill,
+}
+
+impl Context {
+    pub fn new() -> Result<Self> {
+        let clock = FpsClock::new(30);
+        let handle = Handle::new(Some("MapleStoryClass"), None)?;
+        let keys = Keys::new(handle.clone());
+        let capture = DynamicCapture::new(handle.clone())?;
+        Ok(Context {
+            clock,
+            keys,
+            capture,
+            minimap: Minimap::Detecting,
+            player: Player::Detecting,
+            skill: Skill::Detecting,
+        })
+    }
+
+    pub fn start(&mut self) {
+        loop {
+            let Ok(mat) = self.capture.grab().map(OwnedMat::new) else {
+                continue;
+            };
+            self.minimap = self.minimap.update(self, &mat);
+            self.player = self.player.update(self, &mat);
+            // context.skill = context.skill.update(&context, &grayscale);
+            draw_debug(self, &mat);
+            self.clock.tick();
+        }
     }
 }
 
@@ -52,7 +73,7 @@ fn draw_debug(context: &mut Context, mat: &Mat) {
 
     let mut mat = mat.clone();
 
-    if let MinimapState::Idle(idle) = &context.minimap {
+    if let Minimap::Idle(idle) = &context.minimap {
         let rect = idle.bbox;
         rectangle_points(
             &mut mat,
@@ -76,7 +97,9 @@ fn draw_debug(context: &mut Context, mat: &Mat) {
         .unwrap();
     }
 
-    if let PlayerState::Idle(idle) = &mut context.player {
+    // println!("state: {:?}", context.player);
+
+    if let Player::Idle(idle) = &mut context.player {
         // 0.9098039, 0.54285717 -> 0.12109375, 0.60294116 -> 0.5234375, 0.27941176
         rectangle_points(
             &mut mat,
@@ -89,20 +112,22 @@ fn draw_debug(context: &mut Context, mat: &Mat) {
         )
         .unwrap();
         match unsafe { COUNTER } {
-            c if c == 0 => {
+            0 => {
                 // idle.move_to(Point2f::new(0.9098039, 0.54285717));
                 // idle.move_to(Point::new(193, 65));
-                idle.move_to(Point::new(223, 37));
+                // idle.move_to(Point::new(223, 37));
+                idle.move_to(Point::new(206, 44));
+                // idle.move_to(Point::new(22, 36));
             }
-            c if c == 1 => {
+            1 => {
                 // idle.move_to(Point2f::new(0.12109375, 0.60294116));
                 // idle.move_to(Point::new(183, 65));
-                idle.move_to(Point::new(113, 32));
+                idle.move_to(Point::new(31, 24));
             }
-            c if c == 2 => {
+            2 => {
                 // idle.move_to(Point2f::new(0.5234375, 0.27941176));
                 // idle.move_to(Point::new(193, 22));
-                idle.move_to(Point::new(22, 19));
+                idle.move_to(Point::new(118, 14));
             }
             // c if c == 3 => {
             //     idle.move_to(Point::new(172, 22));
@@ -123,6 +148,4 @@ fn draw_debug(context: &mut Context, mat: &Mat) {
             COUNTER %= 3;
         };
     }
-    let _ = imshow("Debug", &mat);
-    let _ = wait_key(1);
 }

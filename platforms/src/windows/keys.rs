@@ -1,15 +1,12 @@
 use std::cell::Cell;
 
-use windows::Win32::{
-    Foundation::{LPARAM, WPARAM},
-    UI::{
-        Input::KeyboardAndMouse::{
-            INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
-            KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW, SendInput, VIRTUAL_KEY, VK_C,
-            VK_DOWN, VK_F, VK_LEFT, VK_RIGHT, VK_SPACE,
-        },
-        WindowsAndMessaging::{GetForegroundWindow, PostMessageW, WM_KEYDOWN, WM_KEYUP},
+use windows::Win32::UI::{
+    Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
+        KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW, SendInput, VIRTUAL_KEY, VK_C, VK_DOWN,
+        VK_F, VK_LEFT, VK_RIGHT, VK_SPACE, VK_UP,
     },
+    WindowsAndMessaging::GetForegroundWindow,
 };
 
 use super::{error::Error, handle::Handle};
@@ -18,13 +15,13 @@ use super::{error::Error, handle::Handle};
 pub struct Keys {
     handle: Handle,
     input_key_down: Cell<u128>,
-    post_key_down: Cell<u128>,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum KeyKind {
-    LEFT,
+    UP,
     DOWN,
+    LEFT,
     RIGHT,
     SPACE,
     F,
@@ -36,7 +33,6 @@ impl Keys {
         Self {
             handle,
             input_key_down: Cell::new(0),
-            post_key_down: Cell::new(0),
         }
     }
 
@@ -47,49 +43,35 @@ impl Keys {
     }
 
     pub fn send_up(&self, kind: KeyKind) -> Result<(), Error> {
-        self.send_post_or_input(kind, true)
+        self.send_input(kind, true)
     }
 
     pub fn send_down(&self, kind: KeyKind) -> Result<(), Error> {
-        self.send_post_or_input(kind, false)
+        self.send_input(kind, false)
     }
 
     #[inline(always)]
-    pub fn send_post_or_input(&self, kind: KeyKind, is_up: bool) -> Result<(), Error> {
+    fn send_input(&self, kind: KeyKind, is_up: bool) -> Result<(), Error> {
         let handle = self.handle.to_inner()?;
         let key = to_vkey(kind);
         let (scan_code, is_extended) = to_scan_code(key);
-        match kind {
-            KeyKind::LEFT | KeyKind::RIGHT | KeyKind::DOWN => {
-                let handle_fg = unsafe { GetForegroundWindow() };
-                if handle_fg.is_invalid() || handle_fg != handle {
-                    return Err(Error::KeyNotSent);
-                }
-                if !is_up && was_key_down(key, self.input_key_down.get()) {
-                    return Err(Error::KeyNotSent);
-                } else {
-                    self.input_key_down
-                        .set(set_key_down(key, self.input_key_down.get(), is_up));
-                }
-                let input = to_input(key, scan_code, is_extended, is_up);
-                let result = unsafe { SendInput(&input, size_of::<INPUT>() as i32) };
-                // could be UIPI
-                if result == 0 {
-                    Err(unsafe { Error::from_last_win_error() })
-                } else {
-                    Ok(())
-                }
-            }
-            KeyKind::SPACE | KeyKind::F | KeyKind::C => {
-                let key_down =
-                    self.post_key_down
-                        .replace(set_key_down(key, self.post_key_down.get(), is_up));
-                let was_down = was_key_down(key, key_down);
-                let params = to_params(key, scan_code, is_extended, is_up, was_down);
-                let message = if is_up { WM_KEYUP } else { WM_KEYDOWN };
-                unsafe { PostMessageW(Some(handle), message, params.0, params.1) }
-                    .map_err(Error::from)
-            }
+        let handle_fg = unsafe { GetForegroundWindow() };
+        if handle_fg.is_invalid() || handle_fg != handle {
+            return Err(Error::KeyNotSent);
+        }
+        if !is_up && was_key_down(key, self.input_key_down.get()) {
+            return Err(Error::KeyNotSent);
+        } else {
+            self.input_key_down
+                .set(set_key_down(key, self.input_key_down.get(), is_up));
+        }
+        let input = to_input(key, scan_code, is_extended, is_up);
+        let result = unsafe { SendInput(&input, size_of::<INPUT>() as i32) };
+        // could be UIPI
+        if result == 0 {
+            Err(Error::from_last_win_error())
+        } else {
+            Ok(())
         }
     }
 }
@@ -109,6 +91,7 @@ fn to_vkey(kind: KeyKind) -> VIRTUAL_KEY {
     match kind {
         KeyKind::LEFT => VK_LEFT,
         KeyKind::RIGHT => VK_RIGHT,
+        KeyKind::UP => VK_UP,
         KeyKind::DOWN => VK_DOWN,
         KeyKind::SPACE => VK_SPACE,
         KeyKind::F => VK_F,
@@ -122,26 +105,6 @@ fn to_scan_code(key: VIRTUAL_KEY) -> (u16, bool) {
     let code = scan_code & 0xFF;
     let is_extended = (scan_code & 0xFF00) != 0;
     (code, is_extended)
-}
-
-#[inline(always)]
-fn to_params(
-    key: VIRTUAL_KEY,
-    scan_code: u16,
-    is_extended: bool,
-    is_up: bool,
-    was_down: bool,
-) -> (WPARAM, LPARAM) {
-    let is_extended = is_extended as u32;
-    let was_down = was_down as u32;
-    let scan_code = scan_code as u32;
-    let flags = (scan_code << 16) | (is_extended << 24);
-    let flags = if is_up {
-        0xC0000001 | flags
-    } else {
-        0x00000001 | flags | (was_down << 30)
-    };
-    (WPARAM(key.0 as usize), LPARAM(flags as isize))
 }
 
 #[inline(always)]

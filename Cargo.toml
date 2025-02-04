@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["core", "platforms"]
+members = ["ui", "backend", "platforms"]
 
 [workspace.dependencies]
 platforms = { path = "platforms" }
+backend = { path = "backend" }

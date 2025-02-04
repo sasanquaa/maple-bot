@@ -1,7 +1,5 @@
 use thiserror::Error;
 
-use windows::{Win32::Foundation::GetLastError, core::HRESULT};
-
 #[derive(Error, Clone, Debug)]
 pub enum Error {
     #[error("at least either class or title must be provided")]
@@ -12,12 +10,18 @@ pub enum Error {
     KeyNotSent,
     #[error("window matching provided class and title cannot be found")]
     WindowNotFound,
-    #[error("win32 API error: {0}")]
-    Win32(#[from] windows::core::Error),
+    #[error("win32 API error {0}: {1}")]
+    Win32(i32, String),
 }
 
 impl Error {
-    pub unsafe fn from_last_win_error() -> Error {
-        Error::Win32(HRESULT::from(unsafe { GetLastError() }).into())
+    pub(crate) fn from_last_win_error() -> Error {
+        Error::from(windows::core::Error::from_win32())
+    }
+}
+
+impl From<windows::core::Error> for Error {
+    fn from(error: windows::core::Error) -> Self {
+        Error::Win32(error.code().0, error.message())
     }
 }

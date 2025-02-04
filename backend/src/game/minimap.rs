@@ -4,8 +4,8 @@ use opencv::{
 };
 
 use super::{
+    Context, Contextual,
     detect::{detect_minimap, detect_minimap_name},
-    state::{Context, UpdateState},
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -22,39 +22,39 @@ pub struct MinimapIdle {
 }
 
 #[derive(Debug)]
-pub enum MinimapState {
+pub enum Minimap {
     Idle(MinimapIdle),
     Detecting,
 }
 
-impl UpdateState for MinimapState {
+impl Contextual for Minimap {
     fn update(&self, context: &Context, mat: &Mat) -> Self {
         match &context.minimap {
-            MinimapState::Detecting => {
+            Minimap::Detecting => {
                 let Ok(bbox) = detect_minimap(mat, 0.5) else {
-                    return MinimapState::Detecting;
+                    return Minimap::Detecting;
                 };
                 let Ok(bbox_name) = detect_minimap_name(mat, &bbox, 0.7) else {
-                    return MinimapState::Detecting;
+                    return Minimap::Detecting;
                 };
                 let size = bbox.width.min(bbox.height) as usize;
                 let Some(tl) = anchor_at(mat, bbox.tl(), size, 1) else {
-                    return MinimapState::Detecting;
+                    return Minimap::Detecting;
                 };
                 let Some(br) = anchor_at(mat, bbox.br(), size, -1) else {
-                    return MinimapState::Detecting;
+                    return Minimap::Detecting;
                 };
                 let anchors = Anchors { tl, br };
                 if cfg!(debug_assertions) {
                     println!("anchor points: {:?}", anchors);
                 }
-                MinimapState::Idle(MinimapIdle {
+                Minimap::Idle(MinimapIdle {
                     anchors,
                     bbox,
                     bbox_name,
                 })
             }
-            MinimapState::Idle(idle) => {
+            Minimap::Idle(idle) => {
                 let MinimapIdle {
                     anchors,
                     bbox: _,
@@ -70,9 +70,9 @@ impl UpdateState for MinimapState {
                             (anchors.tl.1, anchors.br.1)
                         );
                     }
-                    return MinimapState::Detecting;
+                    return Minimap::Detecting;
                 }
-                MinimapState::Idle(*idle)
+                Minimap::Idle(*idle)
             }
         }
     }

@@ -2,10 +2,14 @@ use std::ops::{Deref, DerefMut};
 
 use opencv::{
     boxed_ref::{BoxedRef, BoxedRefMut},
-    core::{_InputArray, _OutputArray, CV_8UC4, Mat, ToInputArray, ToOutputArray},
+    core::{
+        _InputArray, _InputOutputArray, _OutputArray, CV_8UC4, Mat, ToInputArray,
+        ToInputOutputArray, ToOutputArray,
+    },
 };
 use platforms::windows::capture::Frame;
 
+// A Mat that owns the external buffer.
 #[derive(Debug)]
 pub struct OwnedMat {
     mat: Mat,
@@ -37,6 +41,12 @@ impl ToInputArray for OwnedMat {
 impl ToOutputArray for OwnedMat {
     fn output_array(&mut self) -> opencv::Result<BoxedRefMut<_OutputArray>> {
         self.mat.output_array()
+    }
+}
+
+impl ToInputOutputArray for OwnedMat {
+    fn input_output_array(&mut self) -> opencv::Result<BoxedRefMut<_InputOutputArray>> {
+        self.mat.input_output_array()
     }
 }
 
