@@ -8,3 +8,4 @@ platforms = { workspace = true }
 ort = { version = "2.0.0-rc.9", features = ["cuda", "load-dynamic"] }
 opencv = "0.94.1"
 anyhow = "1.0.95"
+log = "0.4.25"

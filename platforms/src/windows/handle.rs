@@ -1,7 +1,7 @@
 use std::{cell::Cell, ffi::OsString, os::windows::ffi::OsStringExt, ptr, slice, str};
 
 use windows::Win32::{
-    Foundation::{BOOL, GetLastError, HWND, LPARAM},
+    Foundation::{BOOL, HWND, LPARAM},
     UI::WindowsAndMessaging::{
         EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId,
     },
@@ -96,14 +96,6 @@ impl Handle {
                 }
             };
             if count == 0 {
-                if cfg!(debug_assertions) {
-                    let error = unsafe { GetLastError() };
-                    if is_class {
-                        eprintln!("GetClassNameW() {:?}", error);
-                    } else {
-                        eprintln!("GetWindowTextW() {:?}", error);
-                    }
-                }
                 return false;
             }
             let text = unsafe { std::str::from_raw_parts(text, text_len) };

@@ -1,38 +1,36 @@
 mod clock;
 mod detect;
 mod mat;
-mod minimap;
-mod player;
-mod skill;
+pub mod minimap;
+pub mod player;
+pub mod skill;
 
-use anyhow::Result;
-use opencv::{
-    core::{Mat, Scalar},
-    imgproc::{LINE_8, rectangle_points},
+use anyhow::{Result, anyhow};
+use opencv::core::{Mat, MatTraitConst, MatTraitConstManual, Vec4b};
+use platforms::windows::{
+    bitmap::rgb_to_bitmap, capture::DynamicCapture, handle::Handle, keys::Keys,
 };
-use platforms::windows::{capture::DynamicCapture, handle::Handle, keys::Keys};
 
 use clock::FpsClock;
 use mat::OwnedMat;
 use minimap::Minimap;
 use player::Player;
-use skill::Skill;
+use skill::{Skill, SkillKind};
 
 pub(crate) trait Contextual {
-    fn update(&self, context: &Context, mat: &Mat) -> Self;
-}
+    type Extra = ();
 
-pub trait Callback {
-    fn on_minimap();
+    fn update(&self, context: &Context, mat: &Mat, extra: Self::Extra) -> Self;
 }
 
 pub struct Context {
     clock: FpsClock,
     pub(crate) keys: Keys,
     capture: DynamicCapture,
-    pub minimap: Minimap,
-    pub player: Player,
-    pub skill: Skill,
+    pub(crate) minimap: Minimap,
+    pub(crate) player: Player,
+    pub(crate) skills: Vec<Skill>,
+    frame: OwnedMat,
 }
 
 impl Context {
@@ -47,105 +45,57 @@ impl Context {
             capture,
             minimap: Minimap::Detecting,
             player: Player::Detecting,
-            skill: Skill::Detecting,
+            skills: vec![Skill::Detecting],
+            frame: OwnedMat::empty(),
         })
     }
 
-    pub fn start(&mut self) {
+    pub fn update_loop(mut self, mut on_updated: impl FnMut(&Context)) {
         loop {
             let Ok(mat) = self.capture.grab().map(OwnedMat::new) else {
                 continue;
             };
-            self.minimap = self.minimap.update(self, &mat);
-            self.player = self.player.update(self, &mat);
-            // context.skill = context.skill.update(&context, &grayscale);
-            draw_debug(self, &mat);
+            self.minimap = self.minimap.update(&self, &mat, ());
+            self.player = self.player.update(&self, &mat, ());
+            self.skills = self
+                .skills
+                .iter()
+                .map(|skill| skill.update(&self, &mat, SkillKind::ErdaShower))
+                .collect();
+            self.frame = mat;
+            on_updated(&self);
             self.clock.tick();
         }
     }
-}
 
-#[cfg(debug_assertions)]
-fn draw_debug(context: &mut Context, mat: &Mat) {
-    use opencv::core::Point;
-
-    static mut COUNTER: usize = 0;
-
-    let mut mat = mat.clone();
-
-    if let Minimap::Idle(idle) = &context.minimap {
-        let rect = idle.bbox;
-        rectangle_points(
-            &mut mat,
-            rect.tl(),
-            rect.br(),
-            Scalar::from_array([255., 0., 0., 255.]),
-            1,
-            LINE_8,
-            0,
-        )
-        .unwrap();
-        rectangle_points(
-            &mut mat,
-            idle.bbox_name.tl(),
-            idle.bbox_name.br(),
-            Scalar::from_array([255., 0., 0., 255.]),
-            1,
-            LINE_8,
-            0,
-        )
-        .unwrap();
+    pub fn minimap(&self) -> Result<(Vec<u8>, usize, usize)> {
+        if let Minimap::Idle(idle) = self.minimap {
+            let minimap = self
+                .frame
+                .roi(idle.bbox)?
+                .iter::<Vec4b>()?
+                .flat_map(|bgra| {
+                    let bgra = bgra.1;
+                    [bgra[2], bgra[1], bgra[0], 255]
+                })
+                .collect::<Vec<u8>>();
+            // let minimap = rgb_to_bitmap(minimap, idle.bbox.width, idle.bbox.height);
+            return Ok((minimap, idle.bbox.width as usize, idle.bbox.height as usize));
+        }
+        Err(anyhow!("minimap not found"))
     }
 
-    // println!("state: {:?}", context.player);
-
-    if let Player::Idle(idle) = &mut context.player {
-        // 0.9098039, 0.54285717 -> 0.12109375, 0.60294116 -> 0.5234375, 0.27941176
-        rectangle_points(
-            &mut mat,
-            idle.bbox.tl(),
-            idle.bbox.br(),
-            Scalar::from_array([255., 0., 0., 255.]),
-            1,
-            LINE_8,
-            0,
-        )
-        .unwrap();
-        match unsafe { COUNTER } {
-            0 => {
-                // idle.move_to(Point2f::new(0.9098039, 0.54285717));
-                // idle.move_to(Point::new(193, 65));
-                // idle.move_to(Point::new(223, 37));
-                idle.move_to(Point::new(206, 44));
-                // idle.move_to(Point::new(22, 36));
-            }
-            1 => {
-                // idle.move_to(Point2f::new(0.12109375, 0.60294116));
-                // idle.move_to(Point::new(183, 65));
-                idle.move_to(Point::new(31, 24));
-            }
-            2 => {
-                // idle.move_to(Point2f::new(0.5234375, 0.27941176));
-                // idle.move_to(Point::new(193, 22));
-                idle.move_to(Point::new(118, 14));
-            }
-            // c if c == 3 => {
-            //     idle.move_to(Point::new(172, 22));
-            // }
-            // c if c == 4 => {
-            //     idle.move_to(Point::new(50, 65));
-            // }
-            // c if c == 5 => {
-            //     idle.move_to(Point::new(50, 36));
-            // }
-            // c if c == 6 => {
-            //     idle.move_to(Point::new(65, 22));
-            // }
-            _ => (),
+    pub fn minimap_name(&self) -> Result<Vec<u8>> {
+        if let Minimap::Idle(idle) = self.minimap {
+            let name = self
+                .frame
+                .roi(idle.bbox_name)?
+                .iter::<Vec4b>()?
+                .flat_map(|rgba| rgba.1)
+                .collect::<Vec<u8>>();
+            let name = rgb_to_bitmap(name, idle.bbox_name.width, idle.bbox_name.height);
+            return Ok(name);
         }
-        unsafe {
-            COUNTER += 1;
-            COUNTER %= 3;
-        };
+        Err(anyhow!("minimap name not found"))
     }
 }

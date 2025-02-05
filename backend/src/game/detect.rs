@@ -2,6 +2,7 @@ use core::slice::SlicePattern;
 use std::sync::LazyLock;
 
 use anyhow::{Ok, Result, anyhow};
+use log::debug;
 use opencv::{
     boxed_ref::BoxedRef,
     core::{
@@ -54,59 +55,54 @@ static ERDA_SHOWER: LazyLock<Mat> = LazyLock::new(|| {
     .unwrap()
 });
 
-pub fn detect_erda_shower(grayscale: &impl ToInputArray, threshold: f64) -> Result<Rect> {
-    let template = &*ERDA_SHOWER;
-    let mut result = Mat::default();
-    let mut score = 0f64;
-    let mut tl = Point::default();
-
-    match_template_def(grayscale, template, &mut result, TM_CCOEFF_NORMED)?;
-    min_max_loc(
-        &result,
-        None,
-        Some(&mut score),
-        None,
-        Some(&mut tl),
-        &no_array(),
-    )?;
-
-    let br = tl + Point::from_size(template.size().unwrap());
-    if score >= threshold {
-        Ok(Rect::from_points(tl, br))
-    } else {
-        Err(anyhow!("erda shower skill not found"))
-    }
+pub fn detect_erda_shower(mat: &Mat, threshold: f64) -> Result<Rect> {
+    let mat = to_grayscale(mat, true)?;
+    detect_template(
+        &mat,
+        LazyLock::force(&ERDA_SHOWER),
+        Point::new(0, 0),
+        threshold,
+    )
 }
 
 pub fn detect_player(mat: &Mat, minimap: &Rect, threshold: f64) -> Result<Rect> {
     let mat = to_grayscale(mat, true)?;
-    let mat = mat.ranges(&to_ranges(minimap)?)?;
-    let template = LazyLock::force(&PLAYER);
+    let mat = mat.roi(*minimap)?;
+    detect_template(&mat, LazyLock::force(&PLAYER), minimap.tl(), threshold)
+}
+
+fn detect_template(
+    mat: &impl ToInputArray,
+    template: &Mat,
+    offset: Point,
+    threshold: f64,
+) -> Result<Rect> {
     let mut result = Mat::default();
     let mut score = 0f64;
-    let mut tl = Point::default();
+    let mut loc = Point::default();
 
-    match_template_def(&mat, template, &mut result, TM_CCOEFF_NORMED)?;
+    match_template_def(mat, template, &mut result, TM_CCOEFF_NORMED)?;
     min_max_loc(
         &result,
         None,
         Some(&mut score),
         None,
-        Some(&mut tl),
+        Some(&mut loc),
         &no_array(),
     )?;
 
+    let tl = loc + offset;
     let br = tl + Point::from_size(template.size().unwrap());
     if score >= threshold {
-        Ok(Rect::from_points(tl + minimap.tl(), br + minimap.tl()))
+        Ok(Rect::from_points(tl, br))
     } else {
-        Err(anyhow!("player not found"))
+        Err(anyhow!("template not found"))
     }
 }
 
 pub fn detect_minimap(mat: &Mat, confidence_threshold: f32) -> Result<Rect> {
     let size = mat.size()?;
-    let (mat_in, w_ratio, h_ratio) = to_transformed_for_minimap(mat)?;
+    let (mat_in, w_ratio, h_ratio) = preprocess_for_minimap(mat)?;
     let result = MINIMAP_MODEL.run([to_session_input_value(&mat_in)?])?;
     let mat_out = from_session_output_value(&result)?;
     let pred = (0..mat_out.rows())
@@ -120,9 +116,7 @@ pub fn detect_minimap(mat: &Mat, confidence_threshold: f32) -> Result<Rect> {
             a[4].total_cmp(&b[4])
         });
     let bbox = pred.and_then(|pred| {
-        if cfg!(debug_assertions) {
-            println!("minimap detection: {:?}", pred);
-        }
+        debug!(target: "minimap", "yolo detection: {pred:?}");
         if pred[4] < confidence_threshold {
             None
         } else {
@@ -148,8 +142,7 @@ pub fn detect_minimap(mat: &Mat, confidence_threshold: f32) -> Result<Rect> {
         .map(|bbox| expand_bbox(&bbox))
         .and_then(|bbox| {
             // grayscale
-            let ranges = to_ranges(&bbox).ok()?;
-            let minimap = mat.ranges(&ranges).ok()?;
+            let minimap = mat.roi(bbox).ok()?;
             to_grayscale(&minimap, false).ok()
         })
         .and_then(|mut mat| {
@@ -167,9 +160,7 @@ pub fn detect_minimap(mat: &Mat, confidence_threshold: f32) -> Result<Rect> {
         Some(vec)
     });
     let bound = contours.and_then(|vec| {
-        if cfg!(debug_assertions) {
-            println!("minimap contours: {:?}", vec);
-        }
+        debug!(target: "minimap", "contours detection: {vec:?}");
         vec.into_iter()
             .map(|contour| {
                 bounding_rect(&contour).expect("contour found but unable to retrieve bounding rect")
@@ -180,13 +171,12 @@ pub fn detect_minimap(mat: &Mat, confidence_threshold: f32) -> Result<Rect> {
         .and_then(|bound| {
             let bbox = expand_bbox(&bbox.unwrap());
             let bound = Rect::from_points(bound.tl() + bbox.tl(), bound.br() + bbox.tl());
-            if cfg!(debug_assertions) {
-                println!(
-                    "minimap bbox and contour areas: {:?} {:?}",
-                    bbox.area(),
-                    bound.area()
-                );
-            }
+            debug!(
+                target: "minimap",
+                "yolo bbox and contour bbox areas: {:?} {:?}",
+                bbox.area(),
+                bound.area()
+            );
             // the detected contour should be contained
             // inside the detected minimap when expanded
             if (bbox & bound) == bound && (bbox.area() - bound.area()) >= 1500 {
@@ -215,9 +205,9 @@ pub fn detect_minimap_name(mat: &Mat, minimap: &Rect, score_threshold: f64) -> R
             .clone_pointee();
         let text_score = text_score.reshape_nd(1, &text_score.mat_size().as_slice()[..2])?;
         let mut text_lower_score = Mat::default();
-        threshold(&text_score, &mut text_lower_score, 0.4, 1.0, 0)?;
-
         let mut link_score = Mat::default();
+        let mut combined_score = Mat::default();
+        threshold(&text_score, &mut text_lower_score, 0.4, 1.0, 0)?;
         threshold(
             &mat.ranges(&Vector::from_iter([
                 Range::all()?,
@@ -229,8 +219,6 @@ pub fn detect_minimap_name(mat: &Mat, minimap: &Rect, score_threshold: f64) -> R
             1.0,
             0,
         )?;
-
-        let mut combined_score = Mat::default();
         add(
             &text_lower_score,
             &link_score,
@@ -257,22 +245,15 @@ pub fn detect_minimap_name(mat: &Mat, minimap: &Rect, score_threshold: f64) -> R
             }
 
             let mut mask = Mat::default();
-            let mut mask_max_score = 0.0f64;
+            let mut max_score = 0.0f64;
             compare(
                 &labels,
                 &Scalar::all(i as f64),
                 &mut mask,
                 CmpTypes::CMP_EQ as i32,
             )?;
-            min_max_loc(
-                &text_score,
-                None,
-                Some(&mut mask_max_score),
-                None,
-                None,
-                &mask,
-            )?;
-            if mask_max_score < score_threshold {
+            min_max_loc(&text_score, None, Some(&mut max_score), None, None, &mask)?;
+            if max_score < score_threshold {
                 continue;
             }
 
@@ -338,7 +319,7 @@ pub fn detect_minimap_name(mat: &Mat, minimap: &Rect, score_threshold: f64) -> R
         Ok(bboxes)
     }
 
-    let (mat, w_ratio, h_ratio, offset) = to_transformed_for_minimap_name(mat, minimap)?;
+    let (mat, w_ratio, h_ratio, offset) = preprocess_for_minimap_name(mat, minimap)?;
     let result = TEXT_DETECTION_MODEL.run([to_session_input_value(&mat)?])?;
     let mat_out = from_session_output_value(&result)?;
     let bboxes = extract_bboxes(&mat_out, w_ratio, h_ratio, offset, score_threshold)?;
@@ -359,24 +340,13 @@ pub fn detect_minimap_name(mat: &Mat, minimap: &Rect, score_threshold: f64) -> R
                 bbox.height,
             )
         });
-    if cfg!(debug_assertions) {
-        println!("minimap name detection: {:?}", bbox);
-    }
+    debug!(target: "minimap", "name detection: {:?}", bbox);
     bbox.ok_or(anyhow!("minimap name not found"))
 }
 
-fn to_ranges(rect: &Rect) -> Result<Vector<Range>> {
-    let mut vec = Vector::new();
-    let rows = Range::new(rect.tl().y, rect.br().y)?;
-    let cols = Range::new(rect.tl().x, rect.br().x)?;
-    vec.push(rows);
-    vec.push(cols);
-    Ok(vec)
-}
-
-fn to_transformed_for_minimap(mat: &Mat) -> Result<(Mat, f32, f32)> {
+fn preprocess_for_minimap(mat: &Mat) -> Result<(Mat, f32, f32)> {
     let mut mat = mat.clone();
-    let (w_ratio, h_ratio) = to_width_height_ratio(mat.size()?, 640.0, 640.0);
+    let (w_ratio, h_ratio) = resize_w_h_ratio(mat.size()?, 640.0, 640.0);
     // SAFETY: all of the functions below can be called in place.
     unsafe {
         mat.modify_inplace::<Result<()>>(|mat, mut mat_mut| {
@@ -396,12 +366,12 @@ fn to_transformed_for_minimap(mat: &Mat) -> Result<(Mat, f32, f32)> {
     Ok((mat, w_ratio, h_ratio))
 }
 
-fn to_transformed_for_minimap_name(mat: &Mat, minimap: &Rect) -> Result<(Mat, f32, f32, i32)> {
+fn preprocess_for_minimap_name(mat: &Mat, minimap: &Rect) -> Result<(Mat, f32, f32, i32)> {
     let bbox = Rect::from_points(
         Point::new(minimap.x, 0),
         Point::new(minimap.x + minimap.width, minimap.y),
     );
-    let mut mat = mat.ranges(&to_ranges(&bbox)?)?.clone_pointee();
+    let mut mat = mat.roi(bbox)?.clone_pointee();
     let size = mat.size()?;
     let size_max = size.width.max(size.height) as f32;
     let target_size = (1.5 * size_max).min(1280.0);
@@ -440,7 +410,7 @@ fn to_transformed_for_minimap_name(mat: &Mat, minimap: &Rect) -> Result<(Mat, f3
 }
 
 #[inline(always)]
-fn to_width_height_ratio(from: Size, to_w: f32, to_h: f32) -> (f32, f32) {
+fn resize_w_h_ratio(from: Size, to_w: f32, to_h: f32) -> (f32, f32) {
     (from.width as f32 / to_w, from.height as f32 / to_h)
 }
 

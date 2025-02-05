@@ -1,3 +1,4 @@
+use log::debug;
 use opencv::{
     core::{MatTraitConst, Point, Rect, Vec4b},
     prelude::Mat,
@@ -9,7 +10,7 @@ use super::{
 };
 
 #[derive(Clone, Copy, Debug)]
-pub struct Anchors {
+struct Anchors {
     tl: (Point, Vec4b),
     br: (Point, Vec4b),
 }
@@ -17,18 +18,18 @@ pub struct Anchors {
 #[derive(Clone, Copy, Debug)]
 pub struct MinimapIdle {
     anchors: Anchors,
-    pub bbox: Rect,
-    pub bbox_name: Rect,
+    pub(crate) bbox: Rect,
+    pub(crate) bbox_name: Rect,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Minimap {
     Idle(MinimapIdle),
     Detecting,
 }
 
 impl Contextual for Minimap {
-    fn update(&self, context: &Context, mat: &Mat) -> Self {
+    fn update(&self, context: &Context, mat: &Mat, _: ()) -> Self {
         match &context.minimap {
             Minimap::Detecting => {
                 let Ok(bbox) = detect_minimap(mat, 0.5) else {
@@ -45,9 +46,7 @@ impl Contextual for Minimap {
                     return Minimap::Detecting;
                 };
                 let anchors = Anchors { tl, br };
-                if cfg!(debug_assertions) {
-                    println!("anchor points: {:?}", anchors);
-                }
+                debug!(target: "minimap", "anchor points: {:?}", anchors);
                 Minimap::Idle(MinimapIdle {
                     anchors,
                     bbox,
@@ -62,14 +61,13 @@ impl Contextual for Minimap {
                 } = idle;
                 let tl_pixel = pixel_at(mat, anchors.tl.0);
                 let br_pixel = pixel_at(mat, anchors.br.0);
-                if tl_pixel != anchors.tl.1 || br_pixel != anchors.br.1 {
-                    if cfg!(debug_assertions) {
-                        println!(
-                            "anchor pixels mismatch: {:?} != {:?}",
-                            (tl_pixel, br_pixel),
-                            (anchors.tl.1, anchors.br.1)
-                        );
-                    }
+                if tl_pixel != anchors.tl.1 && br_pixel != anchors.br.1 {
+                    debug!(
+                        target: "minimap",
+                        "anchor pixels mismatch: {:?} != {:?}",
+                        (tl_pixel, br_pixel),
+                        (anchors.tl.1, anchors.br.1)
+                    );
                     return Minimap::Detecting;
                 }
                 Minimap::Idle(*idle)

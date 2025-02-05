@@ -1,9 +1,7 @@
 use std::{ops::Range, thread, time::Duration};
 
-use opencv::{
-    core::{Point, Rect},
-    prelude::Mat,
-};
+use log::debug;
+use opencv::{core::Point, prelude::Mat};
 use platforms::windows::keys::KeyKind;
 
 use super::{Context, Contextual, detect::detect_player, minimap::Minimap};
@@ -32,17 +30,8 @@ const PLAYER_UP_JUMP_TIMEOUT: u32 = 7;
 
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerIdle {
-    pub bbox: Rect,
-    pub pos: Point,
+    pos: Point,
     dest: Option<Point>,
-}
-
-impl PlayerIdle {
-    pub fn move_to(&mut self, dest: Point) {
-        if self.dest.is_none() {
-            self.dest = Some(dest);
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -73,7 +62,7 @@ pub struct PlayerGrappling {
     stopping: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Player {
     Idle(PlayerIdle),
     Moving(PlayerMoving),
@@ -88,25 +77,32 @@ pub enum Player {
     Detecting,
 }
 
+impl Player {
+    pub fn move_to(&mut self, x: i32, y: i32) {
+        if let Player::Idle(idle) = self {
+            if idle.dest.is_none() {
+                idle.dest = Some(Point::new(x, y));
+            }
+        }
+    }
+}
+
 impl Contextual for Player {
-    fn update(&self, context: &Context, mat: &Mat) -> Self {
-        let Some((cur_pos, bbox)) = update_pos(context, mat) else {
+    fn update(&self, context: &Context, mat: &Mat, _: ()) -> Self {
+        let Some(cur_pos) = update_pos(context, mat) else {
             return Player::Detecting;
         };
         // TODO: detect if a point is reachable after number of retries?
         // TODO: add unit tests
         match self {
             Player::Detecting => Player::Idle(PlayerIdle {
-                bbox,
                 pos: cur_pos,
                 dest: None,
             }),
             Player::Idle(idle) => idle
                 .dest
                 .map(|dest| {
-                    if cfg!(debug_assertions) {
-                        println!("player move to: {:?}", dest);
-                    }
+                    debug!(target: "player", "move to: {dest:?}");
                     Player::Moving(PlayerMoving {
                         pos: cur_pos,
                         dest,
@@ -117,12 +113,11 @@ impl Contextual for Player {
                 .unwrap_or_else(|| {
                     Player::Idle(PlayerIdle {
                         pos: cur_pos,
-                        bbox,
                         ..*idle
                     })
                 }),
             Player::Moving(moving) => {
-                let moving = moving.pos(cur_pos).timeout(0);
+                let moving = moving.pos(cur_pos);
                 let (x_distance, _) = x_distance_direction(&moving.dest, &moving.pos);
                 let (y_distance, _) = y_distance_direction(&moving.dest, &moving.pos);
                 match (x_distance, y_distance) {
@@ -131,14 +126,12 @@ impl Contextual for Player {
                     }
                     (_, y) if y >= PLAYER_VERTICAL_MOVE_THRESHOLD => Player::VerticalMoving(moving),
                     _ => {
-                        if cfg!(debug_assertions) {
-                            println!(
-                                "player reached {:?} with actual pos {:?}",
-                                moving.dest, moving.pos
-                            );
-                        }
+                        debug!(
+                            target: "player",
+                            "reached {:?} with actual position {:?}",
+                            moving.dest, moving.pos
+                        );
                         Player::Idle(PlayerIdle {
-                            bbox,
                             pos: cur_pos,
                             dest: None,
                         })
@@ -238,9 +231,7 @@ impl Contextual for Player {
                     }),
                     |moving| {
                         if distance <= PLAYER_DOUBLE_JUMP_GRAPPLING_THRESHOLD {
-                            if cfg!(debug_assertions) {
-                                println!("player grappling on double jump");
-                            }
+                            debug!(target: "player", "performs grappling on double jump");
                             let _ = context.keys.send_up(KeyKind::RIGHT);
                             let _ = context.keys.send_up(KeyKind::LEFT);
                             Player::Grappling(PlayerGrappling {
@@ -310,7 +301,6 @@ impl Contextual for Player {
                     }),
                     None::<fn()>,
                     |moving| {
-                        println!("{:?}", grappling);
                         if !grappling.stopping
                             && y_distance_direction(&moving.dest, &moving.pos).0
                                 <= PLAYER_GRAPPLING_STOPPING_THRESHOLD
@@ -335,6 +325,7 @@ impl Contextual for Player {
                 cur_pos,
                 PLAYER_UP_JUMP_TIMEOUT,
                 Some(|| {
+                    // why it doesn't work?
                     let _ = context.keys.send_down(KeyKind::UP);
                     let _ = context.keys.send(KeyKind::SPACE);
                     thread::sleep(Duration::from_millis(150));
@@ -432,7 +423,7 @@ fn update_moving_state(
 }
 
 #[inline(always)]
-fn update_pos(context: &Context, mat: &Mat) -> Option<(Point, Rect)> {
+fn update_pos(context: &Context, mat: &Mat) -> Option<Point> {
     let Minimap::Idle(idle) = &context.minimap else {
         return None;
     };
@@ -458,8 +449,8 @@ fn update_pos(context: &Context, mat: &Mat) -> Option<(Point, Rect)> {
             Player::Detecting => None,
         };
         if prev_pos.is_none() || prev_pos.unwrap() != pos {
-            println!("player pos: {:?} / {:?}", pos, minimap_bbox);
+            debug!(target: "player", "position updated in minimap: {:?} in {:?}", pos, minimap_bbox);
         }
     }
-    Some((pos, bbox))
+    Some(pos)
 }

@@ -1,16 +1,29 @@
-use opencv::core::Rect;
+use opencv::core::{Mat, Rect};
 
-#[derive(Debug)]
+use super::{Context, Contextual, detect::detect_erda_shower};
+
+#[derive(Clone, Copy, Debug)]
 pub enum Skill {
     Detecting,
     Idle(Rect),
 }
 
-// impl UpdateState for SkillState {
-//     fn update(&self, context: &Context, grayscale: &Mat) -> Self {
-//         let Ok(rect) = detect_erda_shower(grayscale, 0.65) else {
-//             return Self::Detecting;
-//         };
-//         Self::Idle(rect)
-//     }
-// }
+#[derive(Clone, Copy, Debug)]
+pub enum SkillKind {
+    ErdaShower,
+}
+
+impl Contextual for Skill {
+    type Extra = SkillKind;
+
+    fn update(&self, _: &Context, mat: &Mat, extra: SkillKind) -> Self {
+        match self {
+            Skill::Detecting => match extra {
+                SkillKind::ErdaShower => detect_erda_shower(mat, 0.65),
+            }
+            .map(Skill::Idle)
+            .unwrap_or(Skill::Detecting),
+            Skill::Idle(rect) => Skill::Idle(*rect),
+        }
+    }
+}

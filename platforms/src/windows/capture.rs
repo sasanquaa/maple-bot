@@ -1,6 +1,5 @@
 use std::ffi::c_void;
 use std::fmt;
-use std::mem;
 use std::ptr;
 use std::slice;
 
@@ -191,7 +190,7 @@ fn create_bitmap(dc: HDC, width: i32, height: i32) -> Result<Bitmap, Error> {
     let size = width as usize * height as usize * 4;
     let buffer = ptr::null_mut::<c_void>();
     let info = BITMAPV4HEADER {
-        bV4Size: mem::size_of::<BITMAPV4HEADER>() as u32,
+        bV4Size: size_of::<BITMAPV4HEADER>() as u32,
         bV4Width: width,
         bV4Height: -height,
         bV4Planes: 1,
