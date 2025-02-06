@@ -7,7 +7,7 @@ use backend::{
 use components::button::{OneButton, TwoButtons};
 use dioxus::{
     desktop::{
-        WindowBuilder, use_window,
+        WindowBuilder,
         wry::dpi::{PhysicalSize, Size},
     },
     document::EvalError,
@@ -19,17 +19,18 @@ use tracing_log::LogTracer;
 mod components;
 
 const TAILWIND_CSS: Asset = asset!("public/tailwind.css");
-const CLOSE_ICON: Asset = asset!("assets/close.svg");
-const MINIMIZE_ICON: Asset = asset!("assets/minimize.svg");
 
 fn main() {
     LogTracer::init().unwrap();
     let window = WindowBuilder::new()
-        .with_decorations(false)
         .with_inner_size(Size::Physical(PhysicalSize::new(510, 400)))
         .with_resizable(false)
+        .with_maximizable(false)
+        .with_title("Maple Bot")
         .with_always_on_top(true);
-    let cfg = dioxus::desktop::Config::default().with_window(window);
+    let cfg = dioxus::desktop::Config::default()
+        .with_menu(None)
+        .with_window(window);
     dioxus::LaunchBuilder::desktop().with_cfg(cfg).launch(App);
 }
 
@@ -37,68 +38,12 @@ fn main() {
 fn App() -> Element {
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
-        Header {}
         div {
             class: "flex",
             Minimap {}
             div {
                 class: "w-[160px]",
                 Characters {}
-            }
-        }
-    }
-}
-
-#[component]
-fn Header() -> Element {
-    let desktop = use_window();
-    let mut do_drag = use_signal_sync(|| false);
-
-    use_effect(move || {
-        if do_drag() {
-            let _ = desktop.window.drag_window();
-        }
-    });
-    use_future(move || async move {
-        let mut drag = document::eval(include_str!("js/header.js"));
-        loop {
-            let Ok(drag) = drag.recv::<bool>().await else {
-                continue;
-            };
-            *do_drag.write() = drag;
-        }
-    });
-
-    rsx! {
-        div {
-            id: "header",
-            class: "w-full pl-[16px] h-[34px]",
-            div {
-                class: "flex flex-row h-full items-center justify-between",
-                div {
-                    class: "shrink-0",
-                    p {
-                        class: "text-sm text-black",
-                        "Maple Bot"
-                    }
-                }
-                div {
-                    class: "flex flex-row items-center",
-                    div {
-                        object {
-                            class: "w-[36px] h-[36px] p-[4px]",
-                            data: MINIMIZE_ICON,
-                            type: "image/svg+xml"
-                        }
-                    }
-                    div {
-                        object {
-                            class: "w-[36px] h-[36px] p-[4px]",
-                            data: CLOSE_ICON,
-                            type: "image/svg+xml"
-                        }
-                    }
-                }
             }
         }
     }
