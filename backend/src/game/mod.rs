@@ -7,9 +7,7 @@ pub mod skill;
 
 use anyhow::{Result, anyhow};
 use opencv::core::{Mat, MatTraitConst, MatTraitConstManual, Vec4b};
-use platforms::windows::{
-    bitmap::rgb_to_bitmap, capture::DynamicCapture, handle::Handle, keys::Keys,
-};
+use platforms::windows::{capture::DynamicCapture, handle::Handle, keys::Keys};
 
 use clock::FpsClock;
 use mat::OwnedMat;
@@ -79,7 +77,6 @@ impl Context {
                     [bgra[2], bgra[1], bgra[0], 255]
                 })
                 .collect::<Vec<u8>>();
-            // let minimap = rgb_to_bitmap(minimap, idle.bbox.width, idle.bbox.height);
             return Ok((minimap, idle.bbox.width as usize, idle.bbox.height as usize));
         }
         Err(anyhow!("minimap not found"))
@@ -93,7 +90,6 @@ impl Context {
                 .iter::<Vec4b>()?
                 .flat_map(|rgba| rgba.1)
                 .collect::<Vec<u8>>();
-            let name = rgb_to_bitmap(name, idle.bbox_name.width, idle.bbox_name.height);
             return Ok(name);
         }
         Err(anyhow!("minimap name not found"))

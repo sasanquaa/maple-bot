@@ -1,8 +1,5 @@
 @import "tailwindcss";
 
-body {
-    background-color: #0f1116;
-    color: #ffffff;
-    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-    margin: 20px;
+@theme {
+    --font-meiryo: Meiryo, sans-serif;
 }

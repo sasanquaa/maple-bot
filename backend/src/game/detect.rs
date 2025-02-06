@@ -1,5 +1,5 @@
 use core::slice::SlicePattern;
-use std::sync::LazyLock;
+use std::{collections::HashMap, sync::LazyLock};
 
 use anyhow::{Ok, Result, anyhow};
 use log::debug;
@@ -7,9 +7,9 @@ use opencv::{
     boxed_ref::BoxedRef,
     core::{
         CV_8U, CV_32FC3, CV_32S, CmpTypes, Mat, MatExprTraitConst, MatTrait, MatTraitConst,
-        MatTraitConstManual, ModifyInplace, Point, Range, Rect, Scalar, Size, ToInputArray, Vector,
-        add, add_weighted_def, bitwise_and_def, compare, divide2_def, find_non_zero, min_max_loc,
-        no_array, subtract_def, transpose_nd,
+        MatTraitConstManual, ModifyInplace, Point, Range, Rect, Scalar, Size, ToInputArray, Vec4b,
+        Vector, add, add_weighted_def, bitwise_and_def, compare, divide2_def, find_non_zero,
+        min_max_loc, no_array, subtract_def, transpose_nd,
     },
     imgcodecs::{self, IMREAD_GRAYSCALE},
     imgproc::{
@@ -100,7 +100,7 @@ fn detect_template(
     }
 }
 
-pub fn detect_minimap(mat: &Mat, confidence_threshold: f32) -> Result<Rect> {
+pub fn detect_minimap(mat: &Mat, confidence_threshold: f32, border_threshold: u8) -> Result<Rect> {
     let size = mat.size()?;
     let (mat_in, w_ratio, h_ratio) = preprocess_for_minimap(mat)?;
     let result = MINIMAP_MODEL.run([to_session_input_value(&mat_in)?])?;
@@ -130,10 +130,10 @@ pub fn detect_minimap(mat: &Mat, confidence_threshold: f32) -> Result<Rect> {
             ))
         }
     });
-    // expands out a few pixels (2) to include the whole border
+    // expands out a few pixels to include the whole border for thresholding
     fn expand_bbox(bbox: &Rect) -> Rect {
-        let x = (bbox.x - 2).max(0);
-        let y = (bbox.y - 2).max(0);
+        let x = (bbox.x - 3).max(0);
+        let y = (bbox.y - 3).max(0);
         let x_size = (bbox.x - x) * 2;
         let y_size = (bbox.y - y) * 2;
         Rect::new(x, y, bbox.width + x_size, bbox.height + y_size)
@@ -167,25 +167,60 @@ pub fn detect_minimap(mat: &Mat, confidence_threshold: f32) -> Result<Rect> {
             })
             .max_by(|a, b| a.area().cmp(&b.area()))
     });
-    bound
-        .and_then(|bound| {
-            let bbox = expand_bbox(&bbox.unwrap());
-            let bound = Rect::from_points(bound.tl() + bbox.tl(), bound.br() + bbox.tl());
-            debug!(
-                target: "minimap",
-                "yolo bbox and contour bbox areas: {:?} {:?}",
-                bbox.area(),
-                bound.area()
-            );
-            // the detected contour should be contained
-            // inside the detected minimap when expanded
-            if (bbox & bound) == bound && (bbox.area() - bound.area()) >= 1500 {
-                Some(bound)
-            } else {
-                None
+    let bound = bound.and_then(|bound| {
+        let bbox = expand_bbox(&bbox.unwrap());
+        let bound = Rect::from_points(bound.tl() + bbox.tl(), bound.br() + bbox.tl());
+        debug!(
+            target: "minimap",
+            "yolo bbox and contour bbox areas: {:?} {:?}",
+            bbox.area(),
+            bound.area()
+        );
+        // the detected contour should be contained
+        // inside the detected minimap when expanded
+        if (bbox & bound) == bound && (bbox.area() - bound.area()) >= 1500 {
+            Some(bound)
+        } else {
+            None
+        }
+    });
+    // crop the white border
+    let crop = bound.and_then(|bound| {
+        // offset in by 10% to avoid the round border
+        // and use top border as basis
+        let range = (bound.width as f32 * 0.1) as i32;
+        let start = bound.x + range;
+        let end = bound.x + bound.width - range + 1;
+        let mut counts = HashMap::<i32, i32>::new();
+        for col in start..end {
+            let mut count = 0;
+            for row in bound.y..(bound.y + bound.height) {
+                if mat
+                    .at_2d::<Vec4b>(row, col)
+                    .unwrap()
+                    .iter()
+                    .all(|v| *v >= border_threshold)
+                {
+                    count += 1;
+                } else {
+                    break;
+                }
             }
-        })
-        .ok_or(anyhow!("minimap not found"))
+            counts.entry(count).and_modify(|c| *c += 1).or_insert(1);
+        }
+        debug!(target: "minimap", "border pixel count {:?}", counts);
+        counts.into_iter().max_by(|a, b| a.1.cmp(&b.1)).map(|e| e.0)
+    });
+    crop.map(|count| {
+        let bound = bound.unwrap();
+        Rect::new(
+            bound.x + count,
+            bound.y + count,
+            bound.width - count * 2,
+            bound.height - count * 2,
+        )
+    })
+    .ok_or(anyhow!("minimap not found"))
 }
 
 pub fn detect_minimap_name(mat: &Mat, minimap: &Rect, score_threshold: f64) -> Result<Rect> {

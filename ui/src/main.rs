@@ -1,58 +1,144 @@
-use backend::game;
+use std::ops::DerefMut;
+
+use backend::{
+    game,
+    models::{Character, query_characters},
+};
+use components::button::{OneButton, TwoButtons};
 use dioxus::{
     desktop::{
-        WindowBuilder,
+        WindowBuilder, use_window,
         wry::dpi::{PhysicalSize, Size},
     },
+    document::EvalError,
     prelude::*,
 };
 use tokio::{sync::mpsc, task::spawn_blocking};
+use tracing_log::LogTracer;
 
-const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
+mod components;
+
+const TAILWIND_CSS: Asset = asset!("public/tailwind.css");
+const CLOSE_ICON: Asset = asset!("assets/close.svg");
+const MINIMIZE_ICON: Asset = asset!("assets/minimize.svg");
 
 fn main() {
+    LogTracer::init().unwrap();
     let window = WindowBuilder::new()
         .with_decorations(false)
+        .with_inner_size(Size::Physical(PhysicalSize::new(510, 400)))
         .with_resizable(false)
-        .with_inner_size(Size::Physical(PhysicalSize::new(384, 216)));
+        .with_always_on_top(true);
     let cfg = dioxus::desktop::Config::default().with_window(window);
-    LaunchBuilder::desktop().with_cfg(cfg).launch(App);
+    dioxus::LaunchBuilder::desktop().with_cfg(cfg).launch(App);
 }
 
 #[component]
 fn App() -> Element {
-    // let mut minimap = use_signal(String::new);
-    // let mut minimap_name = use_signal(String::new);
+    rsx! {
+        document::Link { rel: "stylesheet", href: TAILWIND_CSS }
+        Header {}
+        div {
+            class: "flex",
+            Minimap {}
+            div {
+                class: "w-[160px]",
+                Characters {}
+            }
+        }
+    }
+}
+
+#[component]
+fn Header() -> Element {
+    let desktop = use_window();
+    let mut do_drag = use_signal_sync(|| false);
+
+    use_effect(move || {
+        if do_drag() {
+            let _ = desktop.window.drag_window();
+        }
+    });
+    use_future(move || async move {
+        let mut drag = document::eval(include_str!("js/header.js"));
+        loop {
+            let Ok(drag) = drag.recv::<bool>().await else {
+                continue;
+            };
+            *do_drag.write() = drag;
+        }
+    });
+
+    rsx! {
+        div {
+            id: "header",
+            class: "w-full pl-[16px] h-[34px]",
+            div {
+                class: "flex flex-row h-full items-center justify-between",
+                div {
+                    class: "shrink-0",
+                    p {
+                        class: "text-sm text-black",
+                        "Maple Bot"
+                    }
+                }
+                div {
+                    class: "flex flex-row items-center",
+                    div {
+                        object {
+                            class: "w-[36px] h-[36px] p-[4px]",
+                            data: MINIMIZE_ICON,
+                            type: "image/svg+xml"
+                        }
+                    }
+                    div {
+                        object {
+                            class: "w-[36px] h-[36px] p-[4px]",
+                            data: CLOSE_ICON,
+                            type: "image/svg+xml"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn Minimap() -> Element {
+    let mut grid_width = use_signal_sync(|| 0);
+    let mut grid_height = use_signal_sync(|| 0);
 
     use_future(move || async move {
-        let canvas = document::eval(
-            r#"
-                let canvas = document.getElementById("canvas-minimap");
-                let ctx = canvas.getContext("2d");
-                while (true) {
-                    let [buffer, width, height] = await dioxus.recv();
-                    let data = new ImageData(new Uint8ClampedArray(buffer), width, height);
-                    let bitmap = await createImageBitmap(data);
-                    ctx.drawImage(bitmap, 0, 0);
-                }
-            "#,
-        );
         let (tx, mut rx) = mpsc::channel::<(Vec<u8>, usize, usize)>(1);
         let _ = spawn(async move {
+            let mut canvas = document::eval(include_str!("js/minimap.js"));
             loop {
                 let result = rx.recv().await;
                 let Some(frame) = result else {
                     continue;
                 };
-                let _ = canvas.send(frame);
+                let Err(error) = canvas.send(frame) else {
+                    continue;
+                };
+                if matches!(error, EvalError::Finished) {
+                    // probably: https://github.com/DioxusLabs/dioxus/issues/2979
+                    canvas = document::eval(include_str!("js/minimap.js"));
+                }
             }
         });
         let _ = spawn_blocking(move || {
             game::Context::new()
                 .expect("failed to start game update loop")
                 .update_loop(|context| {
-                    if let Ok(frame) = context.minimap() {
-                        let _ = tx.try_send(frame);
+                    if let Ok((bytes, width, height)) = context.minimap() {
+                        let cur_width = *grid_width.peek();
+                        let cur_height = *grid_height.peek();
+                        if cur_width != width || cur_height != height {
+                            *grid_width.write() = width;
+                            *grid_height.write() = height;
+                        }
+                        let _ = tx.try_send((bytes, width, height));
                     }
                 })
         })
@@ -60,11 +146,112 @@ fn App() -> Element {
     });
 
     rsx! {
-        document::Stylesheet {
-            href: TAILWIND_CSS
-        }
-        canvas {
-            id: "canvas-minimap"
+        div {
+            class: "grid grid-flow-row auto-rows-max p-[16px] w-[350px] place-items-center",
+            p {
+                "Player State"
+            }
+            div {
+                class: "flex w-full relative",
+                canvas {
+                    class: "w-full",
+                    id: "canvas-minimap",
+                },
+                canvas {
+                    id: "canvas-minimap-magnifier",
+                    class: "absolute hidden",
+                }
+            }
+            p {
+                "Action 1"
+            }
+            p {
+                "Action 2"
+            }
+            p {
+                "Action 3"
+            }
+            p {
+                "Action 4"
+            }
         }
     }
+}
+
+#[component]
+fn Characters() -> Element {
+    let characters = use_resource(|| async {
+        spawn_blocking(|| query_characters().unwrap_or_default())
+            .await
+            .unwrap()
+    });
+    let mut creating = use_signal(|| false);
+    let mut creating_character = use_signal(Character::default);
+
+    use_effect(move || {
+        if creating() {
+            *creating_character.write() = Character::default();
+        }
+    });
+
+    rsx! {
+        match characters() {
+            Some(characters) => rsx! {
+                div {
+                    class: "grid grid-flow-row grid-cols-1 gap-y-3 w-40 h-fit",
+                    if !creating() {
+                        OneButton {
+                            on_ok: move |_| {
+                                *creating.write() = true;
+                            },
+                            "Create"
+                        }
+                    } else {
+                        input {
+                            class: "font-meiryo",
+                            oninput: move |e| {
+                                creating_character.write().deref_mut().name = e.value();
+                            },
+                            placeholder: "Character name"
+                        }
+                        div {
+                            class: "flex flex-row gap-x-2",
+                            OneButton {
+                                on_ok: move |_| {
+                                    *creating.write() = true;
+                                },
+                                "Add skill"
+                            }
+                        }
+                        TwoButtons {
+                            on_ok: move |_| {
+                                *creating.write() = false;
+                            },
+                            ok_body: rsx! {"Save"},
+                            on_cancel: move |_| {
+                                *creating.write() = false;
+                            },
+                            cancel_body: rsx! {"Cancel"}
+                        }
+                    }
+                    ul {
+                        for character in characters {
+                            li {
+                                p {
+                                    class: "text-sm text-dark",
+                                    {character.name}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            None => rsx! {},
+        }
+    }
+}
+
+#[component]
+fn Dropdown() -> Element {
+    rsx! {}
 }

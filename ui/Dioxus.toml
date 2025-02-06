@@ -1,24 +1,14 @@
 [application]
-
-# App (Project) Name
-name = "ui"
+name = "maple-bot"
 
 [web.app]
+title = "Maple Bot"
 
-# HTML title tag content
-title = "ui"
+[web.watcher]
+watch_path = ["src", "assets"]
 
-# include `assets` in web platform
 [web.resource]
-
-# Additional CSS style files
-style = []
-
-# Additional JavaScript files
+style = ["public/tailwind.css"]
 script = []
 
 [web.resource.dev]
-
-# Javascript code file
-# serve: [dev-server] only
-script = []

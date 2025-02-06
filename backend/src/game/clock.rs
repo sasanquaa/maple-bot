@@ -27,7 +27,7 @@ impl FpsClock {
         if diff > 0.0 {
             thread::sleep(Duration::new(0, diff as u32))
         } else {
-            debug!(target: "context", "ticking running late at {diff:?}");
+            debug!(target: "context", "ticking running late at {}", (diff / 1_000_000.0).abs());
         }
         self.last_tick_time.set(Instant::now());
     }
