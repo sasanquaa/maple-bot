@@ -3,8 +3,8 @@ use std::cell::Cell;
 use windows::Win32::UI::{
     Input::KeyboardAndMouse::{
         INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
-        KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW, SendInput, VIRTUAL_KEY, VK_C, VK_DOWN,
-        VK_F, VK_LEFT, VK_RIGHT, VK_SPACE, VK_UP,
+        KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW, SendInput, VIRTUAL_KEY, VK_A, VK_C,
+        VK_DOWN, VK_F, VK_LEFT, VK_RIGHT, VK_SPACE, VK_UP, VK_W, VK_Y,
     },
     WindowsAndMessaging::GetForegroundWindow,
 };
@@ -24,8 +24,11 @@ pub enum KeyKind {
     LEFT,
     RIGHT,
     SPACE,
+    Y,
     F,
     C,
+    A,
+    W,
 }
 
 impl Keys {
@@ -96,6 +99,9 @@ fn to_vkey(kind: KeyKind) -> VIRTUAL_KEY {
         KeyKind::SPACE => VK_SPACE,
         KeyKind::F => VK_F,
         KeyKind::C => VK_C,
+        KeyKind::A => VK_A,
+        KeyKind::Y => VK_Y,
+        KeyKind::W => VK_W,
     }
 }
 

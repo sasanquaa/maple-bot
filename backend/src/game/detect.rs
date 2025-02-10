@@ -1,76 +1,130 @@
 use core::slice::SlicePattern;
-use std::{collections::HashMap, sync::LazyLock};
+use std::{
+    collections::HashMap,
+    sync::{
+        LazyLock, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
-use anyhow::{Ok, Result, anyhow};
+use anyhow::{Result, anyhow};
 use log::debug;
 use opencv::{
     boxed_ref::BoxedRef,
     core::{
-        CV_8U, CV_32FC3, CV_32S, CmpTypes, Mat, MatExprTraitConst, MatTrait, MatTraitConst,
-        MatTraitConstManual, ModifyInplace, Point, Range, Rect, Scalar, Size, ToInputArray, Vec4b,
-        Vector, add, add_weighted_def, bitwise_and_def, compare, divide2_def, find_non_zero,
+        CMP_EQ, CMP_GT, CV_8U, CV_32FC3, CV_32S, Mat, MatExprTraitConst, MatTrait, MatTraitConst,
+        MatTraitConstManual, ModifyInplace, Point, Ptr, Range, Rect, Scalar, Size, ToInputArray,
+        Vec4b, Vector, add, add_weighted_def, bitwise_and_def, compare, divide2_def, find_non_zero,
         min_max_loc, no_array, subtract_def, transpose_nd,
     },
+    dnn::{
+        ModelTrait, TextRecognitionModel, TextRecognitionModelTrait, TextRecognitionModelTraitConst,
+    },
+    img_hash::{BLOCK_MEAN_HASH_MODE_1, BlockMeanHash},
     imgcodecs::{self, IMREAD_GRAYSCALE},
     imgproc::{
         CC_STAT_AREA, CC_STAT_HEIGHT, CC_STAT_LEFT, CC_STAT_TOP, CC_STAT_WIDTH,
-        CHAIN_APPROX_SIMPLE, COLOR_BGRA2GRAY, COLOR_BGRA2RGB, INTER_AREA, INTER_LINEAR, MORPH_RECT,
-        RETR_EXTERNAL, THRESH_OTSU, TM_CCOEFF_NORMED, bounding_rect,
+        CHAIN_APPROX_SIMPLE, COLOR_BGRA2GRAY, COLOR_BGRA2RGB, INTER_AREA, INTER_CUBIC, MORPH_RECT,
+        RETR_EXTERNAL, THRESH_BINARY, THRESH_OTSU, TM_CCOEFF_NORMED, bounding_rect,
         connected_components_with_stats, cvt_color_def, dilate_def, find_contours_def,
         get_structuring_element_def, match_template_def, min_area_rect, resize, threshold,
     },
+    prelude::{ImgHashBaseTrait, ImgHashBaseTraitConst},
     traits::OpenCVIntoExternContainer,
 };
 use ort::{
     execution_providers::CUDAExecutionProvider,
-    session::{Session, SessionInputValue, SessionOutputs, builder::GraphOptimizationLevel},
+    session::{Session, SessionInputValue, SessionOutputs},
     value::Tensor,
 };
 
-static MINIMAP_MODEL: LazyLock<Session> = LazyLock::new(|| {
-    Session::builder()
-        .and_then(|b| b.with_optimization_level(GraphOptimizationLevel::Level3))
-        .and_then(|b| b.with_execution_providers([CUDAExecutionProvider::default().build()]))
-        .and_then(|b| b.commit_from_memory(include_bytes!(env!("MINIMAP_MODEL"))))
-        .expect("unable to build minimap detection session")
-});
+/// Computes the two BGRA `Mat` images similarity score.
+pub fn compute_mats_similarity_score(
+    first_mat: &impl ToInputArray,
+    second_mat: &impl ToInputArray,
+) -> Result<f64> {
+    static BLOCK_MEAN_HASHER: LazyLock<Mutex<Ptr<BlockMeanHash>>> =
+        LazyLock::new(|| Mutex::new(BlockMeanHash::create(BLOCK_MEAN_HASH_MODE_1).unwrap()));
 
-static TEXT_DETECTION_MODEL: LazyLock<Session> = LazyLock::new(|| {
-    Session::builder()
-        .and_then(|b| b.with_optimization_level(GraphOptimizationLevel::Level3))
-        .and_then(|b| b.with_execution_providers([CUDAExecutionProvider::default().build()]))
-        .and_then(|b| b.commit_from_memory(include_bytes!(env!("TEXT_DETECTION_MODEL"))))
-        .expect("unable to build minimap detection session")
-});
+    let mut first_hash = Mat::default();
+    let mut second_hash = Mat::default();
+    let mut hasher = LazyLock::force(&BLOCK_MEAN_HASHER).lock().unwrap();
+    hasher.compute(first_mat, &mut first_hash).unwrap();
+    hasher.compute(second_mat, &mut second_hash).unwrap();
+    let result = hasher.compare(&first_hash, &second_hash).unwrap();
+    Ok(result)
+}
 
-static PLAYER: LazyLock<Mat> = LazyLock::new(|| {
-    imgcodecs::imdecode(include_bytes!(env!("PLAYER_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
-});
-
-static ERDA_SHOWER: LazyLock<Mat> = LazyLock::new(|| {
-    imgcodecs::imdecode(
-        include_bytes!(env!("ERDA_SHOWER_TEMPLATE")),
-        IMREAD_GRAYSCALE,
-    )
-    .unwrap()
-});
-
+/// Detects the Erda Shower skill from the given BGRA `Mat` image.
 pub fn detect_erda_shower(mat: &Mat, threshold: f64) -> Result<Rect> {
-    let mat = to_grayscale(mat, true)?;
+    static ERDA_SHOWER: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("ERDA_SHOWER_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+
+    let size = mat.size().unwrap();
+    // crop to bottom right of the image for skill bar
+    let crop_x = size.width / 2;
+    let crop_y = size.height / 5;
+    let crop_bbox = Rect::new(size.width - crop_x, size.height - crop_y, crop_x, crop_y);
+    let skill_bar = mat.roi(crop_bbox).unwrap();
+    let skill_bar = to_grayscale(&skill_bar, true);
     detect_template(
-        &mat,
+        &skill_bar,
         LazyLock::force(&ERDA_SHOWER),
         Point::new(0, 0),
         threshold,
     )
+    .map(|bbox| bbox + crop_bbox.tl())
 }
 
-pub fn detect_player(mat: &Mat, minimap: &Rect, threshold: f64) -> Result<Rect> {
-    let mat = to_grayscale(mat, true)?;
-    let mat = mat.roi(*minimap)?;
-    detect_template(&mat, LazyLock::force(&PLAYER), minimap.tl(), threshold)
+/// Detects the player from the given BGRA image `Mat` and `minimap` bounding box.
+pub fn detect_player(mat: &Mat, minimap: &Rect) -> Result<Rect> {
+    const PLAYER_IDEAL_RATIO_THRESHOLD: f64 = 0.8;
+    const PLAYER_DEFAULT_RATIO_THRESHOLD: f64 = 0.6;
+    static PLAYER_IDEAL_RATIO: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("PLAYER_IDEAL_RATIO_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static PLAYER_DEFAULT_RATIO: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("PLAYER_DEFAULT_RATIO_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static WAS_IDEAL_RATIO: AtomicBool = AtomicBool::new(false);
+
+    let minimap_region = mat.roi(*minimap)?;
+    let minimap_region = to_grayscale(&minimap_region, true);
+    let was_ideal_ratio = WAS_IDEAL_RATIO.load(Ordering::Acquire);
+    let template = if was_ideal_ratio {
+        LazyLock::force(&PLAYER_IDEAL_RATIO)
+    } else {
+        LazyLock::force(&PLAYER_DEFAULT_RATIO)
+    };
+    let threshold = if was_ideal_ratio {
+        PLAYER_IDEAL_RATIO_THRESHOLD
+    } else {
+        PLAYER_DEFAULT_RATIO_THRESHOLD
+    };
+    let result = detect_template(&minimap_region, template, minimap.tl(), threshold);
+    if let Ok(bbox) = result {
+        debug_mat(&minimap_region, 1, &[bbox - minimap.tl()]);
+    }
+    if result.is_err() {
+        WAS_IDEAL_RATIO.store(!was_ideal_ratio, Ordering::Release);
+    }
+    result
 }
 
+/// Detects the `template` from the given BGRA image `Mat`.
 fn detect_template(
     mat: &impl ToInputArray,
     template: &Mat,
@@ -100,17 +154,40 @@ fn detect_template(
     }
 }
 
+/// Detects the minimap from the given BGRA `Mat` image.
+///
+/// `confidence_threshold` determines the threshold for the detection to consider a match.
+/// And the `border_threshold` determines the "whiteness" of the minimap's white border.
 pub fn detect_minimap(mat: &Mat, confidence_threshold: f32, border_threshold: u8) -> Result<Rect> {
-    let size = mat.size()?;
-    let (mat_in, w_ratio, h_ratio) = preprocess_for_minimap(mat)?;
-    let result = MINIMAP_MODEL.run([to_session_input_value(&mat_in)?])?;
-    let mat_out = from_session_output_value(&result)?;
+    static MINIMAP_MODEL: LazyLock<Session> = LazyLock::new(|| {
+        Session::builder()
+            .and_then(|b| {
+                b.with_execution_providers([CUDAExecutionProvider::default().build()])?
+                    .commit_from_memory(include_bytes!(env!("MINIMAP_MODEL")))
+            })
+            .expect("unable to build minimap detection session")
+    });
+    // expands out a few pixels to include the whole white border for thresholding
+    // after yolo detection
+    fn expand_bbox(bbox: &Rect) -> Rect {
+        let count = (bbox.width.max(bbox.height) as f32 * 0.01).ceil() as i32;
+        debug!(target: "minimap", "expand border by {count}");
+        let x = (bbox.x - count).max(0);
+        let y = (bbox.y - count).max(0);
+        let x_size = (bbox.x - x) * 2;
+        let y_size = (bbox.y - y) * 2;
+        Rect::new(x, y, bbox.width + x_size, bbox.height + y_size)
+    }
+
+    let size = mat.size().unwrap();
+    let (mat_in, w_ratio, h_ratio) = preprocess_for_minimap(mat);
+    let result = MINIMAP_MODEL
+        .run([norm_rgb_to_input_value(&mat_in)])
+        .unwrap();
+    let mat_out = from_output_value(&result);
     let pred = (0..mat_out.rows())
         // SAFETY: 0..outputs.rows() is within Mat bounds
-        .map(|i| {
-            unsafe { mat_out.at_row_unchecked::<f32>(i) }
-                .expect("unable to get row but row is within bound")
-        })
+        .map(|i| unsafe { mat_out.at_row_unchecked::<f32>(i).unwrap() })
         .max_by(|&a, &b| {
             // a and b have shapes [bbox(4) + class(1)]
             a[4].total_cmp(&b[4])
@@ -130,62 +207,49 @@ pub fn detect_minimap(mat: &Mat, confidence_threshold: f32, border_threshold: u8
             ))
         }
     });
-    // expands out a few pixels to include the whole border for thresholding
-    fn expand_bbox(bbox: &Rect) -> Rect {
-        let x = (bbox.x - 3).max(0);
-        let y = (bbox.y - 3).max(0);
-        let x_size = (bbox.x - x) * 2;
-        let y_size = (bbox.y - y) * 2;
-        Rect::new(x, y, bbox.width + x_size, bbox.height + y_size)
-    }
-    let minimap = bbox
-        .map(|bbox| expand_bbox(&bbox))
-        .and_then(|bbox| {
-            // grayscale
-            let minimap = mat.roi(bbox).ok()?;
-            to_grayscale(&minimap, false).ok()
-        })
-        .and_then(|mut mat| {
-            // threshold
-            unsafe {
-                mat.modify_inplace(|mat, mut mat_mut| {
-                    threshold(&mat, &mut mat_mut, 0.0, 255.0, THRESH_OTSU).ok()
-                })?;
-            }
-            Some(mat)
-        });
-    let contours = minimap.and_then(|mat| {
-        let mut vec = Vector::<Vector<Point>>::new();
-        find_contours_def(&mat, &mut vec, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE).ok()?;
-        Some(vec)
+    let minimap = bbox.map(|bbox| {
+        let bbox = expand_bbox(&bbox);
+        let mut minimap = to_grayscale(&mat.roi(bbox).unwrap(), false);
+        unsafe {
+            // SAFETY: threshold can be called in place.
+            minimap.modify_inplace(|mat, mat_mut| {
+                threshold(mat, mat_mut, 0.0, 255.0, THRESH_OTSU).unwrap()
+            });
+        }
+        minimap
     });
-    let bound = contours.and_then(|vec| {
+    // get only the outer contours
+    let contours = minimap.map(|mat| {
+        let mut vec = Vector::<Vector<Point>>::new();
+        find_contours_def(&mat, &mut vec, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE).unwrap();
+        vec
+    });
+    // pick the contour with maximum area
+    let contour = contours.and_then(|vec| {
         debug!(target: "minimap", "contours detection: {vec:?}");
         vec.into_iter()
-            .map(|contour| {
-                bounding_rect(&contour).expect("contour found but unable to retrieve bounding rect")
-            })
+            .map(|contour| bounding_rect(&contour).unwrap())
             .max_by(|a, b| a.area().cmp(&b.area()))
     });
-    let bound = bound.and_then(|bound| {
+    let contour = contour.and_then(|contour| {
         let bbox = expand_bbox(&bbox.unwrap());
-        let bound = Rect::from_points(bound.tl() + bbox.tl(), bound.br() + bbox.tl());
+        let contour = Rect::from_points(contour.tl() + bbox.tl(), contour.br() + bbox.tl());
         debug!(
             target: "minimap",
             "yolo bbox and contour bbox areas: {:?} {:?}",
             bbox.area(),
-            bound.area()
+            contour.area()
         );
-        // the detected contour should be contained
-        // inside the detected minimap when expanded
-        if (bbox & bound) == bound && (bbox.area() - bound.area()) >= 1500 {
-            Some(bound)
+        // the detected contour should be contained inside the detected yolo minimap when expanded
+        // 1500 is a fixed value for ensuring the contour is tight to the minimap white border
+        if (bbox & contour) == contour && (bbox.area() - contour.area()) >= 1500 {
+            Some(contour)
         } else {
             None
         }
     });
     // crop the white border
-    let crop = bound.and_then(|bound| {
+    let crop = contour.and_then(|bound| {
         // offset in by 10% to avoid the round border
         // and use top border as basis
         let range = (bound.width as f32 * 0.1) as i32;
@@ -212,55 +276,119 @@ pub fn detect_minimap(mat: &Mat, confidence_threshold: f32, border_threshold: u8
         counts.into_iter().max_by(|a, b| a.1.cmp(&b.1)).map(|e| e.0)
     });
     crop.map(|count| {
-        let bound = bound.unwrap();
+        let contour = contour.unwrap();
         Rect::new(
-            bound.x + count,
-            bound.y + count,
-            bound.width - count * 2,
-            bound.height - count * 2,
+            contour.x + count,
+            contour.y + count,
+            contour.width - count * 2,
+            contour.height - count * 2,
         )
     })
     .ok_or(anyhow!("minimap not found"))
 }
 
-pub fn detect_minimap_name(mat: &Mat, minimap: &Rect, score_threshold: f64) -> Result<Rect> {
+/// Detects the minimap name from the given BGRA `Mat` image.
+///
+/// `minimap` provides the previously detected minimap region so it can be cropped into.
+/// `score_threshold` determines the threshold for selecting text from the minimap region.
+pub fn detect_minimap_name(mat: &Mat, minimap: &Rect) -> Result<String> {
+    const TEXT_SCORE_THRESHOLD: f64 = 0.7;
+    const LINK_SCORE_THRESHOLD: f64 = 0.4;
+    static TEXT_RECOGNITION_MODEL: LazyLock<Mutex<TextRecognitionModel>> = LazyLock::new(|| {
+        Mutex::new(
+            TextRecognitionModel::from_file_def(env!("TEXT_RECOGNITION_MODEL"))
+                .and_then(|mut m| {
+                    m.set_input_params(
+                        1.0 / 127.5,
+                        Size::new(100, 32),
+                        Scalar::new(127.5, 127.5, 127.5, 0.0),
+                        false,
+                        false,
+                    )?;
+                    m.set_decode_type("CTC-greedy")?.set_vocabulary(
+                        &include_str!(env!("TEXT_RECOGNITION_ALPHABET"))
+                            .lines()
+                            .collect::<Vector<String>>(),
+                    )
+                })
+                .expect("unable to build text recognition model"),
+        )
+    });
+    static TEXT_DETECTION_MODEL: LazyLock<Session> = LazyLock::new(|| {
+        Session::builder()
+            .and_then(|b| {
+                b.with_execution_providers([CUDAExecutionProvider::default().build()])?
+                    .commit_from_memory(include_bytes!(env!("TEXT_DETECTION_MODEL")))
+            })
+            .expect("unable to build minimap name detection session")
+    });
+
+    // this function is adapted from
+    // https://github.com/clovaai/CRAFT-pytorch/blob/e332dd8b718e291f51b66ff8f9ef2c98ee4474c8/craft_utils.py#L19
+    // with minor changes
     fn extract_bboxes(
         mat: &BoxedRef<Mat>,
         w_ratio: f32,
         h_ratio: f32,
-        offset: i32,
-        score_threshold: f64,
-    ) -> Result<Vec<Rect>> {
+        x_offset: i32,
+        y_offset: i32,
+    ) -> Vec<Rect> {
         let text_score = mat
             .ranges(&Vector::from_iter([
-                Range::all()?,
-                Range::all()?,
-                Range::new(0, 1)?,
-            ]))?
+                Range::all().unwrap(),
+                Range::all().unwrap(),
+                Range::new(0, 1).unwrap(),
+            ]))
+            .unwrap()
             .clone_pointee();
-        let text_score = text_score.reshape_nd(1, &text_score.mat_size().as_slice()[..2])?;
-        let mut text_lower_score = Mat::default();
-        let mut link_score = Mat::default();
-        let mut combined_score = Mat::default();
-        threshold(&text_score, &mut text_lower_score, 0.4, 1.0, 0)?;
+        // remove last channel (not sure what other way to do it without clone_pointee first)
+        let text_score = text_score
+            .reshape_nd(1, &text_score.mat_size().as_slice()[..2])
+            .unwrap();
+
+        let mut text_low_score = Mat::default();
         threshold(
-            &mat.ranges(&Vector::from_iter([
-                Range::all()?,
-                Range::all()?,
-                Range::new(1, 2)?,
-            ]))?,
-            &mut link_score,
-            0.4,
+            &text_score,
+            &mut text_low_score,
+            LINK_SCORE_THRESHOLD,
             1.0,
             0,
-        )?;
+        )
+        .unwrap();
+
+        let mut link_score = mat
+            .ranges(&Vector::from_iter([
+                Range::all().unwrap(),
+                Range::all().unwrap(),
+                Range::new(1, 2).unwrap(),
+            ]))
+            .unwrap()
+            .clone_pointee();
+        // remove last channel (not sure what other way to do it without clone_pointee first)
+        let mut link_score = link_score
+            .reshape_nd_mut(1, &link_score.mat_size().as_slice()[..2])
+            .unwrap();
+        // SAFETY: can be modified in place
+        unsafe {
+            link_score.modify_inplace(|mat, mat_mut| {
+                threshold(mat, mat_mut, LINK_SCORE_THRESHOLD, 1.0, 0).unwrap();
+            });
+        }
+
+        let mut combined_score = Mat::default();
+        let mut gt_one_mask = Mat::default();
         add(
-            &text_lower_score,
+            &text_low_score,
             &link_score,
             &mut combined_score,
             &no_array(),
             CV_8U,
-        )?;
+        )
+        .unwrap();
+        compare(&combined_score, &Scalar::all(1.0), &mut gt_one_mask, CMP_GT).unwrap();
+        combined_score
+            .set_to(&Scalar::all(1.0), &gt_one_mask)
+            .unwrap();
 
         let mut bboxes = Vec::<Rect>::new();
         let mut labels = Mat::default();
@@ -272,224 +400,295 @@ pub fn detect_minimap_name(mat: &Mat, minimap: &Rect, score_threshold: f64) -> R
             &mut Mat::default(),
             4,
             CV_32S,
-        )?;
+        )
+        .unwrap();
         for i in 1..labels_count {
-            let area = *stats.at_2d::<i32>(i, CC_STAT_AREA)?;
-            if area < 10 {
+            let area = *stats.at_2d::<i32>(i, CC_STAT_AREA).unwrap();
+            if area < 210 {
+                // skip too small single character (number)
+                // and later re-detect afterward
                 continue;
             }
 
             let mut mask = Mat::default();
             let mut max_score = 0.0f64;
-            compare(
-                &labels,
-                &Scalar::all(i as f64),
-                &mut mask,
-                CmpTypes::CMP_EQ as i32,
-            )?;
-            min_max_loc(&text_score, None, Some(&mut max_score), None, None, &mask)?;
-            if max_score < score_threshold {
+            compare(&labels, &Scalar::all(i as f64), &mut mask, CMP_EQ).unwrap();
+            min_max_loc(&text_score, None, Some(&mut max_score), None, None, &mask).unwrap();
+            if max_score < TEXT_SCORE_THRESHOLD {
                 continue;
             }
 
-            let shape = mask.size()?;
-            let x = *stats.at_2d::<i32>(i, CC_STAT_LEFT)?;
-            let y = *stats.at_2d::<i32>(i, CC_STAT_TOP)?;
-            let w = *stats.at_2d::<i32>(i, CC_STAT_WIDTH)?;
-            let h = *stats.at_2d::<i32>(i, CC_STAT_HEIGHT)?;
-            let size =
-                ((area as f32 * w.min(h) as f32 / (w as f32 * h as f32)).sqrt() * 2.0) as i32;
-            let sx = (x - size).max(0);
-            let sy = (y - size).max(0);
+            let shape = mask.size().unwrap();
+            // SAFETY: The position (row, col) is guaranteed by OpenCV
+            let x = unsafe { *stats.at_2d_unchecked::<i32>(i, CC_STAT_LEFT).unwrap() };
+            let y = unsafe { *stats.at_2d_unchecked::<i32>(i, CC_STAT_TOP).unwrap() };
+            let w = unsafe { *stats.at_2d_unchecked::<i32>(i, CC_STAT_WIDTH).unwrap() };
+            let h = unsafe { *stats.at_2d_unchecked::<i32>(i, CC_STAT_HEIGHT).unwrap() };
+            let size = area as f64 * w.min(h) as f64 / (w as f64 * h as f64);
+            let size = ((size).sqrt() * 2.0) as i32;
+            let sx = (x - size + 1).max(0);
+            let sy = (y - size + 1).max(0);
             let ex = (x + w + size + 1).min(shape.width);
             let ey = (y + h + size + 1).min(shape.height);
-            let kernel = get_structuring_element_def(MORPH_RECT, Size::new(size + 1, size + 1))?;
+            let kernel_pad = if area < 250 { 6 } else { 4 };
+            let kernel = get_structuring_element_def(
+                MORPH_RECT,
+                Size::new(size + kernel_pad, size + kernel_pad),
+            )
+            .unwrap();
 
             let mut link_mask = Mat::default();
             let mut text_mask = Mat::default();
             let mut and_mask = Mat::default();
-            let mut seg_map = Mat::zeros(shape.height, shape.width, CV_8U)?.to_mat()?;
-            compare(
-                &link_score,
-                &Scalar::all(1.0),
-                &mut link_mask,
-                CmpTypes::CMP_EQ as i32,
-            )?;
-            compare(
-                &text_score,
-                &Scalar::all(0.0),
-                &mut text_mask,
-                CmpTypes::CMP_EQ as i32,
-            )?;
-            bitwise_and_def(&link_mask, &text_mask, &mut and_mask)?;
-            seg_map.set_to(&Scalar::all(255.0), &mask)?;
-            seg_map.set_to(&Scalar::all(255.0), &and_mask)?;
+            let mut seg_map = Mat::zeros(shape.height, shape.width, CV_8U)
+                .unwrap()
+                .to_mat()
+                .unwrap();
+            compare(&link_score, &Scalar::all(1.0), &mut link_mask, CMP_EQ).unwrap();
+            compare(&text_score, &Scalar::all(0.0), &mut text_mask, CMP_EQ).unwrap();
+            bitwise_and_def(&link_mask, &text_mask, &mut and_mask).unwrap();
+            seg_map.set_to(&Scalar::all(255.0), &mask).unwrap();
+            seg_map.set_to(&Scalar::all(0.0), &and_mask).unwrap();
 
             let mut seg_contours = Vector::<Point>::new();
-            let mut seg_roi =
-                seg_map.roi_mut(Rect::from_points(Point::new(sx, sy), Point::new(ex, ey)))?;
+            let mut seg_roi = seg_map
+                .roi_mut(Rect::from_points(Point::new(sx, sy), Point::new(ex, ey)))
+                .unwrap();
             // SAFETY: all of the functions below can be called in place.
             unsafe {
-                seg_roi.modify_inplace::<Result<()>>(|mat, mut mat_mut| {
-                    dilate_def(&mat, &mut mat_mut, &kernel)?;
-                    mat.copy_to(&mut mat_mut)?;
-                    Ok(())
-                })?
+                seg_roi.modify_inplace(|mat, mat_mut| {
+                    dilate_def(mat, mat_mut, &kernel).unwrap();
+                    mat.copy_to(mat_mut).unwrap();
+                });
             }
-            find_non_zero(&seg_map, &mut seg_contours)?;
+            find_non_zero(&seg_map, &mut seg_contours).unwrap();
 
-            let rect = min_area_rect(&seg_contours)?.bounding_rect2f()?;
-            let tl = rect.tl();
+            let contour = min_area_rect(&seg_contours)
+                .unwrap()
+                .bounding_rect2f()
+                .unwrap();
+            let tl = contour.tl();
             let tl = Point::new(
-                (tl.x * w_ratio * 2.0) as i32 + offset,
-                (tl.y * h_ratio * 2.0) as i32,
+                (tl.x * w_ratio * 2.0) as i32 + x_offset,
+                (tl.y * h_ratio * 2.0) as i32 + y_offset,
             );
-            let br = rect.br();
+            let br = contour.br();
             let br = Point::new(
-                (br.x * w_ratio * 2.0) as i32 + offset,
-                (br.y * h_ratio * 2.0) as i32,
+                (br.x * w_ratio * 2.0) as i32 + x_offset,
+                (br.y * h_ratio * 2.0) as i32 + y_offset,
             );
             bboxes.push(Rect::from_points(tl, br));
         }
-        Ok(bboxes)
+        bboxes
     }
 
-    let (mat, w_ratio, h_ratio, offset) = preprocess_for_minimap_name(mat, minimap)?;
-    let result = TEXT_DETECTION_MODEL.run([to_session_input_value(&mat)?])?;
-    let mat_out = from_session_output_value(&result)?;
-    let bboxes = extract_bboxes(&mat_out, w_ratio, h_ratio, offset, score_threshold)?;
-    let bboxes_max_y = bboxes
-        .iter()
-        .max_by(|a, b| (a.y + a.height).cmp(&(b.y + b.height)))
-        .map(|bbox| (bbox.y + bbox.height))
-        .ok_or(anyhow!("minimap name not found"))?;
-    let bbox = bboxes
+    let (mat_in, w_ratio, h_ratio, x_offset, y_offset) = preprocess_for_minimap_name(mat, minimap);
+    let result = TEXT_DETECTION_MODEL
+        .run([norm_rgb_to_input_value(&mat_in)])
+        .unwrap();
+    let mat_out = from_output_value(&result);
+    let bboxes = extract_bboxes(&mat_out, w_ratio, h_ratio, x_offset, y_offset);
+    // find the text boxes with y
+    // closes to the minimap
+    let mut bbox_match_y = None::<i32>;
+    let mut bbox_min_y_diff = i32::MAX;
+    for bbox in &bboxes {
+        let y = bbox.y + bbox.height;
+        let diff = minimap.y - y;
+        if diff > 8 && diff < bbox_min_y_diff {
+            bbox_match_y = Some(y);
+            bbox_min_y_diff = diff;
+        }
+    }
+    let bbox_match_y = bbox_match_y.ok_or(anyhow!("minimap name not found"))?;
+    let bbox_match_x = minimap.x + minimap.width;
+    let mut bboxes = bboxes
         .into_iter()
-        .filter(|bbox| bboxes_max_y - (bbox.y + bbox.height) <= 5)
-        .reduce(|a, b| a | b)
+        .filter(|bbox| {
+            let diff = bbox_match_y - (bbox.y + bbox.height);
+            diff <= 5 && (bbox.x + bbox.width) <= bbox_match_x
+        })
+        .collect::<Vec<Rect>>();
+    bboxes.sort_by(|a, b| a.x.cmp(&b.x));
+
+    // the model doesn't detect well on a single character level
+    // but it is crucial to be able to the detect the last character (a single number)
+    // as it helps distinguish between different map variations
+    // if the model is able to detect the digit, the number_bbox
+    // should contain all black pixels
+    let number_bbox = bboxes
+        .last()
         .map(|bbox| {
-            Rect::new(
-                bbox.x,
-                bbox.y,
-                minimap.x + minimap.width - bbox.x,
-                bbox.height,
-            )
+            let x = bbox.x + bbox.width;
+            let y = bbox.y;
+            let w = (minimap.x + minimap.width) - x;
+            let h = bbox.height;
+            Rect::new(x, y, w, h)
+        })
+        .and_then(|bbox| {
+            let mut number = to_grayscale(&mat.roi(bbox).unwrap(), true);
+            unsafe {
+                // SAFETY: threshold can be called in place.
+                number.modify_inplace(|mat, mat_mut| {
+                    let kernel = get_structuring_element_def(MORPH_RECT, Size::new(5, 5)).unwrap();
+                    threshold(mat, mat_mut, 180.0, 255.0, THRESH_BINARY).unwrap();
+                    dilate_def(mat, mat_mut, &kernel).unwrap();
+                });
+            }
+            bounding_rect(&number)
+                .ok()
+                .take_if(|bbox| bbox.area() > 0)
+                .map(|number| number + bbox.tl())
         });
-    debug!(target: "minimap", "name detection: {:?}", bbox);
-    bbox.ok_or(anyhow!("minimap name not found"))
+    if let Some(bbox) = number_bbox {
+        debug!(target: "minimap", "detected trailing number identifier {bbox:?}");
+        bboxes.push(bbox);
+    }
+
+    let recognizier = TEXT_RECOGNITION_MODEL.lock().unwrap();
+    let name = bboxes
+        .into_iter()
+        .filter_map(|word| {
+            let mut mat = mat.roi(word).unwrap().clone_pointee();
+            unsafe {
+                mat.modify_inplace(|mat, mat_mut| {
+                    cvt_color_def(mat, mat_mut, COLOR_BGRA2RGB).unwrap();
+                });
+            }
+            recognizier.recognize(&mat).ok()
+        })
+        .reduce(|a, b| a + &b);
+    debug!(target: "minimap", "name detection result {name:?}");
+    name.ok_or(anyhow!("minimap name not found"))
 }
 
-fn preprocess_for_minimap(mat: &Mat) -> Result<(Mat, f32, f32)> {
+/// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32` for minimap detection.
+///
+/// Returns a triplet of `(Mat, width_ratio, height_ratio)` with the ratios calculed from
+/// `old_size / new_size`.
+fn preprocess_for_minimap(mat: &Mat) -> (Mat, f32, f32) {
     let mut mat = mat.clone();
-    let (w_ratio, h_ratio) = resize_w_h_ratio(mat.size()?, 640.0, 640.0);
+    let (w_ratio, h_ratio) = resize_w_h_ratio(mat.size().unwrap(), 640.0, 640.0);
     // SAFETY: all of the functions below can be called in place.
     unsafe {
-        mat.modify_inplace::<Result<()>>(|mat, mut mat_mut| {
-            cvt_color_def(&mat, &mut mat_mut, COLOR_BGRA2RGB)?;
-            resize(
-                &mat,
-                &mut mat_mut,
-                Size::new(640, 640),
-                0.0,
-                0.0,
-                INTER_AREA,
-            )?;
-            mat.convert_to(&mut mat_mut, CV_32FC3, 1.0 / 255.0, 0.0)?;
-            Ok(())
-        })?
+        mat.modify_inplace(|mat, mat_mut| {
+            cvt_color_def(mat, mat_mut, COLOR_BGRA2RGB).unwrap();
+            resize(mat, mat_mut, Size::new(640, 640), 0.0, 0.0, INTER_AREA).unwrap();
+            mat.convert_to(mat_mut, CV_32FC3, 1.0 / 255.0, 0.0).unwrap();
+        });
     }
-    Ok((mat, w_ratio, h_ratio))
+    (mat, w_ratio, h_ratio)
 }
 
-fn preprocess_for_minimap_name(mat: &Mat, minimap: &Rect) -> Result<(Mat, f32, f32, i32)> {
+/// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32` for minimap name detection.
+///
+/// The preprocess is adapted from: https://github.com/clovaai/CRAFT-pytorch/blob/master/imgproc.py.
+///
+/// Returns a `(Mat, width_ratio, height_ratio, x_offset, y_offset)`.
+fn preprocess_for_minimap_name(mat: &Mat, minimap: &Rect) -> (Mat, f32, f32, i32, i32) {
+    let x_offset = minimap.x;
+    let y_offset = (minimap.y - minimap.height).max(0);
     let bbox = Rect::from_points(
-        Point::new(minimap.x, 0),
+        Point::new(x_offset, y_offset),
         Point::new(minimap.x + minimap.width, minimap.y),
     );
-    let mut mat = mat.roi(bbox)?.clone_pointee();
-    let size = mat.size()?;
-    let size_max = size.width.max(size.height) as f32;
-    let target_size = (1.5 * size_max).min(1280.0);
-    let target_ratio = target_size / size_max;
+    let mut mat = mat.roi(bbox).unwrap().clone_pointee();
+    let size = mat.size().unwrap();
+    let size_w = size.width as f32;
+    let size_h = size.height as f32;
+    let size_max = size_w.max(size_h);
+    let resize_size = 5.0 * size_max;
+    let resize_ratio = resize_size / size_max;
 
-    let target_w = (target_ratio * size.width as f32) as i32;
-    let target_w = target_w + (32 - target_w % 32);
-    let target_w_ratio = size.width as f32 / target_w as f32;
+    let resize_w = (resize_ratio * size_w) as i32;
+    let resize_w = (resize_w + 31) & !31; // rounds to multiple of 32
+    let resize_w_ratio = size_w / resize_w as f32;
 
-    let target_h = (target_ratio * size.height as f32) as i32;
-    let target_h = target_h + (32 - target_h % 32);
-    let target_h_ratio = size.height as f32 / target_h as f32;
+    let resize_h = (resize_ratio * size_h) as i32;
+    let resize_h = (resize_h + 31) & !31;
+    let resize_h_ratio = size_h / resize_h as f32;
     // SAFETY: all of the below functions can be called in place
     unsafe {
-        mat.modify_inplace::<Result<()>>(|mat, mut mat_mut| {
-            cvt_color_def(&mat, &mut mat_mut, COLOR_BGRA2RGB)?;
+        mat.modify_inplace(|mat, mat_mut| {
+            cvt_color_def(mat, mat_mut, COLOR_BGRA2RGB).unwrap();
             resize(
-                &mat,
-                &mut mat_mut,
-                Size::new(target_w, target_h),
+                mat,
+                mat_mut,
+                Size::new(resize_w, resize_h),
                 0.0,
                 0.0,
-                INTER_LINEAR,
-            )?;
-            mat.convert_to(&mut mat_mut, CV_32FC3, 1.0, 0.0)?;
-            subtract_def(
-                &mat,
-                &Scalar::new(123.675, 116.28, 103.53, 0.0),
-                &mut mat_mut,
-            )?;
-            divide2_def(&mat, &Scalar::new(58.395, 57.12, 57.375, 1.0), &mut mat_mut)?;
-            Ok(())
-        })?
+                INTER_CUBIC,
+            )
+            .unwrap();
+            mat.convert_to(mat_mut, CV_32FC3, 1.0, 0.0).unwrap();
+            // these values are pre-multiplied from the above link in normalizeMeanVariance
+            subtract_def(mat, &Scalar::new(123.675, 116.28, 103.53, 0.0), mat_mut).unwrap();
+            divide2_def(&mat, &Scalar::new(58.395, 57.12, 57.375, 1.0), mat_mut).unwrap();
+        });
     }
-    Ok((mat, target_w_ratio, target_h_ratio, minimap.x))
+    (mat, resize_w_ratio, resize_h_ratio, x_offset, y_offset)
 }
 
+/// Retrieves `(width, height)` ratios for resizing.
 #[inline(always)]
 fn resize_w_h_ratio(from: Size, to_w: f32, to_h: f32) -> (f32, f32) {
     (from.width as f32 / to_w, from.height as f32 / to_h)
 }
 
-fn to_grayscale(mat: &impl MatTraitConst, add_contrast: bool) -> Result<Mat> {
-    let mut mat = mat.try_clone()?;
+/// Converts an BGRA `Mat` image to grayscale.
+///
+/// `add_contrast` can be set to `true` in order to increase contrast by a fixed amount
+/// used for template matching.
+fn to_grayscale(mat: &impl MatTraitConst, add_contrast: bool) -> Mat {
+    let mut mat = mat.try_clone().unwrap();
     unsafe {
         // SAFETY: all of the functions below can be called in place.
-        mat.modify_inplace::<Result<()>>(|mat, mut mat_mut| {
-            cvt_color_def(mat, &mut mat_mut, COLOR_BGRA2GRAY)?;
+        mat.modify_inplace(|mat, mat_mut| {
+            cvt_color_def(mat, mat_mut, COLOR_BGRA2GRAY).unwrap();
             if add_contrast {
-                add_weighted_def(&mat, 1.5, &mat, 0.0, -80.0, &mut mat_mut)?;
+                add_weighted_def(mat, 1.5, mat, 0.0, -80.0, mat_mut).unwrap();
             }
-            Ok(())
-        })?
+        });
     }
-    Ok(mat)
+    mat
 }
 
-fn from_session_output_value<'a>(result: &SessionOutputs) -> Result<BoxedRef<'a, Mat>> {
-    let (dims, outputs) = result["output0"].try_extract_raw_tensor::<f32>()?;
+/// Extracts a borrowed `Mat` from `SessionOutputs`.
+///
+/// The returned `BoxedRef<'_, Mat>` has shape `[..dims]` with batch size (1) removed.
+fn from_output_value<'a>(result: &SessionOutputs) -> BoxedRef<'a, Mat> {
+    let (dims, outputs) = result["output0"].try_extract_raw_tensor::<f32>().unwrap();
     let dims = dims.iter().map(|&dim| dim as i32).collect::<Vec<i32>>();
-    let mat = Mat::new_nd_with_data(dims.as_slice(), outputs)?;
-    let mat = mat.reshape_nd(1, &dims.as_slice()[1..])?;
+    let mat = Mat::new_nd_with_data(dims.as_slice(), outputs).unwrap();
+    let mat = mat.reshape_nd(1, &dims.as_slice()[1..]).unwrap();
     let mat = mat.opencv_into_extern_container_nofail();
-    Ok(BoxedRef::from(mat))
+    BoxedRef::from(mat)
 }
 
-fn to_session_input_value(mat: &Mat) -> Result<SessionInputValue> {
-    let shape = [1]
-        .into_iter()
-        .chain(mat.mat_size().iter().copied())
-        .chain([mat.channels()])
-        .collect::<Vec<i32>>();
-    let shape_n = (shape.len() - 1) as i32;
-    let order = [0, shape_n]
-        .into_iter()
-        .chain(1..shape_n)
-        .collect::<Vector<i32>>();
-    let mat = mat.reshape_nd(1, shape.as_slice())?;
+/// Converts a continuous, normalized `f32` RGB `Mat` image to `SessionInputValue`.
+///
+/// The input `Mat` is assumed to be continuous, normalized RGB `f32` data type and will panic if not.
+/// The `Mat` is reshaped to single channel, tranposed to `[1, 3, H, W]` and converted to `SessionInputValue`.
+fn norm_rgb_to_input_value(mat: &Mat) -> SessionInputValue {
+    let mat = mat.reshape_nd(1, &[1, mat.rows(), mat.cols(), 3]).unwrap();
     let mut mat_t = Mat::default();
-    // TODO: how to consume mat_t into a Vec so that Tensor::from_array won't copy?
-    transpose_nd(&mat, &order, &mut mat_t)?;
+    transpose_nd(&mat, &Vector::from_slice(&[0, 3, 1, 2]), &mut mat_t).unwrap();
     let shape = mat_t.mat_size();
-    let input = (shape.as_slice(), mat_t.data_typed::<f32>()?);
-    let tensor = Tensor::from_array(input)?;
-    Ok(SessionInputValue::Owned(tensor.into_dyn()))
+    let input = (shape.as_slice(), mat_t.data_typed::<f32>().unwrap());
+    let tensor = Tensor::from_array(input).unwrap();
+    SessionInputValue::Owned(tensor.into_dyn())
+}
+
+#[cfg(debug_assertions)]
+#[allow(unused)]
+fn debug_mat(mat: &impl MatTraitConst, wait: i32, bboxes: &[Rect]) {
+    use opencv::highgui::{imshow, wait_key};
+    use opencv::imgproc::rectangle_def;
+
+    let mut mat = mat.try_clone().unwrap();
+    for bbox in bboxes {
+        let _ = rectangle_def(&mut mat, *bbox, Scalar::new(255.0, 0.0, 0.0, 0.0));
+    }
+    let _ = imshow("Debug", &mat);
+    let _ = wait_key(wait);
 }
