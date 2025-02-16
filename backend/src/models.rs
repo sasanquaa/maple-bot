@@ -38,7 +38,7 @@ trait Identifiable {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Map {
+pub struct Minimap {
     #[serde(skip_serializing, default)]
     pub id: Option<i64>,
     pub name: String,
@@ -47,7 +47,7 @@ pub struct Map {
     pub actions: HashMap<i64, Vec<Action>>,
 }
 
-impl Identifiable for Map {
+impl Identifiable for Minimap {
     fn id(&self) -> Option<i64> {
         self.id
     }
@@ -57,39 +57,51 @@ impl Identifiable for Map {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Action {
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Position {
     pub x: i32,
     pub y: i32,
-    pub kind: ActionKind,
+    pub allow_adjusting: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum ActionKind {
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum Action {
     Move {
-        allow_double_jump: bool,
-        allow_adjustment: bool,
+        position: Position,
+        condition: ActionCondition,
+        wait_after_move_ticks: u32,
     },
-    Wait(u64),
-    Jump,
-    Skill {
-        skill: Skill,
-        condition: UseCondition,
-        site: UseSite,
+    Key {
+        key: KeyBinding,
+        position: Option<Position>,
+        condition: ActionCondition,
+        direction: ActionKeyDirection,
+        with: ActionKeyWith,
+        wait_before_use_ticks: u32,
+        wait_after_use_ticks: u32,
     },
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum UseCondition {
-    None,
+pub enum ActionCondition {
+    Any,
+    EveryMillis(u64),
     ErdaShowerOffCooldown,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum UseSite {
-    WithDoubleJump,
-    AtProximity,
-    AtExact,
+pub enum ActionKeyWith {
+    Any,
+    Stationary,
+    DoubleJump,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub enum ActionKeyDirection {
+    #[default]
+    Any,
+    Left,
+    Right,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -97,7 +109,7 @@ pub struct Character {
     #[serde(skip_serializing, default)]
     pub id: Option<i64>,
     pub name: String,
-    pub skills: Vec<Skill>,
+    pub keys: Vec<KeyBinding>,
 }
 
 impl Identifiable for Character {
@@ -110,39 +122,31 @@ impl Identifiable for Character {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Skill {
-    pub name: String,
-    pub kind: SkillKind,
-    pub binding: SkillBinding,
-}
-
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum SkillKind {
-    RopeLift,
-    UpJump,
-    DoubleJump,
-    Other,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum SkillBinding {
+pub enum KeyBinding {
+    Up,
+    One,
+    Delete,
+    Four,
     W,
     Y,
     F,
     C,
     A,
+    R,
+    F2,
+    F4,
 }
 
-pub(crate) fn query_maps() -> Result<Vec<Map>> {
+pub(crate) fn query_maps() -> Result<Vec<Minimap>> {
     query_from_table("maps")
 }
 
-pub(crate) fn upsert_map(map: &mut Map) -> Result<()> {
+pub(crate) fn upsert_map(map: &mut Minimap) -> Result<()> {
     upsert_to_table("maps", map)
 }
 
-pub(crate) fn delete_map(map: &Map) -> Result<()> {
+pub(crate) fn delete_map(map: &Minimap) -> Result<()> {
     delete_from_table("maps", map)
 }
 

@@ -3,8 +3,9 @@ use std::cell::Cell;
 use windows::Win32::UI::{
     Input::KeyboardAndMouse::{
         INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
-        KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW, SendInput, VIRTUAL_KEY, VK_A, VK_C,
-        VK_DOWN, VK_F, VK_LEFT, VK_RIGHT, VK_SPACE, VK_UP, VK_W, VK_Y,
+        KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW, SendInput, VIRTUAL_KEY, VK_1, VK_4,
+        VK_A, VK_C, VK_CONTROL, VK_DELETE, VK_DOWN, VK_F, VK_F2, VK_F4, VK_LCONTROL, VK_LEFT,
+        VK_RIGHT, VK_SPACE, VK_UP, VK_W, VK_Y,
     },
     WindowsAndMessaging::GetForegroundWindow,
 };
@@ -14,28 +15,35 @@ use super::{error::Error, handle::Handle};
 #[derive(Debug)]
 pub struct Keys {
     handle: Handle,
-    input_key_down: Cell<u128>,
+    key_down: Cell<u128>,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum KeyKind {
-    UP,
-    DOWN,
-    LEFT,
-    RIGHT,
-    SPACE,
+    One,
+    Four,
+    Up,
+    Ctrl,
+    Down,
+    Left,
+    Right,
+    Space,
+    Delete,
+    F2,
+    F4,
     Y,
     F,
     C,
     A,
     W,
+    R,
 }
 
 impl Keys {
     pub fn new(handle: Handle) -> Self {
         Self {
             handle,
-            input_key_down: Cell::new(0),
+            key_down: Cell::new(0),
         }
     }
 
@@ -62,11 +70,13 @@ impl Keys {
         if handle_fg.is_invalid() || handle_fg != handle {
             return Err(Error::KeyNotSent);
         }
-        if !is_up && was_key_down(key, self.input_key_down.get()) {
-            return Err(Error::KeyNotSent);
-        } else {
-            self.input_key_down
-                .set(set_key_down(key, self.input_key_down.get(), is_up));
+        let key_down = self.key_down.get();
+        match (is_up, was_key_down(key, key_down)) {
+            (is_up, was_down) if !is_up && was_down => return Err(Error::KeyNotSent),
+            (is_up, was_down) if is_up && !was_down => return Err(Error::KeyNotSent),
+            _ => {
+                self.key_down.set(set_key_down(key, key_down, is_up));
+            }
         }
         let input = to_input(key, scan_code, is_extended, is_up);
         let result = unsafe { SendInput(&input, size_of::<INPUT>() as i32) };
@@ -92,16 +102,23 @@ fn set_key_down(key: VIRTUAL_KEY, key_down: u128, is_up: bool) -> u128 {
 #[inline(always)]
 fn to_vkey(kind: KeyKind) -> VIRTUAL_KEY {
     match kind {
-        KeyKind::LEFT => VK_LEFT,
-        KeyKind::RIGHT => VK_RIGHT,
-        KeyKind::UP => VK_UP,
-        KeyKind::DOWN => VK_DOWN,
-        KeyKind::SPACE => VK_SPACE,
+        KeyKind::Left => VK_LEFT,
+        KeyKind::Right => VK_RIGHT,
+        KeyKind::Up => VK_UP,
+        KeyKind::Down => VK_DOWN,
+        KeyKind::Space => VK_SPACE,
+        KeyKind::Delete => VK_DELETE,
+        KeyKind::One => VK_1,
+        KeyKind::Four => VK_4,
+        KeyKind::Ctrl => VK_CONTROL,
         KeyKind::F => VK_F,
         KeyKind::C => VK_C,
         KeyKind::A => VK_A,
         KeyKind::Y => VK_Y,
         KeyKind::W => VK_W,
+        KeyKind::F2 => VK_F2,
+        KeyKind::F4 => VK_F4,
+        KeyKind::R => VIRTUAL_KEY(0x52),
     }
 }
 

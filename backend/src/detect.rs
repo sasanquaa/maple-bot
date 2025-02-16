@@ -13,14 +13,13 @@ use opencv::{
     boxed_ref::BoxedRef,
     core::{
         CMP_EQ, CMP_GT, CV_8U, CV_32FC3, CV_32S, Mat, MatExprTraitConst, MatTrait, MatTraitConst,
-        MatTraitConstManual, ModifyInplace, Point, Ptr, Range, Rect, Scalar, Size, ToInputArray,
-        Vec4b, Vector, add, add_weighted_def, bitwise_and_def, compare, divide2_def, find_non_zero,
+        MatTraitConstManual, ModifyInplace, Point, Range, Rect, Scalar, Size, ToInputArray, Vec4b,
+        Vector, add, add_weighted_def, bitwise_and_def, compare, divide2_def, find_non_zero,
         min_max_loc, no_array, subtract_def, transpose_nd,
     },
     dnn::{
         ModelTrait, TextRecognitionModel, TextRecognitionModelTrait, TextRecognitionModelTraitConst,
     },
-    img_hash::{BLOCK_MEAN_HASH_MODE_1, BlockMeanHash},
     imgcodecs::{self, IMREAD_GRAYSCALE},
     imgproc::{
         CC_STAT_AREA, CC_STAT_HEIGHT, CC_STAT_LEFT, CC_STAT_TOP, CC_STAT_WIDTH,
@@ -29,7 +28,6 @@ use opencv::{
         connected_components_with_stats, cvt_color_def, dilate_def, find_contours_def,
         get_structuring_element_def, match_template_def, min_area_rect, resize, threshold,
     },
-    prelude::{ImgHashBaseTrait, ImgHashBaseTraitConst},
     traits::OpenCVIntoExternContainer,
 };
 use ort::{
@@ -37,26 +35,45 @@ use ort::{
     session::{Session, SessionInputValue, SessionOutputs},
     value::Tensor,
 };
+use platforms::windows::keys::KeyKind;
 
-/// Computes the two BGRA `Mat` images similarity score.
-pub fn compute_mats_similarity_score(
-    first_mat: &impl ToInputArray,
-    second_mat: &impl ToInputArray,
-) -> Result<f64> {
-    static BLOCK_MEAN_HASHER: LazyLock<Mutex<Ptr<BlockMeanHash>>> =
-        LazyLock::new(|| Mutex::new(BlockMeanHash::create(BLOCK_MEAN_HASH_MODE_1).unwrap()));
+use crate::debug::debug_mat;
 
-    let mut first_hash = Mat::default();
-    let mut second_hash = Mat::default();
-    let mut hasher = LazyLock::force(&BLOCK_MEAN_HASHER).lock().unwrap();
-    hasher.compute(first_mat, &mut first_hash).unwrap();
-    hasher.compute(second_mat, &mut second_hash).unwrap();
-    let result = hasher.compare(&first_hash, &second_hash).unwrap();
-    Ok(result)
+/// Detects the rune from the given BGRA `Mat` image and `minimap`.
+pub fn detect_minimap_rune(mat: &Mat, minimap: &Rect) -> Result<Rect> {
+    static RUNE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("RUNE_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
+
+    let minimap_region = mat.roi(*minimap)?;
+    let minimap_region = to_grayscale(&minimap_region, true);
+    detect_template(&minimap_region, LazyLock::force(&RUNE), minimap.tl(), 0.7)
+}
+
+/// Detects whether the player has a rune buff from the given BGRA `Mat` image.
+pub fn detect_player_rune_buff(mat: &Mat) -> bool {
+    static RUNE_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("RUNE_BUFF_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
+
+    let size = mat.size().unwrap();
+    // crop to top right of the image for buff bar
+    let crop_x = size.width / 3;
+    let crop_y = size.height / 5;
+    let crop_bbox = Rect::new(size.width - crop_x, 0, crop_x, crop_y);
+    let buff_bar = mat.roi(crop_bbox).unwrap();
+    let buff_bar = to_grayscale(&buff_bar, true);
+    detect_template(
+        &buff_bar,
+        LazyLock::force(&RUNE_BUFF),
+        Point::default(),
+        0.75,
+    )
+    .is_ok()
 }
 
 /// Detects the Erda Shower skill from the given BGRA `Mat` image.
-pub fn detect_erda_shower(mat: &Mat, threshold: f64) -> Result<Rect> {
+pub fn detect_erda_shower(mat: &Mat) -> Result<Rect> {
     static ERDA_SHOWER: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
             include_bytes!(env!("ERDA_SHOWER_TEMPLATE")),
@@ -75,10 +92,9 @@ pub fn detect_erda_shower(mat: &Mat, threshold: f64) -> Result<Rect> {
     detect_template(
         &skill_bar,
         LazyLock::force(&ERDA_SHOWER),
-        Point::new(0, 0),
-        threshold,
+        crop_bbox.tl(),
+        0.9,
     )
-    .map(|bbox| bbox + crop_bbox.tl())
 }
 
 /// Detects the player from the given BGRA image `Mat` and `minimap` bounding box.
@@ -115,8 +131,11 @@ pub fn detect_player(mat: &Mat, minimap: &Rect) -> Result<Rect> {
         PLAYER_DEFAULT_RATIO_THRESHOLD
     };
     let result = detect_template(&minimap_region, template, minimap.tl(), threshold);
-    if let Ok(bbox) = result {
-        debug_mat(&minimap_region, 1, &[bbox - minimap.tl()]);
+    #[cfg(debug_assertions)]
+    {
+        if let Ok(bbox) = result {
+            debug_mat(&minimap_region, 1, &[bbox - minimap.tl()], &["Player"]);
+        }
     }
     if result.is_err() {
         WAS_IDEAL_RATIO.store(!was_ideal_ratio, Ordering::Release);
@@ -154,6 +173,59 @@ fn detect_template(
     }
 }
 
+/// Detects rune arrows from the given RGBA image `Mat`.
+pub fn detect_rune_arrows(mat: &Mat) -> Result<[KeyKind; 4]> {
+    static RUNE_MODEL: LazyLock<Session> = LazyLock::new(|| {
+        Session::builder()
+            .and_then(|b| {
+                b.with_execution_providers([CUDAExecutionProvider::default().build()])?
+                    .commit_from_memory(include_bytes!(env!("RUNE_MODEL")))
+            })
+            .expect("unable to build rune detection session")
+    });
+
+    fn map_arrow(pred: &[f32]) -> KeyKind {
+        match pred[5] as i32 {
+            0 => KeyKind::Up,
+            1 => KeyKind::Down,
+            2 => KeyKind::Left,
+            3 => KeyKind::Right,
+            _ => unreachable!(),
+        }
+    }
+
+    let (mat_in, _, _) = preprocess_for_yolo(mat);
+    let result = RUNE_MODEL.run([norm_rgb_to_input_value(&mat_in)]).unwrap();
+    let mat_out = from_output_value(&result);
+    let mut preds = (0..mat_out.rows())
+        // SAFETY: 0..outputs.rows() is within Mat bounds
+        .map(|i| unsafe { mat_out.at_row_unchecked::<f32>(i).unwrap() })
+        .filter(|&pred| {
+            // pred has shapes [bbox(4) + conf + class]
+            pred[4] >= 0.7 as f32
+        })
+        .collect::<Vec<_>>();
+    if preds.len() != 4 {
+        return Err(anyhow!("failed to detect rune arrows"));
+    }
+    // sort by x for arrow order
+    preds.sort_by(|&a, &b| a[0].total_cmp(&b[0]));
+
+    let first = map_arrow(preds[0]);
+    let second = map_arrow(preds[1]);
+    let third = map_arrow(preds[2]);
+    let fourth = map_arrow(preds[3]);
+    debug!(
+        target: "player",
+        "solving rune result {first:?} ({}), {second:?} ({}), {third:?} ({}), {fourth:?} ({})",
+        preds[0][4],
+        preds[1][4],
+        preds[2][4],
+        preds[3][4]
+    );
+    Ok([first, second, third, fourth])
+}
+
 /// Detects the minimap from the given BGRA `Mat` image.
 ///
 /// `confidence_threshold` determines the threshold for the detection to consider a match.
@@ -170,7 +242,7 @@ pub fn detect_minimap(mat: &Mat, confidence_threshold: f32, border_threshold: u8
     // expands out a few pixels to include the whole white border for thresholding
     // after yolo detection
     fn expand_bbox(bbox: &Rect) -> Rect {
-        let count = (bbox.width.max(bbox.height) as f32 * 0.01).ceil() as i32;
+        let count = (bbox.width.max(bbox.height) as f32 * 0.008).ceil() as i32;
         debug!(target: "minimap", "expand border by {count}");
         let x = (bbox.x - count).max(0);
         let y = (bbox.y - count).max(0);
@@ -180,7 +252,7 @@ pub fn detect_minimap(mat: &Mat, confidence_threshold: f32, border_threshold: u8
     }
 
     let size = mat.size().unwrap();
-    let (mat_in, w_ratio, h_ratio) = preprocess_for_minimap(mat);
+    let (mat_in, w_ratio, h_ratio) = preprocess_for_yolo(mat);
     let result = MINIMAP_MODEL
         .run([norm_rgb_to_input_value(&mat_in)])
         .unwrap();
@@ -562,11 +634,11 @@ pub fn detect_minimap_name(mat: &Mat, minimap: &Rect) -> Result<String> {
     name.ok_or(anyhow!("minimap name not found"))
 }
 
-/// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32` for minimap detection.
+/// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32` for YOLO detection.
 ///
 /// Returns a triplet of `(Mat, width_ratio, height_ratio)` with the ratios calculed from
 /// `old_size / new_size`.
-fn preprocess_for_minimap(mat: &Mat) -> (Mat, f32, f32) {
+fn preprocess_for_yolo(mat: &Mat) -> (Mat, f32, f32) {
     let mut mat = mat.clone();
     let (w_ratio, h_ratio) = resize_w_h_ratio(mat.size().unwrap(), 640.0, 640.0);
     // SAFETY: all of the functions below can be called in place.
@@ -646,6 +718,7 @@ fn to_grayscale(mat: &impl MatTraitConst, add_contrast: bool) -> Mat {
         mat.modify_inplace(|mat, mat_mut| {
             cvt_color_def(mat, mat_mut, COLOR_BGRA2GRAY).unwrap();
             if add_contrast {
+                // TODO: is this needed?
                 add_weighted_def(mat, 1.5, mat, 0.0, -80.0, mat_mut).unwrap();
             }
         });
@@ -677,18 +750,4 @@ fn norm_rgb_to_input_value(mat: &Mat) -> SessionInputValue {
     let input = (shape.as_slice(), mat_t.data_typed::<f32>().unwrap());
     let tensor = Tensor::from_array(input).unwrap();
     SessionInputValue::Owned(tensor.into_dyn())
-}
-
-#[cfg(debug_assertions)]
-#[allow(unused)]
-fn debug_mat(mat: &impl MatTraitConst, wait: i32, bboxes: &[Rect]) {
-    use opencv::highgui::{imshow, wait_key};
-    use opencv::imgproc::rectangle_def;
-
-    let mut mat = mat.try_clone().unwrap();
-    for bbox in bboxes {
-        let _ = rectangle_def(&mut mat, *bbox, Scalar::new(255.0, 0.0, 0.0, 0.0));
-    }
-    let _ = imshow("Debug", &mat);
-    let _ = wait_key(wait);
 }

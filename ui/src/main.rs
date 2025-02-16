@@ -1,6 +1,6 @@
 use std::ops::DerefMut;
 
-use backend::game::update_loop;
+use backend::context::update_loop;
 use components::{
     button::{OneButton, TwoButtons},
     options::Options,
