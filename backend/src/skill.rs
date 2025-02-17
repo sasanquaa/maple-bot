@@ -7,7 +7,7 @@ use super::{
 };
 
 const SKILL_OFF_COOLDOWN_MAX_TIMEOUT: u32 = 1800;
-const SKILL_OFF_COOLDOWN_DETECT_EVERY: u32 = 300;
+const SKILL_OFF_COOLDOWN_DETECT_EVERY: u32 = 35;
 
 #[derive(Debug)]
 pub struct SkillState {
@@ -58,7 +58,7 @@ fn update_context(contextual: Skill, mat: &Mat, state: &mut SkillState) -> Skill
             let pixel = mat.at_pt::<Vec4b>(state.anchor.0).unwrap();
             if *pixel != state.anchor.1 {
                 debug!(target: "skill", "assume skill to be on cooldown {:?} != {:?}, could be false positive", state.anchor, pixel);
-                // try to assume it is on cooldown
+                // assume it is on cooldown
                 Skill::Cooldown(0, false)
             } else {
                 Skill::Idle
@@ -74,14 +74,8 @@ fn update_context(contextual: Skill, mat: &Mat, state: &mut SkillState) -> Skill
                     SkillKind::ErdaShower => detect_erda_shower(mat),
                 };
                 if let Ok(bbox) = result {
-                    return if delayed {
-                        state.anchor = get_anchor(mat, bbox);
-                        Skill::Idle
-                    } else {
-                        Skill::Cooldown(timeout, true)
-                    };
-                } else {
-                    debug!(target: "skill", "skill still in cooldown");
+                    state.anchor = get_anchor(mat, bbox);
+                    return Skill::Idle;
                 }
             }
             if timeout >= SKILL_OFF_COOLDOWN_MAX_TIMEOUT {

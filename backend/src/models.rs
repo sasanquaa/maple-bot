@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::Path,
+    env,
     sync::{LazyLock, Mutex},
 };
 
@@ -9,11 +9,12 @@ use rusqlite::{Connection, types::Null};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 static CONNECTION: LazyLock<Mutex<Connection>> = LazyLock::new(|| {
-    let path = if cfg!(debug_assertions) {
-        Path::new(env!("OUT_DIR")).join("local.db")
-    } else {
-        Path::new("local.db").to_path_buf()
-    };
+    let path = env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("local.db")
+        .to_path_buf();
     let conn = Connection::open(path.to_str().unwrap()).expect("failed to open local.db");
     conn.execute_batch(
         r#"
@@ -126,8 +127,11 @@ impl Identifiable for Character {
 pub enum KeyBinding {
     Up,
     One,
+    Six,
     Delete,
+    Insert,
     Four,
+    D,
     W,
     Y,
     F,
@@ -135,7 +139,9 @@ pub enum KeyBinding {
     A,
     R,
     F2,
+    F3,
     F4,
+    F7,
 }
 
 pub(crate) fn query_maps() -> Result<Vec<Minimap>> {

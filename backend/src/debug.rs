@@ -1,4 +1,3 @@
-use log::debug;
 use opencv::core::Mat;
 use opencv::core::MatTraitConst;
 use opencv::core::ModifyInplace;
@@ -27,7 +26,7 @@ static DATASET_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 });
 
 #[allow(unused)]
-pub fn debug_mat(mat: &impl MatTraitConst, wait: i32, bboxes: &[Rect], text: &[&str]) {
+pub fn debug_mat(name: &str, mat: &impl MatTraitConst, wait: i32, bboxes: &[Rect], text: &[&str]) {
     let mut mat = mat.try_clone().unwrap();
     for (bbox, &text) in bboxes.iter().zip(text) {
         let _ = rectangle_def(&mut mat, *bbox, Scalar::new(255.0, 0.0, 0.0, 0.0));
@@ -40,7 +39,7 @@ pub fn debug_mat(mat: &impl MatTraitConst, wait: i32, bboxes: &[Rect], text: &[&
             Scalar::new(0.0, 255.0, 0.0, 0.0),
         );
     }
-    let _ = imshow("Debug", &mat);
+    let _ = imshow(name, &mat);
     let _ = wait_key(wait);
 }
 
@@ -50,9 +49,29 @@ pub fn save_image_for_training(mat: &Mat) {
     let mat = to_grayscale(mat);
     let image = LazyLock::force(&DATASET_DIR).join(format!("{name}.png"));
 
-    debug_mat(&mat, 0, &[], &[]);
+    debug_mat("Image", &mat, 0, &[], &[]);
 
     imwrite_def(image.to_str().unwrap(), &mat).unwrap();
+}
+
+#[allow(unused)]
+pub fn debug_rune(mat: &Mat, preds: &Vec<&[f32]>, w_ratio: f32, h_ratio: f32) {
+    let size = mat.size().unwrap();
+    let bboxes = preds
+        .iter()
+        .map(|pred| map_bbox_from_prediction(pred, size, w_ratio, h_ratio))
+        .collect::<Vec<Rect>>();
+    let texts = preds
+        .iter()
+        .map(|pred| match pred[5] as i32 {
+            0 => "up",
+            1 => "down",
+            2 => "left",
+            3 => "right",
+            _ => unreachable!(),
+        })
+        .collect::<Vec<_>>();
+    debug_mat("Rune", mat, 1, &bboxes, &texts);
 }
 
 #[allow(unused)]
@@ -67,13 +86,7 @@ pub fn save_rune_for_training(
     let size = mat.size().unwrap();
     let bboxes = preds
         .iter()
-        .map(|pred| {
-            let tl_x = (pred[0] * w_ratio).max(0.0).min(size.width as f32) as i32;
-            let tl_y = (pred[1] * h_ratio).max(0.0).min(size.height as f32) as i32;
-            let br_x = (pred[2] * w_ratio).max(0.0).min(size.width as f32) as i32;
-            let br_y = (pred[3] * h_ratio).max(0.0).min(size.height as f32) as i32;
-            Rect::from_points(Point::new(tl_x, tl_y), Point::new(br_x, br_y))
-        })
+        .map(|pred| map_bbox_from_prediction(pred, size, w_ratio, h_ratio))
         .collect::<Vec<Rect>>();
     let texts = arrows
         .iter()
@@ -85,8 +98,7 @@ pub fn save_rune_for_training(
             _ => unreachable!(),
         })
         .collect::<Vec<_>>();
-    debug!("{preds:?}");
-    debug_mat(mat, 0, &bboxes, &texts);
+    debug_mat("Training", mat, 0, &bboxes, &texts);
 
     let labels = bboxes
         .iter()
@@ -119,10 +131,18 @@ fn save_minimap_for_training(mat: &Mat, minimap: &Rect) {
     let label = dataset.join(format!("{name}.txt"));
     let image = dataset.join(format!("{name}.png"));
 
-    debug_mat(&mat.roi(*minimap).unwrap(), 0, &[], &[]);
+    debug_mat("Training", &mat.roi(*minimap).unwrap(), 0, &[], &[]);
 
     imwrite_def(image.to_str().unwrap(), mat).unwrap();
     fs::write(label, to_yolo_format(0, mat.size().unwrap(), minimap)).unwrap();
+}
+
+fn map_bbox_from_prediction(pred: &[f32], size: Size, w_ratio: f32, h_ratio: f32) -> Rect {
+    let tl_x = (pred[0] * w_ratio).max(0.0).min(size.width as f32) as i32;
+    let tl_y = (pred[1] * h_ratio).max(0.0).min(size.height as f32) as i32;
+    let br_x = (pred[2] * w_ratio).max(0.0).min(size.width as f32) as i32;
+    let br_y = (pred[3] * h_ratio).max(0.0).min(size.height as f32) as i32;
+    Rect::from_points(Point::new(tl_x, tl_y), Point::new(br_x, br_y))
 }
 
 fn to_yolo_format(label: u32, size: Size, bbox: &Rect) -> String {

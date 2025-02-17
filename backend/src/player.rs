@@ -5,7 +5,7 @@ use opencv::{core::Point, prelude::Mat};
 use platforms::windows::keys::KeyKind;
 
 use crate::{
-    detect::{detect_player_rune_buff, detect_rune_arrows},
+    detect::{detect_cash_shop, detect_player_rune_buff, detect_rune_arrows},
     models::{ActionKeyDirection, ActionKeyWith},
 };
 
@@ -16,12 +16,17 @@ use super::{
     models::{Action, KeyBinding},
 };
 
+/// Minimum x distance from the destination required to spam small movement
 const ADJUSTING_SHORT_THRESHOLD: i32 = 1;
+
+/// Minimum x distance from the destination required to walk
 const ADJUSTING_MEDIUM_THRESHOLD: i32 = 3;
+
+/// Minimum x distance from the destination required to perform a double jump
 const DOUBLE_JUMP_THRESHOLD: i32 = 25;
 
 /// Maximum amount of ticks a change in x or y direction must be detected
-const PLAYER_MOVE_TIMEOUT: u32 = 4;
+const PLAYER_MOVE_TIMEOUT: u32 = 5;
 
 #[derive(Debug, Default)]
 pub struct PlayerState {
@@ -34,16 +39,18 @@ pub struct PlayerState {
     pub grappling_key: Option<KeyKind>,
     /// The up jump key with `None` indicating composite jump (Up arrow + Double Space)
     pub upjump_key: Option<KeyKind>,
-    /// Tracks if the player moved within a specified ticks to determine if the player is on ground
-    is_on_ground_timeout: Timeout,
-    /// Whether the player is on ground
-    is_on_ground: bool,
+    /// Tracks if the player moved within a specified ticks to determine if the player is stationary
+    is_stationary_timeout: Timeout,
+    /// Whether the player is stationary
+    is_stationary: bool,
     /// Approximates the player direction for using key
     last_known_direction: ActionKeyDirection,
     /// Last known position after each detection used for unstucking
     last_known_pos: Option<Point>,
     /// Indicates whether to use `ControlFlow::Immediate` on this update
     use_immediate_control_flow: bool,
+    /// Indicates whether to ignore update_pos and use last_known_pos on next update
+    ignore_pos_update: bool,
     /// Indicates whether to reset the contextual state back to `Player::Idle` on next update
     reset_to_idle_next_update: bool,
     /// Indicates whether the contextual state was `Player::Falling`
@@ -54,11 +61,17 @@ pub struct PlayerState {
     pub(crate) has_rune_buff: bool,
     /// The interval between rune buff checks
     has_rune_buff_check_interval: u32,
+    /// Tracks whether movement-related actions do not change the player position after a while.
+    /// Resets when a limit is reached (for unstucking) or when in `Player::Idle`.
+    unstuck_tracker: u32,
 }
 
+/// Represents an action the `Rotator` can use
 #[derive(Clone, Copy, Debug)]
 pub enum PlayerAction {
+    /// Fixed action provided by the user
     Fixed(Action),
+    /// Solve rune action
     SolveRune(Point),
 }
 
@@ -91,6 +104,12 @@ enum ChangeAxis {
     Both,
 }
 
+/// A struct that stores the current tick before timing out.
+///
+/// Most contextual state can be timed out as there is no guaranteed
+/// an action will be performed. So timeout is used to retry
+/// such action and to avoid looping in a single state forever. Or
+/// for some contextual states to perform an action only after timing out.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Timeout {
     current: u32,
@@ -100,7 +119,8 @@ pub struct Timeout {
 /// A contextual state that stores moving-related data.
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerMoving {
-    /// The player's previous position
+    /// The player's previous position and will be updated to current position
+    /// after calling `update_moving_axis_timeout`
     pos: Point,
     /// The destination the player is moving to
     dest: Point,
@@ -112,6 +132,7 @@ pub struct PlayerMoving {
     timeout: Timeout,
 }
 
+/// Convenient implementations
 impl PlayerMoving {
     fn new(pos: Point, dest: Point, exact: bool) -> Self {
         Self {
@@ -179,6 +200,15 @@ impl PlayerUseKey {
     }
 }
 
+#[derive(Clone, Copy, Default, Debug)]
+pub struct PlayerSolvingRune {
+    timeout: Timeout,
+    key_index: usize,
+    keys: Option<[KeyKind; 4]>,
+    validating: bool,
+    failed_count: usize,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum Player {
     Detecting,
@@ -193,7 +223,8 @@ pub enum Player {
     Falling(PlayerMoving),
     Unstucking(Timeout),
     Stalling(Timeout, u32),
-    SolvingRune(Timeout, usize, Option<[KeyKind; 4]>),
+    SolvingRune(PlayerSolvingRune),
+    CashShopThenExit(Timeout, bool),
 }
 
 impl Contextual for Player {
@@ -203,25 +234,25 @@ impl Contextual for Player {
     // TODO: detect if a point is reachable after number of retries?
     // TODO: add unit tests
     fn update(self, context: &Context, mat: &Mat, state: &mut PlayerState) -> ControlFlow<Self> {
-        if let Player::Unstucking(_) = self {
-            return ControlFlow::Next(update_context(
-                self,
-                context,
-                mat,
-                state.last_known_pos.unwrap(),
-                state,
-            ));
-        }
-        let Some(cur_pos) = update_pos(context, mat, state) else {
-            let next = match (state.last_known_pos, context.minimap) {
-                (Some(_), Minimap::Idle(idle)) => {
-                    if idle.partially_overlapping {
-                        Player::Detecting
-                    } else {
-                        Player::Unstucking(Timeout::default())
-                    }
+        let cur_pos = if state.ignore_pos_update {
+            state.last_known_pos
+        } else {
+            update_state(context, mat, state)
+        };
+        let Some(cur_pos) = cur_pos else {
+            if let Some(next) = update_non_positional_context(self, context, mat, state) {
+                return ControlFlow::Next(next);
+            }
+            let next = if let Minimap::Idle(idle) = context.minimap
+                && state.last_known_pos.is_some()
+            {
+                if idle.partially_overlapping {
+                    Player::Detecting
+                } else {
+                    Player::Unstucking(Timeout::default())
                 }
-                _ => Player::Detecting,
+            } else {
+                Player::Detecting
             };
             if matches!(next, Player::Unstucking(_)) {
                 state.last_known_direction = ActionKeyDirection::Any;
@@ -229,37 +260,102 @@ impl Contextual for Player {
             return ControlFlow::Next(next);
         };
         let contextual = if state.reset_to_idle_next_update {
-            let _ = context.keys.send_up(KeyKind::Up);
-            let _ = context.keys.send_up(KeyKind::Down);
-            let _ = context.keys.send_up(KeyKind::Left);
-            let _ = context.keys.send_up(KeyKind::Right);
             Player::Idle
         } else {
             self
         };
-        let next = update_context(contextual, context, mat, cur_pos, state);
-        let cf = if state.use_immediate_control_flow {
+        let next = update_non_positional_context(contextual, context, mat, state)
+            .unwrap_or_else(|| update_positional_context(contextual, context, cur_pos, state));
+        let control_flow = if state.use_immediate_control_flow {
             ControlFlow::Immediate(next)
         } else {
             ControlFlow::Next(next)
         };
         state.reset_to_idle_next_update = false;
+        state.ignore_pos_update = state.use_immediate_control_flow;
         state.use_immediate_control_flow = false;
-        cf
+        control_flow
     }
 }
 
-fn update_context(
+fn update_non_positional_context(
     contextual: Player,
     context: &Context,
     mat: &Mat,
+    state: &mut PlayerState,
+) -> Option<Player> {
+    match contextual {
+        Player::UseKey(use_key) => Some(update_use_key_context(context, state, use_key)),
+        Player::Unstucking(timeout) => Some(update_unstucking_context(
+            context,
+            state.last_known_pos.unwrap(),
+            timeout,
+        )),
+        Player::Stalling(timeout, max_timeout) => {
+            let update = |timeout| Player::Stalling(timeout, max_timeout);
+            let next = update_timeout(timeout, max_timeout, update, || Player::Idle, update);
+            Some(on_action(
+                state,
+                |_, _| Some((next, matches!(next, Player::Idle))),
+                || next,
+            ))
+        }
+        Player::SolvingRune(solving_rune) => Some(update_solving_rune_context(
+            context,
+            mat,
+            state,
+            solving_rune,
+        )),
+        Player::CashShopThenExit(timeout, in_cash_shop) => {
+            let next = if !in_cash_shop {
+                let _ = context.keys.send(KeyKind::Tilde);
+                Player::CashShopThenExit(timeout, detect_cash_shop(mat))
+            } else if detect_cash_shop(mat) {
+                update_timeout(
+                    timeout,
+                    305, // exits after 10 secs
+                    |timeout| Player::CashShopThenExit(timeout, in_cash_shop),
+                    || {
+                        let _ = context.keys.send_click_to_focus();
+                        let _ = context.keys.send(KeyKind::Esc);
+                        let _ = context.keys.send(KeyKind::Enter);
+                        Player::Idle
+                    },
+                    |timeout| Player::CashShopThenExit(timeout, in_cash_shop),
+                )
+            } else {
+                Player::Idle
+            };
+            Some(on_action(
+                state,
+                |action, _| match action {
+                    PlayerAction::Fixed(_) => None,
+                    PlayerAction::SolveRune(_) => Some((next, false)),
+                },
+                || next,
+            ))
+        }
+        Player::Detecting
+        | Player::Idle
+        | Player::Moving(_, _)
+        | Player::Adjusting(_)
+        | Player::DoubleJumping(_, _)
+        | Player::Grappling(_)
+        | Player::Jumping(_)
+        | Player::UpJumping(_)
+        | Player::Falling(_) => None,
+    }
+}
+
+fn update_positional_context(
+    contextual: Player,
+    context: &Context,
     cur_pos: Point,
     state: &mut PlayerState,
 ) -> Player {
     match contextual {
         Player::Detecting => Player::Idle,
         Player::Idle => update_idle_context(state, cur_pos),
-        Player::UseKey(use_key) => update_use_key_context(context, state, use_key),
         Player::Moving(dest, exact) => update_moving_context(state, cur_pos, dest, exact),
         Player::Adjusting(moving) => update_adjusting_context(context, state, cur_pos, moving),
         Player::DoubleJumping(moving, ignore_grappling) => {
@@ -280,19 +376,11 @@ fn update_context(
             ChangeAxis::Vertical,
         ),
         Player::Falling(moving) => update_falling_context(context, state, cur_pos, moving),
-        Player::Unstucking(timeout) => update_unstucking_context(context, cur_pos, timeout),
-        Player::Stalling(timeout, max_timeout) => {
-            let update = |timeout| Player::Stalling(timeout, max_timeout);
-            let next = update_timeout(timeout, max_timeout, update, || Player::Idle, update);
-            on_action(
-                state,
-                |_, _| Some((next, matches!(next, Player::Idle))),
-                || next,
-            )
-        }
-        Player::SolvingRune(timeout, index, result) => {
-            update_solving_rune_context(context, mat, state, timeout, index, result)
-        }
+        Player::UseKey(_)
+        | Player::Unstucking(_)
+        | Player::Stalling(_, _)
+        | Player::SolvingRune(_)
+        | Player::CashShopThenExit(_, _) => unreachable!(),
     }
 }
 
@@ -328,6 +416,8 @@ fn update_idle_context(state: &mut PlayerState, cur_pos: Point) -> Player {
             } => Some((Player::UseKey(PlayerUseKey::new_from_action(action)), false)),
         }
     }
+
+    state.unstuck_tracker = 0;
 
     on_action(
         state,
@@ -393,7 +483,7 @@ fn update_use_key_context(
         update,
         || Player::Idle,
         |timeout| {
-            if matches!(use_key.with, ActionKeyWith::Stationary) && !state.is_on_ground {
+            if matches!(use_key.with, ActionKeyWith::Stationary) && !state.is_stationary {
                 return update(timeout);
             }
             if !update_direction(context, state, timeout, use_key.direction) {
@@ -407,14 +497,19 @@ fn update_use_key_context(
                 KeyBinding::F => KeyKind::F,
                 KeyBinding::C => KeyKind::C,
                 KeyBinding::A => KeyKind::A,
+                KeyBinding::D => KeyKind::D,
                 KeyBinding::W => KeyKind::W,
                 KeyBinding::R => KeyKind::R,
                 KeyBinding::F2 => KeyKind::F2,
+                KeyBinding::F3 => KeyKind::F3,
                 KeyBinding::F4 => KeyKind::F4,
+                KeyBinding::F7 => KeyKind::F7,
                 KeyBinding::Delete => KeyKind::Delete,
                 KeyBinding::Up => KeyKind::Up,
                 KeyBinding::One => KeyKind::One,
                 KeyBinding::Four => KeyKind::Four,
+                KeyBinding::Six => KeyKind::Six,
+                KeyBinding::Insert => KeyKind::Insert,
             };
             let _ = context.keys.send(key);
             if use_key.wait_after_use_ticks > 0 {
@@ -514,7 +609,7 @@ fn update_moving_context(
                 |action, _| match action {
                     PlayerAction::Fixed(action) => on_fixed_action(action, moving),
                     PlayerAction::SolveRune(_) => {
-                        Some((Player::SolvingRune(Timeout::default(), 0, None), false))
+                        Some((Player::SolvingRune(PlayerSolvingRune::default()), false))
                     }
                 },
                 || Player::Idle,
@@ -529,9 +624,10 @@ fn update_adjusting_context(
     cur_pos: Point,
     moving: PlayerMoving,
 ) -> Player {
-    const USE_KEY_AT_Y_DOUBLE_JUMP_THRESHOLD: i32 = 1;
+    const UNSTUCK_TRACKER_THRESHOLD: u32 = 10;
+    const USE_KEY_AT_Y_DOUBLE_JUMP_THRESHOLD: i32 = 0;
     const USE_KEY_AT_Y_PROXIMITY_THRESHOLD: i32 = 2;
-    const ADJUSTING_SHORT_TIMEOUT: u32 = 2;
+    const ADJUSTING_SHORT_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT - 2;
 
     fn on_fixed_action(
         action: Action,
@@ -569,12 +665,24 @@ fn update_adjusting_context(
         state.was_falling = false;
     }
 
+    if !moving.timeout.started {
+        state.use_immediate_control_flow = true;
+        state.unstuck_tracker += 1;
+    }
+    if state.unstuck_tracker >= UNSTUCK_TRACKER_THRESHOLD {
+        state.unstuck_tracker = 0;
+        return Player::Unstucking(Timeout::default());
+    }
+
     update_moving_axis_context(
         moving,
         cur_pos,
         PLAYER_MOVE_TIMEOUT,
         Player::Adjusting,
-        None::<fn()>,
+        Some(|| {
+            let _ = context.keys.send_up(KeyKind::Right);
+            let _ = context.keys.send_up(KeyKind::Left);
+        }),
         |mut moving| {
             if !moving.completed {
                 match (x_distance, x_direction) {
@@ -681,12 +789,19 @@ fn update_double_jumping_context(
         state.was_falling = false;
     }
 
+    if !moving.timeout.started {
+        state.use_immediate_control_flow = true;
+    }
+
     update_moving_axis_context(
         moving,
         cur_pos,
         PLAYER_MOVE_TIMEOUT * 2,
         |moving| Player::DoubleJumping(moving, ignore_grappling),
-        None::<fn()>,
+        Some(|| {
+            let _ = context.keys.send_up(KeyKind::Right);
+            let _ = context.keys.send_up(KeyKind::Left);
+        }),
         |mut moving| {
             if !moving.completed {
                 match x_direction {
@@ -745,8 +860,8 @@ fn update_grappling_context(
     cur_pos: Point,
     moving: PlayerMoving,
 ) -> Player {
-    const GRAPPLING_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 15;
-    const GRAPPLING_STOPPING_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 2;
+    const GRAPPLING_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 10;
+    const GRAPPLING_STOPPING_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 3;
     const GRAPPLING_STOPPING_THRESHOLD: i32 = 2;
 
     if state.grappling_key.is_none() {
@@ -770,12 +885,11 @@ fn update_grappling_context(
             if moving.timeout.current >= PLAYER_MOVE_TIMEOUT && x_changed {
                 // during double jump and grappling failed
                 moving = moving.timeout_current(GRAPPLING_TIMEOUT);
-            } else if !moving.completed {
-                if distance <= GRAPPLING_STOPPING_THRESHOLD {
-                    let _ = context.keys.send(key);
-                    moving = moving.completed(true);
-                }
-            } else if moving.timeout.current >= GRAPPLING_STOPPING_TIMEOUT {
+            } else if !moving.completed && distance <= GRAPPLING_STOPPING_THRESHOLD {
+                let _ = context.keys.send(key);
+                moving = moving.completed(true);
+            }
+            if moving.timeout.current >= GRAPPLING_STOPPING_TIMEOUT {
                 moving = moving.timeout_current(GRAPPLING_TIMEOUT);
             }
             Player::Grappling(moving)
@@ -786,12 +900,16 @@ fn update_grappling_context(
 
 fn update_up_jumping_context(
     context: &Context,
-    state: &PlayerState,
+    state: &mut PlayerState,
     cur_pos: Point,
     moving: PlayerMoving,
 ) -> Player {
     const UP_JUMP_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 2;
     const UP_JUMPED_THRESHOLD: i32 = 4;
+
+    if !moving.timeout.started {
+        state.use_immediate_control_flow = true;
+    }
 
     let y_changed = (cur_pos.y - moving.pos.y).abs();
     update_moving_axis_context(
@@ -807,8 +925,8 @@ fn update_up_jumping_context(
         }),
         |mut moving| {
             if !moving.completed {
-                if state.upjump_key.is_some() {
-                    let _ = context.keys.send(state.upjump_key.unwrap());
+                if let Some(key) = state.upjump_key {
+                    let _ = context.keys.send(key);
                     moving = moving.completed(true);
                 } else if y_changed <= UP_JUMPED_THRESHOLD {
                     // spamming space until the player y changes
@@ -818,6 +936,8 @@ fn update_up_jumping_context(
                 } else {
                     moving = moving.completed(true);
                 }
+            } else if moving.timeout.current >= PLAYER_MOVE_TIMEOUT {
+                moving = moving.timeout_current(UP_JUMP_TIMEOUT);
             }
             Player::UpJumping(moving)
         },
@@ -835,6 +955,7 @@ fn update_falling_context(
 
     let y_changed = cur_pos.y - moving.pos.y;
     let (x_distance, _) = x_distance_direction(&moving.dest, &cur_pos);
+    let (y_distance, _) = y_distance_direction(&moving.dest, &cur_pos);
 
     update_moving_axis_context(
         moving,
@@ -851,8 +972,8 @@ fn update_falling_context(
         }),
         |mut moving| {
             // only timeout early when the player is not super close to
-            // the destination, useful for falling + double jumping
-            if x_distance >= ADJUSTING_MEDIUM_THRESHOLD && y_changed <= -2 {
+            // the destination x-wise, useful for falling + double jumping
+            if (x_distance >= ADJUSTING_MEDIUM_THRESHOLD && y_changed <= -2) || y_distance <= 1 {
                 moving = moving.timeout_current(FALLING_TIMEOUT);
             }
             Player::Falling(moving)
@@ -866,6 +987,7 @@ fn update_unstucking_context(context: &Context, cur_pos: Point, timeout: Timeout
         timeout,
         PLAYER_MOVE_TIMEOUT,
         |timeout| {
+            // random threshold for picking whether to go left or right
             if cur_pos.x <= 10 {
                 let _ = context.keys.send_down(KeyKind::Right);
             } else {
@@ -878,7 +1000,10 @@ fn update_unstucking_context(context: &Context, cur_pos: Point, timeout: Timeout
             let _ = context.keys.send_up(KeyKind::Left);
             Player::Detecting
         },
-        Player::Unstucking,
+        |timeout| {
+            let _ = context.keys.send(KeyKind::Space);
+            Player::Unstucking(timeout)
+        },
     )
 }
 
@@ -886,38 +1011,84 @@ fn update_solving_rune_context(
     context: &Context,
     mat: &Mat,
     state: &mut PlayerState,
-    timeout: Timeout,
-    index: usize,
-    result: Option<[KeyKind; 4]>,
+    solving_rune: PlayerSolvingRune,
 ) -> Player {
+    const RUNE_COOLDOWN_TIMEOUT: u32 = 245; // around 8 secs
+    const SOLVE_RUNE_TIMEOUT: u32 = RUNE_COOLDOWN_TIMEOUT + 100;
     const PRESS_KEY_INTERVAL: u32 = 10;
+    const MAX_FAILED_COUNT: usize = 2;
+
+    fn validate_rune_solved(
+        mat: &Mat,
+        state: &mut PlayerState,
+        solving_rune: PlayerSolvingRune,
+        timeout: Timeout,
+    ) -> Player {
+        if timeout.current == 0 || timeout.current % RUNE_COOLDOWN_TIMEOUT != 0 {
+            return Player::SolvingRune(PlayerSolvingRune {
+                timeout,
+                ..solving_rune
+            });
+        }
+        update_rune_buff(mat, state, true);
+        if state.has_rune_buff {
+            Player::Idle
+        } else {
+            let failed_count = solving_rune.failed_count + 1;
+            Player::SolvingRune(PlayerSolvingRune {
+                timeout: Timeout {
+                    current: 0,
+                    started: failed_count >= MAX_FAILED_COUNT,
+                },
+                failed_count,
+                ..PlayerSolvingRune::default()
+            })
+        }
+    }
 
     let next = update_timeout(
-        timeout,
-        50,
+        solving_rune.timeout,
+        SOLVE_RUNE_TIMEOUT,
         |timeout| {
             let _ = context.keys.send(KeyKind::Ctrl);
-            let result = detect_rune_arrows(mat).ok();
-            if result.is_none() {
-                Player::Idle
-            } else {
-                Player::SolvingRune(timeout, index, result)
-            }
+            Player::SolvingRune(PlayerSolvingRune {
+                timeout,
+                ..solving_rune
+            })
         },
-        // there are only 4 keys with each pressed at % PRESS_KEY_INTERVAL
-        // so timing out can never be reached
-        || unreachable!(),
-        |timeout| {
+        || Player::Idle,
+        |mut timeout| {
+            if solving_rune.failed_count >= MAX_FAILED_COUNT {
+                return Player::CashShopThenExit(Timeout::default(), false);
+            }
+            if solving_rune.validating {
+                return validate_rune_solved(mat, state, solving_rune, timeout);
+            }
+            if solving_rune.keys.is_none() {
+                return Player::SolvingRune(PlayerSolvingRune {
+                    timeout,
+                    keys: detect_rune_arrows(mat).ok(),
+                    ..solving_rune
+                });
+            }
             if timeout.current % PRESS_KEY_INTERVAL != 0 {
-                return Player::SolvingRune(timeout, index, result);
+                return Player::SolvingRune(PlayerSolvingRune {
+                    timeout,
+                    ..solving_rune
+                });
             }
-            let keys = result.unwrap();
-            let _ = context.keys.send(keys[index]);
-            if index >= keys.len() - 1 {
-                Player::Idle
-            } else {
-                Player::SolvingRune(timeout, index + 1, result)
+            let keys = solving_rune.keys.unwrap();
+            let _ = context.keys.send(keys[solving_rune.key_index]);
+            let need_validate = solving_rune.key_index >= keys.len() - 1;
+            if need_validate {
+                timeout.current = 0;
             }
+            Player::SolvingRune(PlayerSolvingRune {
+                timeout,
+                validating: need_validate,
+                key_index: solving_rune.key_index + 1,
+                ..solving_rune
+            })
         },
     );
     on_action(
@@ -983,7 +1154,7 @@ fn update_moving_axis_timeout(
         ChangeAxis::Both { .. } => cur_pos.x != prev_pos.x || cur_pos.y != prev_pos.y,
     };
     Timeout {
-        current: if moved { 0 } else { timeout.current + 1 },
+        current: if moved { 0 } else { timeout.current },
         ..timeout
     }
 }
@@ -1001,14 +1172,14 @@ fn update_moving_axis_context(
     update_timeout(
         update_moving_axis_timeout(moving.pos, cur_pos, moving.timeout, max_timeout, axis),
         max_timeout,
-        |timeout| on_started(moving.timeout(timeout)),
+        |timeout| on_started(moving.pos(cur_pos).timeout(timeout)),
         || {
             if let Some(callback) = on_timeout {
                 callback();
             }
             Player::Moving(moving.dest, moving.exact)
         },
-        |timeout| on_update(moving.timeout(timeout)),
+        |timeout| on_update(moving.pos(cur_pos).timeout(timeout)),
     )
 }
 
@@ -1034,9 +1205,7 @@ fn update_timeout(
 }
 
 #[inline(always)]
-fn update_pos(context: &Context, mat: &Mat, state: &mut PlayerState) -> Option<Point> {
-    const RUNE_BUFF_CHECK_INTERVAL_TICKS: u32 = 305;
-
+fn update_state(context: &Context, mat: &Mat, state: &mut PlayerState) -> Option<Point> {
     let Minimap::Idle(idle) = &context.minimap else {
         return None;
     };
@@ -1055,19 +1224,29 @@ fn update_pos(context: &Context, mat: &Mat, state: &mut PlayerState) -> Option<P
     {
         debug!(target: "player", "position updated in minimap: {:?} in {:?}", pos, minimap_bbox);
     }
-    if state.has_rune_buff_check_interval % RUNE_BUFF_CHECK_INTERVAL_TICKS == 0 {
+    state.is_stationary_timeout = update_moving_axis_timeout(
+        last_known_pos,
+        pos,
+        Timeout {
+            current: state.is_stationary_timeout.current + 1,
+            ..state.is_stationary_timeout
+        },
+        PLAYER_MOVE_TIMEOUT * 2,
+        ChangeAxis::Both,
+    );
+    state.is_stationary = state.is_stationary_timeout.current > PLAYER_MOVE_TIMEOUT;
+    state.last_known_pos = Some(pos);
+    update_rune_buff(mat, state, false);
+    Some(pos)
+}
+
+#[inline(always)]
+fn update_rune_buff(mat: &Mat, state: &mut PlayerState, forced: bool) {
+    const RUNE_BUFF_CHECK_INTERVAL_TICKS: u32 = 305;
+
+    if state.has_rune_buff_check_interval % RUNE_BUFF_CHECK_INTERVAL_TICKS == 0 || forced {
         state.has_rune_buff = detect_player_rune_buff(mat);
     }
     state.has_rune_buff_check_interval =
         (state.has_rune_buff_check_interval + 1) % RUNE_BUFF_CHECK_INTERVAL_TICKS;
-    state.is_on_ground_timeout = update_moving_axis_timeout(
-        last_known_pos,
-        pos,
-        state.is_on_ground_timeout,
-        PLAYER_MOVE_TIMEOUT * 2,
-        ChangeAxis::Both,
-    );
-    state.is_on_ground = state.is_on_ground_timeout.current > PLAYER_MOVE_TIMEOUT;
-    state.last_known_pos = Some(pos);
-    Some(pos)
 }

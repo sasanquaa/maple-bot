@@ -1,6 +1,7 @@
 use core::slice::SlicePattern;
 use std::{
     collections::HashMap,
+    env,
     sync::{
         LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -18,7 +19,8 @@ use opencv::{
         min_max_loc, no_array, subtract_def, transpose_nd,
     },
     dnn::{
-        ModelTrait, TextRecognitionModel, TextRecognitionModelTrait, TextRecognitionModelTraitConst,
+        ModelTrait, TextRecognitionModel, TextRecognitionModelTrait,
+        TextRecognitionModelTraitConst, read_net_from_onnx_buffer,
     },
     imgcodecs::{self, IMREAD_GRAYSCALE},
     imgproc::{
@@ -31,12 +33,12 @@ use opencv::{
     traits::OpenCVIntoExternContainer,
 };
 use ort::{
-    execution_providers::CUDAExecutionProvider,
     session::{Session, SessionInputValue, SessionOutputs},
     value::Tensor,
 };
 use platforms::windows::keys::KeyKind;
 
+#[cfg(debug_assertions)]
 use crate::debug::debug_mat;
 
 /// Detects the rune from the given BGRA `Mat` image and `minimap`.
@@ -47,7 +49,30 @@ pub fn detect_minimap_rune(mat: &Mat, minimap: &Rect) -> Result<Rect> {
 
     let minimap_region = mat.roi(*minimap)?;
     let minimap_region = to_grayscale(&minimap_region, true);
-    detect_template(&minimap_region, LazyLock::force(&RUNE), minimap.tl(), 0.7)
+    detect_template(
+        &minimap_region,
+        LazyLock::force(&RUNE),
+        minimap.tl(),
+        0.7,
+        Some("rune"),
+    )
+}
+
+/// Detects whether the player is in cash shop  from the given BGRA `Mat` image.
+pub fn detect_cash_shop(mat: &Mat) -> bool {
+    static CASH_SHOP: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("CASH_SHOP_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
+
+    let mat = to_grayscale(mat, true);
+    detect_template(
+        &mat,
+        LazyLock::force(&CASH_SHOP),
+        Point::default(),
+        0.9,
+        Some("cash shop"),
+    )
+    .is_ok()
 }
 
 /// Detects whether the player has a rune buff from the given BGRA `Mat` image.
@@ -63,11 +88,16 @@ pub fn detect_player_rune_buff(mat: &Mat) -> bool {
     let crop_bbox = Rect::new(size.width - crop_x, 0, crop_x, crop_y);
     let buff_bar = mat.roi(crop_bbox).unwrap();
     let buff_bar = to_grayscale(&buff_bar, true);
+    #[cfg(debug_assertions)]
+    {
+        debug_mat("Buff", &buff_bar, 1, &[], &[]);
+    }
     detect_template(
         &buff_bar,
         LazyLock::force(&RUNE_BUFF),
         Point::default(),
         0.75,
+        Some("rune buff"),
     )
     .is_ok()
 }
@@ -83,17 +113,23 @@ pub fn detect_erda_shower(mat: &Mat) -> Result<Rect> {
     });
 
     let size = mat.size().unwrap();
+    debug!(target: "erda shower", "{size:?}");
     // crop to bottom right of the image for skill bar
     let crop_x = size.width / 2;
     let crop_y = size.height / 5;
     let crop_bbox = Rect::new(size.width - crop_x, size.height - crop_y, crop_x, crop_y);
     let skill_bar = mat.roi(crop_bbox).unwrap();
     let skill_bar = to_grayscale(&skill_bar, true);
+    #[cfg(debug_assertions)]
+    {
+        debug_mat("Skill", &skill_bar, 1, &[], &[]);
+    }
     detect_template(
         &skill_bar,
         LazyLock::force(&ERDA_SHOWER),
         crop_bbox.tl(),
-        0.9,
+        0.96,
+        Some("erda shower"),
     )
 }
 
@@ -130,11 +166,13 @@ pub fn detect_player(mat: &Mat, minimap: &Rect) -> Result<Rect> {
     } else {
         PLAYER_DEFAULT_RATIO_THRESHOLD
     };
-    let result = detect_template(&minimap_region, template, minimap.tl(), threshold);
+    let result = detect_template(&minimap_region, template, minimap.tl(), threshold, None);
     #[cfg(debug_assertions)]
     {
         if let Ok(bbox) = result {
-            debug_mat(&minimap_region, 1, &[bbox - minimap.tl()], &["Player"]);
+            debug_mat("Minimap", &minimap_region, 1, &[bbox - minimap.tl()], &[
+                "Player",
+            ]);
         }
     }
     if result.is_err() {
@@ -144,17 +182,19 @@ pub fn detect_player(mat: &Mat, minimap: &Rect) -> Result<Rect> {
 }
 
 /// Detects the `template` from the given BGRA image `Mat`.
+#[inline(always)]
 fn detect_template(
     mat: &impl ToInputArray,
     template: &Mat,
     offset: Point,
     threshold: f64,
+    log: Option<&str>,
 ) -> Result<Rect> {
     let mut result = Mat::default();
     let mut score = 0f64;
     let mut loc = Point::default();
 
-    match_template_def(mat, template, &mut result, TM_CCOEFF_NORMED)?;
+    match_template_def(mat, template, &mut result, TM_CCOEFF_NORMED).unwrap();
     min_max_loc(
         &result,
         None,
@@ -162,10 +202,14 @@ fn detect_template(
         None,
         Some(&mut loc),
         &no_array(),
-    )?;
+    )
+    .unwrap();
 
     let tl = loc + offset;
     let br = tl + Point::from_size(template.size().unwrap());
+    if let Some(target) = log {
+        debug!(target: target, "detected with score: {} / {}", score, threshold);
+    }
     if score >= threshold {
         Ok(Rect::from_points(tl, br))
     } else {
@@ -177,10 +221,7 @@ fn detect_template(
 pub fn detect_rune_arrows(mat: &Mat) -> Result<[KeyKind; 4]> {
     static RUNE_MODEL: LazyLock<Session> = LazyLock::new(|| {
         Session::builder()
-            .and_then(|b| {
-                b.with_execution_providers([CUDAExecutionProvider::default().build()])?
-                    .commit_from_memory(include_bytes!(env!("RUNE_MODEL")))
-            })
+            .and_then(|b| b.commit_from_memory(include_bytes!(env!("RUNE_MODEL"))))
             .expect("unable to build rune detection session")
     });
 
@@ -202,7 +243,7 @@ pub fn detect_rune_arrows(mat: &Mat) -> Result<[KeyKind; 4]> {
         .map(|i| unsafe { mat_out.at_row_unchecked::<f32>(i).unwrap() })
         .filter(|&pred| {
             // pred has shapes [bbox(4) + conf + class]
-            pred[4] >= 0.7 as f32
+            pred[4] >= 0.8
         })
         .collect::<Vec<_>>();
     if preds.len() != 4 {
@@ -233,10 +274,7 @@ pub fn detect_rune_arrows(mat: &Mat) -> Result<[KeyKind; 4]> {
 pub fn detect_minimap(mat: &Mat, confidence_threshold: f32, border_threshold: u8) -> Result<Rect> {
     static MINIMAP_MODEL: LazyLock<Session> = LazyLock::new(|| {
         Session::builder()
-            .and_then(|b| {
-                b.with_execution_providers([CUDAExecutionProvider::default().build()])?
-                    .commit_from_memory(include_bytes!(env!("MINIMAP_MODEL")))
-            })
+            .and_then(|b| b.commit_from_memory(include_bytes!(env!("MINIMAP_MODEL"))))
             .expect("unable to build minimap detection session")
     });
     // expands out a few pixels to include the whole white border for thresholding
@@ -367,8 +405,12 @@ pub fn detect_minimap_name(mat: &Mat, minimap: &Rect) -> Result<String> {
     const TEXT_SCORE_THRESHOLD: f64 = 0.7;
     const LINK_SCORE_THRESHOLD: f64 = 0.4;
     static TEXT_RECOGNITION_MODEL: LazyLock<Mutex<TextRecognitionModel>> = LazyLock::new(|| {
+        let model = read_net_from_onnx_buffer(&Vector::from_slice(include_bytes!(env!(
+            "TEXT_RECOGNITION_MODEL"
+        ))))
+        .unwrap();
         Mutex::new(
-            TextRecognitionModel::from_file_def(env!("TEXT_RECOGNITION_MODEL"))
+            TextRecognitionModel::new(&model)
                 .and_then(|mut m| {
                     m.set_input_params(
                         1.0 / 127.5,
@@ -388,10 +430,7 @@ pub fn detect_minimap_name(mat: &Mat, minimap: &Rect) -> Result<String> {
     });
     static TEXT_DETECTION_MODEL: LazyLock<Session> = LazyLock::new(|| {
         Session::builder()
-            .and_then(|b| {
-                b.with_execution_providers([CUDAExecutionProvider::default().build()])?
-                    .commit_from_memory(include_bytes!(env!("TEXT_DETECTION_MODEL")))
-            })
+            .and_then(|b| b.commit_from_memory(include_bytes!(env!("TEXT_DETECTION_MODEL"))))
             .expect("unable to build minimap name detection session")
     });
 
@@ -638,6 +677,7 @@ pub fn detect_minimap_name(mat: &Mat, minimap: &Rect) -> Result<String> {
 ///
 /// Returns a triplet of `(Mat, width_ratio, height_ratio)` with the ratios calculed from
 /// `old_size / new_size`.
+#[inline(always)]
 fn preprocess_for_yolo(mat: &Mat) -> (Mat, f32, f32) {
     let mut mat = mat.clone();
     let (w_ratio, h_ratio) = resize_w_h_ratio(mat.size().unwrap(), 640.0, 640.0);
@@ -657,6 +697,7 @@ fn preprocess_for_yolo(mat: &Mat) -> (Mat, f32, f32) {
 /// The preprocess is adapted from: https://github.com/clovaai/CRAFT-pytorch/blob/master/imgproc.py.
 ///
 /// Returns a `(Mat, width_ratio, height_ratio, x_offset, y_offset)`.
+#[inline(always)]
 fn preprocess_for_minimap_name(mat: &Mat, minimap: &Rect) -> (Mat, f32, f32, i32, i32) {
     let x_offset = minimap.x;
     let y_offset = (minimap.y - minimap.height).max(0);
@@ -711,6 +752,7 @@ fn resize_w_h_ratio(from: Size, to_w: f32, to_h: f32) -> (f32, f32) {
 ///
 /// `add_contrast` can be set to `true` in order to increase contrast by a fixed amount
 /// used for template matching.
+#[inline(always)]
 fn to_grayscale(mat: &impl MatTraitConst, add_contrast: bool) -> Mat {
     let mut mat = mat.try_clone().unwrap();
     unsafe {
@@ -729,6 +771,7 @@ fn to_grayscale(mat: &impl MatTraitConst, add_contrast: bool) -> Mat {
 /// Extracts a borrowed `Mat` from `SessionOutputs`.
 ///
 /// The returned `BoxedRef<'_, Mat>` has shape `[..dims]` with batch size (1) removed.
+#[inline(always)]
 fn from_output_value<'a>(result: &SessionOutputs) -> BoxedRef<'a, Mat> {
     let (dims, outputs) = result["output0"].try_extract_raw_tensor::<f32>().unwrap();
     let dims = dims.iter().map(|&dim| dim as i32).collect::<Vec<i32>>();
@@ -742,6 +785,7 @@ fn from_output_value<'a>(result: &SessionOutputs) -> BoxedRef<'a, Mat> {
 ///
 /// The input `Mat` is assumed to be continuous, normalized RGB `f32` data type and will panic if not.
 /// The `Mat` is reshaped to single channel, tranposed to `[1, 3, H, W]` and converted to `SessionInputValue`.
+#[inline(always)]
 fn norm_rgb_to_input_value(mat: &Mat) -> SessionInputValue {
     let mat = mat.reshape_nd(1, &[1, mat.rows(), mat.cols(), 3]).unwrap();
     let mut mat_t = Mat::default();

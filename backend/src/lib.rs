@@ -3,6 +3,7 @@
 #![feature(slice_pattern)]
 #![feature(variant_count)]
 #![feature(let_chains)]
+#![feature(downcast_unchecked)]
 #![feature(associated_type_defaults)]
 
 pub mod context;

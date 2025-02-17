@@ -132,8 +132,8 @@ impl Capture {
                 self.bm.width,
                 self.bm.height,
                 handle_dc.value.into(),
-                rect.left,
-                rect.top,
+                0,
+                0,
                 SRCCOPY,
             )
         }

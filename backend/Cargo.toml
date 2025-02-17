@@ -4,9 +4,17 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+tokio = { version = "1.43.0", default-features = false, features = ["sync"] }
 platforms = { workspace = true }
-ort = { version = "2.0.0-rc.9", features = ["cuda", "load-dynamic"] }
-opencv = "0.94.1"
+ort = { version = "2.0.0-rc.9", default-features = false, features = [
+    "load-dynamic",
+] }
+opencv = { version = "0.94.2", default-features = false, features = [
+    "dnn",
+    "imgcodecs",
+    "imgproc",
+    "highgui",
+] }
 anyhow = "1.0.95"
 log = "0.4.25"
 rand = "0.9.0"

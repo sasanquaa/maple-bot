@@ -18,13 +18,6 @@ pub struct OwnedMat {
 }
 
 impl OwnedMat {
-    pub fn empty() -> Self {
-        Self {
-            mat: Mat::default(),
-            data: vec![],
-        }
-    }
-
     pub fn new(frame: Frame) -> Self {
         let data = frame.data;
         let mat = unsafe {

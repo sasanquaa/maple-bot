@@ -1,6 +1,6 @@
 use std::ops::DerefMut;
 
-use backend::context::update_loop;
+use backend::context::{request_minimap_frame, start_update_loop};
 use components::{
     button::{OneButton, TwoButtons},
     options::Options,
@@ -27,17 +27,17 @@ const TAILWIND_CSS: Asset = asset!("public/tailwind.css");
 fn main() {
     dioxus::logger::init(Level::DEBUG);
     LogTracer::init().unwrap();
-    update_loop();
-    let window = WindowBuilder::new()
-        .with_inner_size(Size::Physical(PhysicalSize::new(700, 400)))
-        .with_resizable(false)
-        .with_maximizable(false)
-        .with_title("Maple Bot")
-        .with_always_on_top(true);
-    let cfg = dioxus::desktop::Config::default()
-        .with_menu(None)
-        .with_window(window);
-    dioxus::LaunchBuilder::desktop().with_cfg(cfg).launch(App);
+    start_update_loop();
+    // let window = WindowBuilder::new()
+    //     .with_inner_size(Size::Physical(PhysicalSize::new(700, 400)))
+    //     .with_resizable(false)
+    //     .with_maximizable(false)
+    //     .with_title("Maple Bot")
+    //     .with_always_on_top(true);
+    // let cfg = dioxus::desktop::Config::default()
+    //     .with_menu(None)
+    //     .with_window(window);
+    // dioxus::LaunchBuilder::desktop().with_cfg(cfg).launch(App);
 }
 
 #[component]
@@ -46,85 +46,48 @@ fn App() -> Element {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         div {
             class: "flex",
-            // Minimap {}
+            Minimap {}
             // Characters {}
         }
     }
 }
 
-// #[component]
-// fn Minimap() -> Element {
-//     let mut grid_width = use_signal_sync(|| 0);
-//     let mut grid_height = use_signal_sync(|| 0);
+#[component]
+fn Minimap() -> Element {
+    use_future(move || async move {
+        let mut canvas = document::eval(include_str!("js/minimap.js"));
+        loop {
+            let result = request_minimap_frame().await;
+            let Ok(frame) = result else {
+                continue;
+            };
+            let Err(error) = canvas.send(frame) else {
+                continue;
+            };
+            if matches!(error, EvalError::Finished) {
+                // probably: https://github.com/DioxusLabs/dioxus/issues/2979
+                canvas = document::eval(include_str!("js/minimap.js"));
+            }
+        }
+    });
 
-//     use_future(move || async move {
-//         let (tx, mut rx) = mpsc::channel::<(Vec<u8>, usize, usize)>(1);
-//         let _ = spawn(async move {
-//             let mut canvas = document::eval(include_str!("js/minimap.js"));
-//             loop {
-//                 let result = rx.recv().await;
-//                 let Some(frame) = result else {
-//                     continue;
-//                 };
-//                 let Err(error) = canvas.send(frame) else {
-//                     continue;
-//                 };
-//                 if matches!(error, EvalError::Finished) {
-//                     // probably: https://github.com/DioxusLabs/dioxus/issues/2979
-//                     canvas = document::eval(include_str!("js/minimap.js"));
-//                 }
-//             }
-//         });
-//         let _ = spawn_blocking(move || {
-//             game::Context::new()
-//                 .expect("failed to start game update loop")
-//                 .update_loop(|context| {
-//                     if let Ok((bytes, width, height)) = context.minimap() {
-//                         let cur_width = *grid_width.peek();
-//                         let cur_height = *grid_height.peek();
-//                         if cur_width != width || cur_height != height {
-//                             *grid_width.write() = width;
-//                             *grid_height.write() = height;
-//                         }
-//                         let _ = tx.try_send((bytes, width, height));
-//                     }
-//                 })
-//         })
-//         .await;
-//     });
-
-//     rsx! {
-//         div {
-//             class: "grid grid-flow-row auto-rows-max p-[16px] w-[350px] place-items-center",
-//             p {
-//                 "Player State"
-//             }
-//             div {
-//                 class: "flex w-full relative",
-//                 canvas {
-//                     class: "w-full",
-//                     id: "canvas-minimap",
-//                 },
-//                 canvas {
-//                     id: "canvas-minimap-magnifier",
-//                     class: "absolute hidden",
-//                 }
-//             }
-//             p {
-//                 "Action 1"
-//             }
-//             p {
-//                 "Action 2"
-//             }
-//             p {
-//                 "Action 3"
-//             }
-//             p {
-//                 "Action 4"
-//             }
-//         }
-//     }
-// }
+    rsx! {
+        div {
+            class: "grid grid-flow-row auto-rows-max p-[16px] w-[350px] place-items-center",
+            div {
+                class: "flex w-full relative",
+                canvas {
+                    class: "w-full",
+                    id: "canvas-minimap",
+                },
+                canvas {
+                    id: "canvas-minimap-magnifier",
+                    class: "absolute hidden",
+                }
+            }
+        }
+    }
+}
 
 // #[component]
 // fn Characters() -> Element {
