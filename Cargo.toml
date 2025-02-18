@@ -5,15 +5,3 @@ members = ["ui", "backend", "platforms"]
 [workspace.dependencies]
 platforms = { path = "platforms" }
 backend = { path = "backend" }
-
-[profile]
-
-[profile.wasm-dev]
-inherits = "dev"
-opt-level = 1
-
-[profile.server-dev]
-inherits = "dev"
-
-[profile.android-dev]
-inherits = "dev"

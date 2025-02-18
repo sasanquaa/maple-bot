@@ -48,7 +48,7 @@ impl Rotator {
     }
 
     pub fn rotate_action(&mut self, context: &Context, player: &mut PlayerState) {
-        if !self.priority_actions_queue.is_empty() {
+        if player.has_priority_action() || !self.priority_actions_queue.is_empty() {
             if !player.has_priority_action() {
                 player.set_priority_action(self.priority_actions_queue.pop_front().unwrap());
             }

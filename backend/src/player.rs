@@ -1013,8 +1013,9 @@ fn update_solving_rune_context(
     state: &mut PlayerState,
     solving_rune: PlayerSolvingRune,
 ) -> Player {
-    const RUNE_COOLDOWN_TIMEOUT: u32 = 245; // around 8 secs
+    const RUNE_COOLDOWN_TIMEOUT: u32 = 305; // around 10 secs
     const SOLVE_RUNE_TIMEOUT: u32 = RUNE_COOLDOWN_TIMEOUT + 100;
+    const DETECT_RUNE_ARROWS_INTERVAL: u32 = 35;
     const PRESS_KEY_INTERVAL: u32 = 10;
     const MAX_FAILED_COUNT: usize = 2;
 
@@ -1056,7 +1057,17 @@ fn update_solving_rune_context(
                 ..solving_rune
             })
         },
-        || Player::Idle,
+        || {
+            // likely a spinning rune if the bot can't detect and timeout
+            if solving_rune.failed_count < MAX_FAILED_COUNT {
+                Player::SolvingRune(PlayerSolvingRune {
+                    failed_count: solving_rune.failed_count + 1,
+                    ..PlayerSolvingRune::default()
+                })
+            } else {
+                Player::Idle
+            }
+        },
         |mut timeout| {
             if solving_rune.failed_count >= MAX_FAILED_COUNT {
                 return Player::CashShopThenExit(Timeout::default(), false);
@@ -1065,9 +1076,14 @@ fn update_solving_rune_context(
                 return validate_rune_solved(mat, state, solving_rune, timeout);
             }
             if solving_rune.keys.is_none() {
+                let keys = if timeout.current % DETECT_RUNE_ARROWS_INTERVAL == 0 {
+                    detect_rune_arrows(mat).ok()
+                } else {
+                    None
+                };
                 return Player::SolvingRune(PlayerSolvingRune {
                     timeout,
-                    keys: detect_rune_arrows(mat).ok(),
+                    keys,
                     ..solving_rune
                 });
             }

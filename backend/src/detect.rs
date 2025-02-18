@@ -43,6 +43,7 @@ use crate::debug::debug_mat;
 
 /// Detects the rune from the given BGRA `Mat` image and `minimap`.
 pub fn detect_minimap_rune(mat: &Mat, minimap: &Rect) -> Result<Rect> {
+    /// TODO: Support default ratio
     static RUNE: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("RUNE_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
@@ -60,6 +61,7 @@ pub fn detect_minimap_rune(mat: &Mat, minimap: &Rect) -> Result<Rect> {
 
 /// Detects whether the player is in cash shop  from the given BGRA `Mat` image.
 pub fn detect_cash_shop(mat: &Mat) -> bool {
+    /// TODO: Support default ratio
     static CASH_SHOP: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("CASH_SHOP_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
@@ -77,6 +79,7 @@ pub fn detect_cash_shop(mat: &Mat) -> bool {
 
 /// Detects whether the player has a rune buff from the given BGRA `Mat` image.
 pub fn detect_player_rune_buff(mat: &Mat) -> bool {
+    /// TODO: Support default ratio
     static RUNE_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("RUNE_BUFF_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
@@ -104,6 +107,7 @@ pub fn detect_player_rune_buff(mat: &Mat) -> bool {
 
 /// Detects the Erda Shower skill from the given BGRA `Mat` image.
 pub fn detect_erda_shower(mat: &Mat) -> Result<Rect> {
+    /// TODO: Support default ratio
     static ERDA_SHOWER: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
             include_bytes!(env!("ERDA_SHOWER_TEMPLATE")),

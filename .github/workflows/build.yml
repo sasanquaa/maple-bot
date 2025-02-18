@@ -28,5 +28,10 @@ jobs:
           runVcpkgInstall: true
           vcpkgJsonGlob: "**/vcpkg.json"
 
+      - name: Install toolchain
+        shell: bash
+        run: |
+          rustup toolchain install nightly-x86_64-pc-windows-msvc
+
       - name: Build
         run: cargo build --release
