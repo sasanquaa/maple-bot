@@ -1,0 +1,32 @@
+name: Build windows-x64
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+
+env:
+  CARGO_TERM_COLOR: always
+  VCPKG_DEFAULT_TRIPLET: x64-windows-static
+  VCPKG_ENABLE_METRICS: 0
+  OPENCV_MSVC_CRT: static
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          runVcpkgInstall: true
+          vcpkgJsonGlob: "**/vcpkg.json"
+
+      - name: Build
+        run: cargo build --release
