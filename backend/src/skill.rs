@@ -1,7 +1,7 @@
 use log::debug;
 use opencv::core::{Mat, MatTraitConst, Point, Rect, Vec4b};
 
-use super::{
+use crate::{
     context::{Context, Contextual, ControlFlow},
     detect::detect_erda_shower,
 };
@@ -55,7 +55,9 @@ fn update_context(contextual: Skill, mat: &Mat, state: &mut SkillState) -> Skill
         })
         .unwrap_or(Skill::Detecting),
         Skill::Idle => {
-            let pixel = mat.at_pt::<Vec4b>(state.anchor.0).unwrap();
+            let Ok(pixel) = mat.at_pt::<Vec4b>(state.anchor.0) else {
+                return Skill::Detecting;
+            };
             if *pixel != state.anchor.1 {
                 debug!(target: "skill", "assume skill to be on cooldown {:?} != {:?}, could be false positive", state.anchor, pixel);
                 // assume it is on cooldown

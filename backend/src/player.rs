@@ -5,16 +5,14 @@ use opencv::{core::Point, prelude::Mat};
 use platforms::windows::keys::KeyKind;
 
 use crate::{
+    context::{Context, Contextual, ControlFlow},
+    database::{Action, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, KeyBinding},
+    detect::detect_player,
     detect::{detect_cash_shop, detect_player_rune_buff, detect_rune_arrows},
-    models::{ActionKeyDirection, ActionKeyWith},
+    minimap::Minimap,
 };
 
-use super::{
-    context::{Context, Contextual, ControlFlow},
-    detect::detect_player,
-    minimap::Minimap,
-    models::{Action, KeyBinding},
-};
+const ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD: i32 = 4;
 
 /// Minimum x distance from the destination required to spam small movement
 const ADJUSTING_SHORT_THRESHOLD: i32 = 1;
@@ -35,6 +33,8 @@ pub struct PlayerState {
     /// A priority action requested by the `Rotator`, this action will override
     /// the normal action if it is in the middle of executing.
     priority_action: Option<PlayerAction>,
+    /// The interact key, must be set first before use
+    pub interact_key: Option<KeyKind>,
     /// The RopeLift key, must be set first before use
     pub grappling_key: Option<KeyKind>,
     /// The up jump key with `None` indicating composite jump (Up arrow + Double Space)
@@ -46,7 +46,7 @@ pub struct PlayerState {
     /// Approximates the player direction for using key
     last_known_direction: ActionKeyDirection,
     /// Last known position after each detection used for unstucking
-    last_known_pos: Option<Point>,
+    pub(crate) last_known_pos: Option<Point>,
     /// Indicates whether to use `ControlFlow::Immediate` on this update
     use_immediate_control_flow: bool,
     /// Indicates whether to ignore update_pos and use last_known_pos on next update
@@ -76,22 +76,28 @@ pub enum PlayerAction {
 }
 
 impl PlayerState {
-    pub fn has_normal_action(&self) -> bool {
+    pub(crate) fn has_normal_action(&self) -> bool {
         self.normal_action.is_some()
     }
 
-    pub fn set_normal_action(&mut self, action: PlayerAction) {
-        self.normal_action = Some(action);
+    pub(crate) fn set_normal_action(&mut self, action: PlayerAction) {
         self.reset_to_idle_next_update = true;
+        self.normal_action = Some(action);
     }
 
-    pub fn has_priority_action(&self) -> bool {
+    pub(crate) fn has_priority_action(&self) -> bool {
         self.priority_action.is_some()
     }
 
-    pub fn set_priority_action(&mut self, action: PlayerAction) {
-        self.priority_action = Some(action);
+    pub(crate) fn set_priority_action(&mut self, action: PlayerAction) {
         self.reset_to_idle_next_update = true;
+        self.priority_action = Some(action);
+    }
+
+    pub(crate) fn abort_actions(&mut self) {
+        self.reset_to_idle_next_update = true;
+        self.priority_action = None;
+        self.normal_action = None;
     }
 }
 
@@ -180,14 +186,14 @@ pub struct PlayerUseKey {
 impl PlayerUseKey {
     fn new_from_action(action: Action) -> Self {
         match action {
-            Action::Key {
+            Action::Key(ActionKey {
                 key,
                 direction,
                 with,
                 wait_before_use_ticks,
                 wait_after_use_ticks,
                 ..
-            } => Self {
+            }) => Self {
                 key,
                 direction,
                 with,
@@ -266,6 +272,11 @@ impl Contextual for Player {
         };
         let next = update_non_positional_context(contextual, context, mat, state)
             .unwrap_or_else(|| update_positional_context(contextual, context, cur_pos, state));
+        if let Player::UseKey(use_key) = next
+            && !use_key.timeout.started
+        {
+            state.use_immediate_control_flow = true;
+        }
         let control_flow = if state.use_immediate_control_flow {
             ControlFlow::Immediate(next)
         } else {
@@ -296,7 +307,7 @@ fn update_non_positional_context(
             let next = update_timeout(timeout, max_timeout, update, || Player::Idle, update);
             Some(on_action(
                 state,
-                |_, _| Some((next, matches!(next, Player::Idle))),
+                |_| Some((next, matches!(next, Player::Idle))),
                 || next,
             ))
         }
@@ -328,7 +339,7 @@ fn update_non_positional_context(
             };
             Some(on_action(
                 state,
-                |action, _| match action {
+                |action| match action {
                     PlayerAction::Fixed(_) => None,
                     PlayerAction::SolveRune(_) => Some((next, false)),
                 },
@@ -387,33 +398,33 @@ fn update_positional_context(
 fn update_idle_context(state: &mut PlayerState, cur_pos: Point) -> Player {
     fn on_fixed_action(action: Action, cur_pos: Point) -> Option<(Player, bool)> {
         match action {
-            Action::Move { position, .. } => {
+            Action::Move(ActionMove { position, .. }) => {
                 debug!(target: "player", "handling move: {} {}", position.x, position.y);
                 Some((
                     Player::Moving(Point::new(position.x, position.y), position.allow_adjusting),
                     false,
                 ))
             }
-            Action::Key {
+            Action::Key(ActionKey {
                 position: Some(position),
                 ..
-            } => Some((
+            }) => Some((
                 Player::Moving(Point::new(position.x, position.y), position.allow_adjusting),
                 false,
             )),
-            Action::Key {
+            Action::Key(ActionKey {
                 position: None,
                 with: ActionKeyWith::DoubleJump,
                 ..
-            } => Some((
+            }) => Some((
                 Player::DoubleJumping(PlayerMoving::new(cur_pos, cur_pos, false), true),
                 false,
             )),
-            Action::Key {
+            Action::Key(ActionKey {
                 position: None,
                 with: ActionKeyWith::Any | ActionKeyWith::Stationary,
                 ..
-            } => Some((Player::UseKey(PlayerUseKey::new_from_action(action)), false)),
+            }) => Some((Player::UseKey(PlayerUseKey::new_from_action(action)), false)),
         }
     }
 
@@ -421,7 +432,7 @@ fn update_idle_context(state: &mut PlayerState, cur_pos: Point) -> Player {
 
     on_action(
         state,
-        |action, _| match action {
+        |action| match action {
             PlayerAction::Fixed(action) => on_fixed_action(action, cur_pos),
             PlayerAction::SolveRune(dest) => Some((Player::Moving(dest, true), false)),
         },
@@ -472,10 +483,6 @@ fn update_use_key_context(
         }
     }
 
-    if !use_key.timeout.started {
-        state.use_immediate_control_flow = true;
-    }
-
     let update = |timeout| Player::UseKey(PlayerUseKey { timeout, ..use_key });
     let next = update_timeout(
         use_key.timeout,
@@ -484,7 +491,10 @@ fn update_use_key_context(
         || Player::Idle,
         |timeout| {
             if matches!(use_key.with, ActionKeyWith::Stationary) && !state.is_stationary {
-                return update(timeout);
+                return update(Timeout {
+                    current: 0,
+                    ..timeout
+                });
             }
             if !update_direction(context, state, timeout, use_key.direction) {
                 return update(timeout);
@@ -493,23 +503,65 @@ fn update_use_key_context(
                 return update(timeout);
             }
             let key = match use_key.key {
-                KeyBinding::Y => KeyKind::Y,
-                KeyBinding::F => KeyKind::F,
-                KeyBinding::C => KeyKind::C,
                 KeyBinding::A => KeyKind::A,
+                KeyBinding::B => KeyKind::B,
+                KeyBinding::C => KeyKind::C,
                 KeyBinding::D => KeyKind::D,
-                KeyBinding::W => KeyKind::W,
+                KeyBinding::E => KeyKind::E,
+                KeyBinding::F => KeyKind::F,
+                KeyBinding::G => KeyKind::G,
+                KeyBinding::H => KeyKind::H,
+                KeyBinding::I => KeyKind::I,
+                KeyBinding::J => KeyKind::J,
+                KeyBinding::K => KeyKind::K,
+                KeyBinding::L => KeyKind::L,
+                KeyBinding::M => KeyKind::M,
+                KeyBinding::N => KeyKind::N,
+                KeyBinding::O => KeyKind::O,
+                KeyBinding::P => KeyKind::P,
+                KeyBinding::Q => KeyKind::Q,
                 KeyBinding::R => KeyKind::R,
+                KeyBinding::S => KeyKind::S,
+                KeyBinding::T => KeyKind::T,
+                KeyBinding::U => KeyKind::U,
+                KeyBinding::V => KeyKind::V,
+                KeyBinding::W => KeyKind::W,
+                KeyBinding::X => KeyKind::X,
+                KeyBinding::Y => KeyKind::Y,
+                KeyBinding::Z => KeyKind::Z,
+                KeyBinding::Zero => KeyKind::Zero,
+                KeyBinding::One => KeyKind::One,
+                KeyBinding::Two => KeyKind::Two,
+                KeyBinding::Three => KeyKind::Three,
+                KeyBinding::Four => KeyKind::Four,
+                KeyBinding::Five => KeyKind::Five,
+                KeyBinding::Six => KeyKind::Six,
+                KeyBinding::Seven => KeyKind::Seven,
+                KeyBinding::Eight => KeyKind::Eight,
+                KeyBinding::Nine => KeyKind::Nine,
+                KeyBinding::F1 => KeyKind::F1,
                 KeyBinding::F2 => KeyKind::F2,
                 KeyBinding::F3 => KeyKind::F3,
                 KeyBinding::F4 => KeyKind::F4,
+                KeyBinding::F5 => KeyKind::F5,
+                KeyBinding::F6 => KeyKind::F6,
                 KeyBinding::F7 => KeyKind::F7,
-                KeyBinding::Delete => KeyKind::Delete,
+                KeyBinding::F8 => KeyKind::F8,
+                KeyBinding::F9 => KeyKind::F9,
+                KeyBinding::F10 => KeyKind::F10,
+                KeyBinding::F11 => KeyKind::F11,
+                KeyBinding::F12 => KeyKind::F12,
                 KeyBinding::Up => KeyKind::Up,
-                KeyBinding::One => KeyKind::One,
-                KeyBinding::Four => KeyKind::Four,
-                KeyBinding::Six => KeyKind::Six,
+                KeyBinding::Home => KeyKind::Home,
+                KeyBinding::End => KeyKind::End,
+                KeyBinding::PageUp => KeyKind::PageUp,
+                KeyBinding::PageDown => KeyKind::PageDown,
                 KeyBinding::Insert => KeyKind::Insert,
+                KeyBinding::Delete => KeyKind::Delete,
+                KeyBinding::Enter => KeyKind::Enter,
+                KeyBinding::Space => KeyKind::Space,
+                KeyBinding::Tilde => KeyKind::Tilde,
+                KeyBinding::Esc => KeyKind::Esc,
             };
             let _ = context.keys.send(key);
             if use_key.wait_after_use_ticks > 0 {
@@ -522,8 +574,10 @@ fn update_use_key_context(
 
     on_action(
         state,
-        |action, _| match action {
-            PlayerAction::Fixed(Action::Key { .. }) => Some((next, matches!(next, Player::Idle))),
+        |action| match action {
+            PlayerAction::Fixed(Action::Key(ActionKey { .. })) => {
+                Some((next, matches!(next, Player::Idle)))
+            }
             PlayerAction::Fixed(Action::Move { .. }) | PlayerAction::SolveRune(_) => None,
         },
         || next,
@@ -536,7 +590,7 @@ fn update_moving_context(
     dest: Point,
     exact: bool,
 ) -> Player {
-    const PLAYER_VERTICAL_MOVE_THRESHOLD: i32 = 2;
+    const PLAYER_VERTICAL_MOVE_THRESHOLD: i32 = 4;
     const PLAYER_GRAPPLING_THRESHOLD: i32 = 25;
     const PLAYER_UP_JUMP_THRESHOLD: i32 = 10;
     const PLAYER_JUMP_THRESHOLD: i32 = 7;
@@ -552,10 +606,10 @@ fn update_moving_context(
 
     fn on_fixed_action(action: Action, moving: PlayerMoving) -> Option<(Player, bool)> {
         match action {
-            Action::Move {
+            Action::Move(ActionMove {
                 wait_after_move_ticks,
                 ..
-            } => {
+            }) => {
                 if wait_after_move_ticks > 0 {
                     Some((
                         Player::Stalling(Timeout::default(), wait_after_move_ticks),
@@ -565,14 +619,14 @@ fn update_moving_context(
                     Some((Player::Idle, true))
                 }
             }
-            Action::Key {
+            Action::Key(ActionKey {
                 with: ActionKeyWith::DoubleJump,
                 ..
-            } => Some((Player::DoubleJumping(moving, true), false)),
-            Action::Key {
+            }) => Some((Player::DoubleJumping(moving, true), false)),
+            Action::Key(ActionKey {
                 with: ActionKeyWith::Any | ActionKeyWith::Stationary,
                 ..
-            } => Some((Player::UseKey(PlayerUseKey::new_from_action(action)), false)),
+            }) => Some((Player::UseKey(PlayerUseKey::new_from_action(action)), false)),
         }
     }
 
@@ -606,7 +660,7 @@ fn update_moving_context(
             );
             on_action(
                 state,
-                |action, _| match action {
+                |action| match action {
                     PlayerAction::Fixed(action) => on_fixed_action(action, moving),
                     PlayerAction::SolveRune(_) => {
                         Some((Player::SolvingRune(PlayerSolvingRune::default()), false))
@@ -635,20 +689,20 @@ fn update_adjusting_context(
         moving: PlayerMoving,
     ) -> Option<(Player, bool)> {
         match action {
-            Action::Key {
+            Action::Key(ActionKey {
                 with: ActionKeyWith::DoubleJump,
                 ..
-            } => (moving.completed && y_distance <= USE_KEY_AT_Y_DOUBLE_JUMP_THRESHOLD)
+            }) => (moving.completed && y_distance <= USE_KEY_AT_Y_DOUBLE_JUMP_THRESHOLD)
                 .then_some((Player::DoubleJumping(moving, true), false)),
-            Action::Key {
+            Action::Key(ActionKey {
                 with: ActionKeyWith::Any,
                 ..
-            } => (moving.completed && y_distance <= USE_KEY_AT_Y_PROXIMITY_THRESHOLD)
+            }) => (moving.completed && y_distance <= USE_KEY_AT_Y_PROXIMITY_THRESHOLD)
                 .then_some((Player::UseKey(PlayerUseKey::new_from_action(action)), false)),
-            Action::Key {
+            Action::Key(ActionKey {
                 with: ActionKeyWith::Stationary,
                 ..
-            }
+            })
             | Action::Move { .. } => None,
         }
     }
@@ -659,7 +713,11 @@ fn update_adjusting_context(
         state.use_immediate_control_flow = true;
         return Player::Moving(moving.dest, moving.exact);
     }
-    if y_direction < 0 && !state.was_falling && !moving.timeout.started {
+    if y_direction < 0
+        && y_distance >= ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD
+        && !state.was_falling
+        && !moving.timeout.started
+    {
         return Player::Falling(moving.pos(cur_pos));
     } else {
         state.was_falling = false;
@@ -721,7 +779,7 @@ fn update_adjusting_context(
             }
             on_action(
                 state,
-                |action, _| match action {
+                |action| match action {
                     PlayerAction::Fixed(action) => on_fixed_action(action, y_distance, moving),
                     PlayerAction::SolveRune(_) => None,
                 },
@@ -751,31 +809,23 @@ fn update_double_jumping_context(
     const DOUBLE_JUMPED_FORCE_THRESHOLD: i32 = 3;
 
     fn on_fixed_action(
-        state: &mut PlayerState,
         action: Action,
         x_distance: i32,
         y_distance: i32,
         moving: PlayerMoving,
     ) -> Option<(Player, bool)> {
         match action {
-            Action::Key {
+            Action::Key(ActionKey {
                 with: ActionKeyWith::DoubleJump | ActionKeyWith::Any,
                 ..
-            } => {
-                if moving.completed
-                    && x_distance <= DOUBLE_JUMP_USE_KEY_X_PROXIMITY_THRESHOLD
-                    && y_distance <= DOUBLE_JUMP_USE_KEY_Y_PROXIMITY_THRESHOLD
-                {
-                    state.use_immediate_control_flow = true;
-                    Some((Player::UseKey(PlayerUseKey::new_from_action(action)), false))
-                } else {
-                    None
-                }
-            }
-            Action::Key {
+            }) => (moving.completed
+                && x_distance <= DOUBLE_JUMP_USE_KEY_X_PROXIMITY_THRESHOLD
+                && y_distance <= DOUBLE_JUMP_USE_KEY_Y_PROXIMITY_THRESHOLD)
+                .then_some((Player::UseKey(PlayerUseKey::new_from_action(action)), false)),
+            Action::Key(ActionKey {
                 with: ActionKeyWith::Stationary,
                 ..
-            }
+            })
             | Action::Move { .. } => None,
         }
     }
@@ -783,7 +833,11 @@ fn update_double_jumping_context(
     let x_changed = (cur_pos.x - moving.pos.x).abs();
     let (x_distance, x_direction) = x_distance_direction(&moving.dest, &cur_pos);
     let (y_distance, y_direction) = y_distance_direction(&moving.dest, &cur_pos);
-    if y_direction < 0 && !state.was_falling && !moving.timeout.started {
+    if y_direction < 0
+        && y_distance >= ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD
+        && !state.was_falling
+        && !moving.timeout.started
+    {
         return Player::Falling(moving.pos(cur_pos));
     } else {
         state.was_falling = false;
@@ -828,9 +882,9 @@ fn update_double_jumping_context(
             }
             on_action(
                 state,
-                |action, state| match action {
+                |action| match action {
                     PlayerAction::Fixed(action) => {
-                        on_fixed_action(state, action, x_distance, y_distance, moving)
+                        on_fixed_action(action, x_distance, y_distance, moving)
                     }
                     PlayerAction::SolveRune(_) => None,
                 },
@@ -955,7 +1009,6 @@ fn update_falling_context(
 
     let y_changed = cur_pos.y - moving.pos.y;
     let (x_distance, _) = x_distance_direction(&moving.dest, &cur_pos);
-    let (y_distance, _) = y_distance_direction(&moving.dest, &cur_pos);
 
     update_moving_axis_context(
         moving,
@@ -973,7 +1026,7 @@ fn update_falling_context(
         |mut moving| {
             // only timeout early when the player is not super close to
             // the destination x-wise, useful for falling + double jumping
-            if (x_distance >= ADJUSTING_MEDIUM_THRESHOLD && y_changed <= -2) || y_distance <= 1 {
+            if x_distance >= ADJUSTING_MEDIUM_THRESHOLD && y_changed <= -2 {
                 moving = moving.timeout_current(FALLING_TIMEOUT);
             }
             Player::Falling(moving)
@@ -983,10 +1036,20 @@ fn update_falling_context(
 }
 
 fn update_unstucking_context(context: &Context, cur_pos: Point, timeout: Timeout) -> Player {
+    const Y_IGNORE_THRESHOLD: i32 = 15;
+
+    let Minimap::Idle(idle) = context.minimap else {
+        return Player::Detecting;
+    };
+    let y = idle.bbox.height - cur_pos.y;
+
     update_timeout(
         timeout,
         PLAYER_MOVE_TIMEOUT,
         |timeout| {
+            if y <= Y_IGNORE_THRESHOLD {
+                return Player::Unstucking(timeout);
+            }
             // random threshold for picking whether to go left or right
             if cur_pos.x <= 10 {
                 let _ = context.keys.send_down(KeyKind::Right);
@@ -1001,7 +1064,9 @@ fn update_unstucking_context(context: &Context, cur_pos: Point, timeout: Timeout
             Player::Detecting
         },
         |timeout| {
-            let _ = context.keys.send(KeyKind::Space);
+            if y > Y_IGNORE_THRESHOLD {
+                let _ = context.keys.send(KeyKind::Space);
+            }
             Player::Unstucking(timeout)
         },
     )
@@ -1047,11 +1112,15 @@ fn update_solving_rune_context(
         }
     }
 
+    let Some(key) = state.interact_key else {
+        debug!(target: "player", "failed to interact as key is not set");
+        return Player::Idle;
+    };
     let next = update_timeout(
         solving_rune.timeout,
         SOLVE_RUNE_TIMEOUT,
         |timeout| {
-            let _ = context.keys.send(KeyKind::Ctrl);
+            let _ = context.keys.send(key);
             Player::SolvingRune(PlayerSolvingRune {
                 timeout,
                 ..solving_rune
@@ -1109,7 +1178,7 @@ fn update_solving_rune_context(
     );
     on_action(
         state,
-        |action, _| match action {
+        |action| match action {
             PlayerAction::SolveRune(_) => Some((next, matches!(next, Player::Idle))),
             PlayerAction::Fixed(_) => unreachable!(),
         },
@@ -1120,11 +1189,11 @@ fn update_solving_rune_context(
 #[inline(always)]
 fn on_action(
     state: &mut PlayerState,
-    on_action_context: impl FnOnce(PlayerAction, &mut PlayerState) -> Option<(Player, bool)>,
+    on_action_context: impl FnOnce(PlayerAction) -> Option<(Player, bool)>,
     on_default_context: impl FnOnce() -> Player,
 ) -> Player {
     if let Some(action) = state.priority_action.or(state.normal_action) {
-        let Some((next, is_terminal)) = on_action_context(action, state) else {
+        let Some((next, is_terminal)) = on_action_context(action) else {
             return on_default_context();
         };
         if is_terminal {

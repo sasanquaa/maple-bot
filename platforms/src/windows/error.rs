@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-#[derive(Error, Clone, Debug)]
+#[derive(Error, PartialEq, Clone, Debug)]
 pub enum Error {
     #[error("at least either class or title must be provided")]
     InvalidHandle,

@@ -1,5 +1,18 @@
 @import "tailwindcss";
 
+html,
+body {
+    overflow-x: hidden;
+}
+
+@layer base {
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+}
+
 @theme {
-    --font-meiryo: Meiryo, sans-serif;
+    --font-main: Meiryo, sans-serif;
 }

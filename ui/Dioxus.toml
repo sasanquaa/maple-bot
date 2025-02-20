@@ -1,5 +1,6 @@
 [application]
 name = "maple-bot"
+asset_dir = "assets"
 
 [web.app]
 title = "Maple Bot"

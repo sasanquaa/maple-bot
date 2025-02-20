@@ -9,8 +9,8 @@ use strsim::normalized_damerau_levenshtein;
 
 use crate::{
     context::{Context, Contextual, ControlFlow},
+    database::{Action, ActionKey, ActionMove, Minimap as MinimapData, query_maps, upsert_map},
     detect::{detect_minimap, detect_minimap_name, detect_minimap_rune},
-    models::{Action, Minimap as MinimapData, query_maps, upsert_map},
 };
 
 const MINIMAP_CHANGE_TIMEOUT: u32 = 200;
@@ -19,7 +19,7 @@ const MINIMAP_DETECT_RUNE_INTERVAL_TICKS: u32 = 305;
 
 #[derive(Debug, Default)]
 pub struct MinimapState {
-    data: MinimapData,
+    pub(crate) data: MinimapData,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -173,11 +173,11 @@ fn get_data_for_minimap(bbox: &Rect, name: &str) -> Option<(MinimapData, f32, f3
                     let h_ratio = b_h as f32 / m_h as f32;
                     map.actions.values_mut().flatten().for_each(|action| {
                         match action {
-                            Action::Move { position, .. } => {
+                            Action::Move(ActionMove { position, .. }) => {
                                 position.x = (position.x as f32 * w_ratio) as i32;
                                 position.y = (position.y as f32 * h_ratio) as i32;
                             }
-                            Action::Key { position, .. } => {
+                            Action::Key(ActionKey { position, .. }) => {
                                 if let Some(position) = position {
                                     position.x = (position.x as f32 * w_ratio) as i32;
                                     position.y = (position.y as f32 * h_ratio) as i32;

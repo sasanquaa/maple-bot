@@ -94,14 +94,22 @@ impl Capture {
     }
 
     fn new_from(from: &Capture, width: i32, height: i32) -> Result<Self, Error> {
-        let handle = from.handle.clone();
+        let handle = from.handle;
         let dc = create_dc()?;
         let bm = create_bitmap(dc.value, width, height)?;
         Ok(Self { handle, dc, bm })
     }
 
-    pub fn grab(&self) -> Result<Frame, Error> {
-        let handle = self.handle.to_inner()?;
+    pub fn grab(&mut self) -> Result<Frame, Error> {
+        let result = self.grab_inner();
+        if result.is_err() {
+            self.handle.reset_inner();
+        }
+        result
+    }
+
+    fn grab_inner(&mut self) -> Result<Frame, Error> {
+        let handle = self.handle.as_inner()?;
         let rect = get_rect(handle)?;
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;

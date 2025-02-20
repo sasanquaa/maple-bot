@@ -1,0 +1,279 @@
+use std::{
+    collections::HashMap,
+    env,
+    sync::{LazyLock, Mutex},
+};
+
+use anyhow::{Result, anyhow};
+use rusqlite::{Connection, Params, Statement, types::Null};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use strum::{EnumDiscriminants, EnumIter, EnumString};
+
+static CONNECTION: LazyLock<Mutex<Connection>> = LazyLock::new(|| {
+    let path = env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("local.db")
+        .to_path_buf();
+    let conn = Connection::open(path.to_str().unwrap()).expect("failed to open local.db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS maps (
+            id INTEGER PRIMARY KEY,
+            data TEXT NOT NULL
+        );
+        "#,
+    )
+    .unwrap();
+    Mutex::new(conn)
+});
+
+trait Identifiable {
+    fn id(&self) -> Option<i64>;
+
+    fn set_id(&mut self, id: i64);
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Minimap {
+    #[serde(skip_serializing, default)]
+    pub id: Option<i64>,
+    pub name: String,
+    pub width: i32,
+    pub height: i32,
+    pub actions: HashMap<String, Vec<Action>>,
+}
+
+// TODO: probably not needed because there is only one model
+impl Identifiable for Minimap {
+    fn id(&self) -> Option<i64> {
+        self.id
+    }
+
+    fn set_id(&mut self, id: i64) {
+        self.id = Some(id)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Position {
+    pub x: i32,
+    pub y: i32,
+    pub allow_adjusting: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub struct ActionMove {
+    pub position: Position,
+    pub condition: ActionCondition,
+    pub wait_after_move_ticks: u32,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub struct ActionKey {
+    pub key: KeyBinding,
+    pub position: Option<Position>,
+    pub condition: ActionCondition,
+    pub direction: ActionKeyDirection,
+    pub with: ActionKeyWith,
+    pub wait_before_use_ticks: u32,
+    pub wait_after_use_ticks: u32,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, EnumDiscriminants)]
+#[strum_discriminants(derive(EnumIter, strum::Display))]
+pub enum Action {
+    Move(ActionMove),
+    Key(ActionKey),
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, EnumDiscriminants)]
+#[strum_discriminants(derive(EnumIter, strum::Display))]
+pub enum ActionCondition {
+    Any,
+    EveryMillis(u64),
+    ErdaShowerOffCooldown,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, EnumString, EnumDiscriminants)]
+#[strum_discriminants(derive(EnumIter, strum::Display))]
+pub enum ActionKeyWith {
+    Any,
+    Stationary,
+    DoubleJump,
+}
+
+#[derive(
+    Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumString, EnumDiscriminants,
+)]
+#[strum_discriminants(derive(EnumIter, strum::Display))]
+pub enum ActionKeyDirection {
+    #[default]
+    Any,
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, EnumString, EnumDiscriminants)]
+#[strum_discriminants(derive(EnumIter, strum::Display))]
+pub enum KeyBinding {
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+    I,
+    J,
+    K,
+    L,
+    M,
+    N,
+    O,
+    P,
+    Q,
+    R,
+    S,
+    T,
+    U,
+    V,
+    W,
+    X,
+    Y,
+    Z,
+    Zero,
+    One,
+    Two,
+    Three,
+    Four,
+    Five,
+    Six,
+    Seven,
+    Eight,
+    Nine,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
+    Up,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Insert,
+    Delete,
+    Enter,
+    Space,
+    Tilde,
+    Esc,
+}
+
+pub(crate) fn query_maps() -> Result<Vec<Minimap>> {
+    query_from_table("maps")
+}
+
+pub fn upsert_map(map: &mut Minimap) -> Result<()> {
+    upsert_to_table("maps", map)
+}
+
+pub fn delete_map(map: &Minimap) -> Result<()> {
+    delete_from_table("maps", map)
+}
+
+pub(crate) fn refresh_map(map: &mut Minimap) -> Result<()> {
+    refresh_data_from_table("maps", map)
+}
+
+#[inline(always)]
+fn map_data<T>(mut stmt: Statement<'_>, params: impl Params) -> Result<Vec<T>>
+where
+    T: DeserializeOwned + Identifiable,
+{
+    Ok(stmt
+        .query_map::<T, _, _>(params, |row| {
+            let id = row.get::<_, i64>(0).unwrap();
+            let data = row.get::<_, String>(1).unwrap();
+            let mut value = serde_json::from_str::<'_, T>(data.as_str()).unwrap();
+            value.set_id(id);
+            Ok(value)
+        })?
+        .filter_map(|c| c.ok())
+        .collect::<Vec<_>>())
+}
+
+#[inline(always)]
+fn refresh_data_from_table<T>(table: &str, data: &mut T) -> Result<()>
+where
+    T: DeserializeOwned + Identifiable,
+{
+    let id = data.id().ok_or(anyhow!("data does not have id"))?;
+    let conn = CONNECTION.lock().unwrap();
+    let stmt = format!("SELECT id, data FROM {} WHERE id = ?1;", table);
+    let stmt = conn.prepare(&stmt).unwrap();
+    let latest_data = map_data(stmt, [id])?.into_iter().next();
+    if let Some(latest_data) = latest_data {
+        *data = latest_data;
+        Ok(())
+    } else {
+        Err(anyhow!("data not found"))
+    }
+}
+
+#[inline(always)]
+fn query_from_table<T>(table: &str) -> Result<Vec<T>>
+where
+    T: DeserializeOwned + Identifiable,
+{
+    let conn = CONNECTION.lock().unwrap();
+    let stmt = format!("SELECT id, data FROM {}", table);
+    let stmt = conn.prepare(&stmt).unwrap();
+    map_data(stmt, [])
+}
+
+#[inline(always)]
+fn upsert_to_table<T>(table: &str, data: &mut T) -> Result<()>
+where
+    T: Serialize + Identifiable,
+{
+    let json = serde_json::to_string(&data).unwrap();
+    let conn = CONNECTION.lock().unwrap();
+    let stmt = format!(
+        "INSERT INTO {} (id, data) VALUES (?1, ?2) ON CONFLICT (id) DO UPDATE SET data = ?2;",
+        table
+    );
+    match data.id() {
+        Some(id) => {
+            conn.execute(&stmt, (id, &json))?;
+            Ok(())
+        }
+        None => {
+            conn.execute(&stmt, (Null, &json))?;
+            data.set_id(conn.last_insert_rowid());
+            Ok(())
+        }
+    }
+}
+
+#[inline(always)]
+fn delete_from_table<T: Identifiable>(table: &str, data: &T) -> Result<()> {
+    fn inner(table: &str, id: Option<i64>) -> Result<()> {
+        if id.is_some() {
+            let conn = CONNECTION.lock().unwrap();
+            let stmt = format!("DELETE FROM {} WHERE id = ?1;", table);
+            conn.execute(&stmt, [id.unwrap()])?;
+        }
+        Ok(())
+    }
+    inner(table, data.id())
+}

@@ -1,9 +1,11 @@
 use std::{collections::VecDeque, time::Instant};
 
+use log::debug;
+
 use crate::{
     context::{Context, ERDA_SHOWER_SKILL_POSITION},
+    database::{Action, ActionCondition, ActionKey, ActionMove},
     minimap::Minimap,
-    models::{Action, ActionCondition},
     player::{PlayerAction, PlayerState},
     skill::Skill,
 };
@@ -26,14 +28,15 @@ pub struct Rotator {
 
 impl Rotator {
     pub fn build_actions(&mut self, actions: &[Action]) {
+        debug!(target: "rotator", "preparing actions {actions:?}");
+        self.reset();
         self.normal_actions.clear();
-        self.normal_index = 0;
         self.priority_actions.clear();
-        self.priority_actions_queue.clear();
 
         for action in actions.iter().cloned() {
             match action {
-                Action::Move { condition, .. } | Action::Key { condition, .. } => match condition {
+                Action::Move(ActionMove { condition, .. })
+                | Action::Key(ActionKey { condition, .. }) => match condition {
                     ActionCondition::EveryMillis(_) | ActionCondition::ErdaShowerOffCooldown => {
                         self.priority_actions.push(PriorityAction {
                             condition,
@@ -45,6 +48,12 @@ impl Rotator {
                 },
             }
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.normal_action_backward = false;
+        self.normal_index = 0;
+        self.priority_actions_queue.clear();
     }
 
     pub fn rotate_action(&mut self, context: &Context, player: &mut PlayerState) {
@@ -72,7 +81,7 @@ impl Rotator {
         if !player.has_normal_action() && !self.normal_actions.is_empty() {
             let len = self.normal_actions.len();
             let i = if self.normal_action_backward {
-                len - self.normal_index - 1
+                (len - self.normal_index).saturating_sub(1)
             } else {
                 self.normal_index
             };

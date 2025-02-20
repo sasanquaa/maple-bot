@@ -1,7 +1,28 @@
-use std::ops::DerefMut;
+#![feature(variant_count)]
+#![feature(map_try_insert)]
 
-use backend::context::{request_minimap_frame, start_update_loop};
+use std::str::FromStr;
+use std::string::ToString;
+
+use backend::database::{
+    ActionDiscriminants, ActionKey, ActionKeyDirectionDiscriminants, ActionKeyWithDiscriminants,
+    ActionMove, KeyBindingDiscriminants, upsert_map,
+};
+use backend::{
+    IntoEnumIterator,
+    context::start_update_loop,
+    database::{
+        Action, ActionCondition, ActionConditionDiscriminants, ActionKeyDirection, ActionKeyWith,
+        KeyBinding, Minimap as MinimapData, Position,
+    },
+    minimap_data, minimap_frame,
+};
+use backend::{
+    player_position, prepare_actions, redetect_minimap, refresh_minimap_data, rotate_actions,
+};
+use components::Checkbox;
 use components::{
+    Divider, NumberInput, TextInput,
     button::{OneButton, TwoButtons},
     options::Options,
 };
@@ -11,56 +32,157 @@ use dioxus::{
         wry::dpi::{PhysicalSize, Size},
     },
     document::EvalError,
-    logger::tracing::Level,
     prelude::*,
 };
-use tokio::{sync::mpsc, task::spawn_blocking};
 use tracing_log::LogTracer;
 
 mod components;
 
 const TAILWIND_CSS: Asset = asset!("public/tailwind.css");
+const DEFAULT_POSITION: Position = Position {
+    x: 0,
+    y: 0,
+    allow_adjusting: true,
+};
+const DEFAULT_MOVE_ACTION: Action = Action::Move(ActionMove {
+    position: DEFAULT_POSITION,
+    condition: ActionCondition::Any,
+    wait_after_move_ticks: 0,
+});
+const DEFAULT_KEY_ACTION: Action = Action::Key(ActionKey {
+    key: KeyBinding::A,
+    position: None,
+    condition: ActionCondition::Any,
+    direction: ActionKeyDirection::Any,
+    with: ActionKeyWith::Any,
+    wait_before_use_ticks: 0,
+    wait_after_use_ticks: 0,
+});
 
 // 許してくれよ！UIなんてよくわからん
 // 使えば十分よ！๑-﹏-๑
 
 fn main() {
-    dioxus::logger::init(Level::DEBUG);
     LogTracer::init().unwrap();
     start_update_loop();
-    // let window = WindowBuilder::new()
-    //     .with_inner_size(Size::Physical(PhysicalSize::new(700, 400)))
-    //     .with_resizable(false)
-    //     .with_maximizable(false)
-    //     .with_title("Maple Bot")
-    //     .with_always_on_top(true);
-    // let cfg = dioxus::desktop::Config::default()
-    //     .with_menu(None)
-    //     .with_window(window);
-    // dioxus::LaunchBuilder::desktop().with_cfg(cfg).launch(App);
+    let window = WindowBuilder::new()
+        .with_inner_size(Size::Physical(PhysicalSize::new(800, 780)))
+        .with_resizable(false)
+        .with_maximizable(false)
+        .with_title("Maple Bot")
+        .with_always_on_top(cfg!(debug_assertions));
+    let cfg = dioxus::desktop::Config::default()
+        .with_menu(None)
+        .with_window(window);
+    dioxus::LaunchBuilder::desktop().with_cfg(cfg).launch(App);
 }
 
 #[component]
 fn App() -> Element {
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
-        div {
-            class: "flex",
-            Minimap {}
-            // Characters {}
-        }
+        div { class: "flex justify-center", Minimap {} }
     }
 }
 
 #[component]
 fn Minimap() -> Element {
+    let mut halted = use_signal(|| true);
+    let mut position = use_signal::<Option<(i32, i32)>>(|| None);
+    let mut minimap = use_signal::<Option<MinimapData>>(|| None);
+    let mut preset = use_signal::<Option<String>>(move || {
+        if let Some(minimap) = &minimap() {
+            minimap.actions.keys().next().cloned()
+        } else {
+            None
+        }
+    });
+    let presets = use_memo::<Option<Vec<(String, String)>>>(move || {
+        minimap().map(|minimap| {
+            minimap
+                .actions
+                .keys()
+                .cloned()
+                .map(|key| (key.clone(), key))
+                .collect()
+        })
+    });
+
+    let mut editing = use_signal::<Option<usize>>(|| None);
+    let mut editing_preset = use_signal::<String>(String::new);
+    let mut editing_action = use_signal::<Action>(|| DEFAULT_MOVE_ACTION);
+    let editing_action_set = use_callback(move |action: Action| {
+        if let Some(i) = *editing.peek() {
+            let minimap = minimap.peek();
+            let minimap = minimap.as_ref().unwrap();
+            let existing_action = minimap
+                .actions
+                .get(preset.peek().as_ref().unwrap())
+                .unwrap()
+                .get(i)
+                .unwrap();
+            if ActionDiscriminants::from(action) == ActionDiscriminants::from(existing_action) {
+                let is_default = match action {
+                    Action::Move(_) => action == DEFAULT_MOVE_ACTION,
+                    Action::Key(_) => action == DEFAULT_KEY_ACTION,
+                };
+                if is_default {
+                    editing_action.set(*existing_action);
+                    return;
+                }
+            }
+        }
+        editing_action.set(action);
+    });
+
+    let reset = use_callback(move |()| {
+        if position.peek().is_some() {
+            position.set(None);
+        }
+        if minimap.peek().is_some() {
+            minimap.set(None);
+        }
+        if preset.peek().is_some() {
+            preset.set(None);
+        }
+        if editing.peek().is_some() {
+            editing.set(None);
+        }
+    });
+
+    use_effect(move || {
+        if let Some(preset) = preset() {
+            spawn(async move {
+                prepare_actions(preset).await;
+            });
+        }
+    });
+    use_effect(move || {
+        if let Some(minimap) = &mut minimap() {
+            upsert_map(minimap).unwrap();
+            if preset.peek().is_none() {
+                preset.set(minimap.actions.keys().next().cloned());
+            }
+            spawn(async move {
+                refresh_minimap_data().await;
+                if let Some(preset) = preset.peek().clone() {
+                    prepare_actions(preset).await;
+                }
+            });
+        }
+    });
     use_future(move || async move {
         let mut canvas = document::eval(include_str!("js/minimap.js"));
         loop {
-            let result = request_minimap_frame().await;
+            let result = minimap_frame().await;
             let Ok(frame) = result else {
+                reset(());
                 continue;
             };
+            if minimap.peek().is_none() {
+                minimap.set(minimap_data().await.ok());
+            }
+            position.set(player_position().await.ok());
             let Err(error) = canvas.send(frame) else {
                 continue;
             };
@@ -72,220 +194,502 @@ fn Minimap() -> Element {
     });
 
     rsx! {
-        div {
-            class: "grid grid-flow-row auto-rows-max p-[16px] w-[350px] place-items-center",
-            div {
-                class: "flex w-full relative",
-                canvas {
-                    class: "w-full",
-                    id: "canvas-minimap",
-                },
-                canvas {
-                    id: "canvas-minimap-magnifier",
-                    class: "absolute hidden",
+        div { class: "grid grid-cols-2 w-[720px] gap-x-[32px] p-[16px]",
+            div { class: "grid grid-flow-row auto-rows-max gap-[8px] w-[350px] place-items-center",
+                p { class: "font-main",
+                    if let Some(minimap) = &minimap() {
+                        "{minimap.name}"
+                    } else {
+                        "Detecting..."
+                    }
+                }
+                if let Some((x, y)) = position() {
+                    p { class: "font-main", "{x}, {y}" }
+                }
+                div { class: "flex w-full relative",
+                    canvas { class: "w-full", id: "canvas-minimap" }
+                    canvas {
+                        id: "canvas-minimap-magnifier",
+                        class: "absolute hidden",
+                    }
+                }
+                if minimap().is_some() {
+                    OneButton {
+                        on_ok: move || async move {
+                            reset(());
+                            redetect_minimap().await;
+                        },
+                        "Redetect"
+                    }
+                    {
+                        let value = halted();
+                        let name = if value { "Start actions" } else { "Stop actions" };
+                        rsx! {
+                            OneButton {
+                                on_ok: move || async move {
+                                    halted.set(!value);
+                                    rotate_actions(!value).await;
+                                },
+                                {name}
+                            }
+                        }
+                    }
+                    Divider {}
+                    TextInput {
+                        label: "Preset name",
+                        on_input: move |value| {
+                            editing_preset.set(value);
+                        },
+                        value: editing_preset(),
+                    }
+                    OneButton {
+                        on_ok: move || {
+                            let name = editing_preset.peek().to_owned();
+                            if !name.is_empty() {
+                                let _ = minimap
+                                    .write()
+                                    .as_mut()
+                                    .unwrap()
+                                    .actions
+                                    .try_insert(name.clone(), vec![]);
+                                preset.set(Some(name));
+                                editing.set(None);
+                            }
+                        },
+                        "Create preset"
+                    }
+                }
+                if preset().is_some() {
+                    Divider {}
+                    if let Some(presets) = presets() {
+                        Options {
+                            label: "Presets",
+                            options: presets,
+                            on_select: move |v| {
+                                preset.set(Some(v));
+                                editing.set(None);
+                            },
+                            selected: preset.peek().clone().unwrap(),
+                        }
+                    }
+                    if let Some(index) = editing() {
+                        p { class: "font-main", "Editing {index}" }
+                    }
+                    Actions {
+                        on_option: move |action| {
+                            editing_action_set(action);
+                        },
+                        selected: editing_action(),
+                    }
+                    match editing_action() {
+                        Action::Move { .. } => {
+                            rsx! {
+                                ActionMoveEdit {
+                                    on_submit: move |action| {
+                                        editing_action_set(action);
+                                    },
+                                    value: editing_action(),
+                                }
+                            }
+                        }
+                        Action::Key { .. } => {
+                            rsx! {
+                                ActionKeyEdit {
+                                    on_submit: move |action| {
+                                        editing_action_set(action);
+                                    },
+                                    value: editing_action(),
+                                }
+                            }
+                        }
+                    }
+                    if let Some(i) = editing() {
+                        OneButton {
+                            on_ok: move || {
+                                editing.set(None);
+                                minimap
+                                    .write()
+                                    .as_mut()
+                                    .unwrap()
+                                    .actions
+                                    .get_mut(preset.peek().as_ref().unwrap())
+                                    .unwrap()
+                                    .remove(i);
+                            },
+                            "Delete"
+                        }
+                        TwoButtons {
+                            on_ok: move || {
+                                editing.set(None);
+                                *minimap
+                                    .write()
+                                    .as_mut()
+                                    .unwrap()
+                                    .actions
+                                    .get_mut(preset.peek().as_ref().unwrap())
+                                    .unwrap()
+                                    .get_mut(i)
+                                    .unwrap() = *editing_action.peek();
+                            },
+                            ok_body: rsx! { "Save" },
+                            on_cancel: move || {
+                                editing.set(None);
+                            },
+                            cancel_body: rsx! { "Cancel" },
+                        }
+                    } else {
+                        OneButton {
+                            on_ok: move || {
+                                minimap
+                                    .write()
+                                    .as_mut()
+                                    .unwrap()
+                                    .actions
+                                    .get_mut(preset.peek().as_ref().unwrap())
+                                    .unwrap()
+                                    .push(*editing_action.peek());
+                            },
+                            "Add action"
+                        }
+                    }
+                }
+            }
+            div { class: "grid grid-flow-row auto-rows-max gap-[8px] w-[350px] place-items-center",
+                if let Some(preset) = preset() {
+                    if let Some(minimap) = minimap().as_ref() {
+                        {
+                            let actions = minimap.actions.get(&preset).unwrap().clone();
+                            rsx! {
+                                if !actions.is_empty() {
+                                    p { class: "font-main", "Click action to edit" }
+                                }
+                                for (i , action) in actions.into_iter().enumerate() {
+                                    div {
+                                        class: "w-fit h-fit border border-black font-main",
+                                        onclick: move |_| {
+                                            editing.set(Some(i));
+                                            editing_action.set(action);
+                                        },
+                                        "{action:?}"
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-// #[component]
-// fn Characters() -> Element {
-//     #[derive(Clone, Copy, Debug)]
-//     struct EditingInvalid {
-//         character_name: bool,
-//         skill_name: bool,
-//         skill_keys: bool,
-//     }
-//     static DEFAULT_CHARACTER: Character = Character {
-//         id: None,
-//         name: String::new(),
-//         skills: vec![],
-//     };
-//     static DEFAULT_SKILL: Skill = Skill {
-//         name: String::new(),
-//         kind: SkillKind::Other,
-//         binding: SkillBinding::Single('y'),
-//     };
-//     static DEFAULT_INVALID: EditingInvalid = EditingInvalid {
-//         character_name: true,
-//         skill_name: true,
-//         skill_keys: false,
-//     };
+#[derive(PartialEq, Props, Clone)]
+struct ActionEditProps<T: 'static + PartialEq + Clone> {
+    on_submit: EventHandler<T>,
+    value: T,
+}
 
-//     let mut characters = use_resource(|| async {
-//         spawn_blocking(|| query_characters().unwrap_or_default())
-//             .await
-//             .unwrap()
-//     });
-//     let mut editing = use_signal(|| false);
-//     let mut editing_character = use_signal(|| DEFAULT_CHARACTER.clone());
-//     let mut editing_skill = use_signal(|| DEFAULT_SKILL.clone());
-//     let mut editing_invalid = use_signal(|| DEFAULT_INVALID);
-//     let mut editing_invalid_message = use_signal(|| "".to_owned());
+#[component]
+fn PositionEdit(props: ActionEditProps<Position>) -> Element {
+    let Position {
+        x,
+        y,
+        allow_adjusting,
+    } = props.value;
+    let submit = use_callback(move |position: Position| (props.on_submit)(position));
+    let set_x = use_callback(move |x| submit(Position { x, ..props.value }));
+    let set_y = use_callback(move |y| submit(Position { y, ..props.value }));
+    let set_allow_adjusting = use_callback(move |allow_adjusting| {
+        submit(Position {
+            allow_adjusting,
+            ..props.value
+        })
+    });
 
-//     use_effect(move || {
-//         if editing() {
-//             *editing_character.write() = DEFAULT_CHARACTER.clone();
-//             *editing_skill.write() = DEFAULT_SKILL.clone();
-//             *editing_invalid.write() = DEFAULT_INVALID;
-//             *editing_invalid_message.write() = "".to_owned();
-//         }
-//     });
+    rsx! {
+        NumberInput {
+            label: "x",
+            on_input: move |value| {
+                set_x(value);
+            },
+            value: x,
+        }
+        NumberInput {
+            label: "y",
+            on_input: move |value| {
+                set_y(value);
+            },
+            value: y,
+        }
+        Checkbox {
+            label: "Allow adjusting position",
+            on_input: move |value| {
+                set_allow_adjusting(value);
+            },
+            value: allow_adjusting,
+        }
+    }
+}
 
-//     rsx! {
-//         match characters() {
-//             Some(characters_vec) => rsx! {
-//                 div {
-//                     class: "grid grid-flow-row grid-cols-1 gap-y-3 w-fit h-fit",
-//                     if !editing() {
-//                         OneButton {
-//                             on_ok: move |_| {
-//                                 *editing.write() = true;
-//                             },
-//                             "Create character"
-//                         }
-//                     } else {
-//                         input {
-//                             class: "font-meiryo",
-//                             oninput: move |e| {
-//                                 let value = e.value();
-//                                 editing_invalid.write().deref_mut().character_name = value.is_empty();
-//                                 editing_character.write().deref_mut().name = value;
-//                             },
-//                             placeholder: "Character name",
-//                             value: editing_character().name
-//                         }
-//                         for skill in editing_character().skills {
-//                             p {
-//                                 class: "text-xs font-meiryo",
-//                                 {
-//                                     format!("{} / {}", skill.name, match skill.binding {
-//                                         SkillBinding::Single(c) => c.to_string(),
-//                                         SkillBinding::Composite(chars) => chars.iter().collect(),
-//                                     })
-//                                 }
-//                             }
-//                         }
-//                         hr {
-//                             class: "border border-black"
-//                         }
-//                         div {
-//                             class: "grid grid-flow-row grid-cols-1 gap-y-4",
-//                             OneButton {
-//                                 on_ok: move |_| {
-//                                     let invalid = *editing_invalid.peek();
-//                                     if invalid.skill_keys || invalid.skill_name {
-//                                         *editing_invalid_message.write() = "One of the skill input is invalid".to_owned();
-//                                     } else {
-//                                         *editing_invalid_message.write() = "".to_owned();
-//                                         editing_character.write().deref_mut().skills.push((*editing_skill.peek()).clone());
-//                                     }
-//                                 },
-//                                 "Add skill"
-//                             }
-//                             p {
-//                                 class: "text-xs font-meiryo text-gray-500",
-//                                 "Skill keys and name must have at least 1 character"
-//                             }
-//                             Options<SkillKind> {
-//                                 label: "Skill",
-//                                 options: vec![
-//                                     (SkillKind::ErdaShower, "ErdaShower".to_owned()),
-//                                     (SkillKind::SolJanus, "SolJanus".to_owned()),
-//                                     (SkillKind::UpJump, "UpJump".to_owned()),
-//                                     (SkillKind::RopeLift, "RopeLift".to_owned()),
-//                                     (SkillKind::DoubleJump, "DoubleJump".to_owned()),
-//                                     (SkillKind::Other, "Other".to_owned()),
-//                                 ],
-//                                 on_select: move |(value, name)| {
-//                                     if !matches!(value, SkillKind::Other) {
-//                                         editing_invalid.write().deref_mut().skill_name = false;
-//                                         editing_skill.write().deref_mut().name = name;
-//                                     } else {
-//                                         editing_invalid.write().deref_mut().skill_name = true;
-//                                         editing_skill.write().deref_mut().name = String::new();
-//                                     }
-//                                     editing_skill.write().deref_mut().kind = value;
-//                                 },
-//                                 selected: editing_skill().kind
-//                             }
-//                             input {
-//                                 class: "font-meiryo",
-//                                 oninput: move |e| {
-//                                     let value = e.value();
-//                                     editing_invalid.write().deref_mut().skill_keys = value.is_empty();
-//                                     if value.is_empty() {
-//                                         // spagetti
-//                                         editing_skill.write().deref_mut().binding = SkillBinding::Composite(vec![]);
-//                                         return
-//                                     }
-//                                     let binding = if value.len() > 1 {
-//                                         SkillBinding::Composite(value.chars().collect::<Vec<_>>())
-//                                     } else {
-//                                         SkillBinding::Single(value.chars().next().unwrap())
-//                                     };
-//                                     editing_skill.write().deref_mut().binding = binding;
-//                                 },
-//                                 placeholder: "Skill keys (1 character = 1 key)",
-//                                 value: match editing_skill().binding {
-//                                     SkillBinding::Single(c) => c.to_string(),
-//                                     SkillBinding::Composite(chars) => chars.iter().collect(),
-//                                 }
-//                             }
-//                             if matches!(editing_skill().kind, SkillKind::Other) {
-//                                 input {
-//                                     class: "font-meiryo",
-//                                     oninput: move |e| {
-//                                         let value = e.value();
-//                                         editing_invalid.write().deref_mut().skill_name = value.is_empty();
-//                                         editing_skill.write().deref_mut().name = value;
-//                                     },
-//                                     placeholder: "Skill name",
-//                                     value: editing_skill().name
-//                                 }
-//                             }
-//                         }
-//                         hr {
-//                             class: "border border-black"
-//                         }
-//                         if !editing_invalid_message().is_empty() {
-//                             p {
-//                                 class: "text-xs font-meiryo text-red-500",
-//                                 {editing_invalid_message}
-//                             }
-//                         }
-//                         TwoButtons {
-//                             on_ok: move |_| {
-//                                 let invalid = *editing_invalid.peek();
-//                                 if invalid.character_name {
-//                                     *editing_invalid_message.write() = "Character name is invalid".to_owned();
-//                                 } else {
-//                                     upsert_character(editing_character.write().deref_mut()).unwrap();
-//                                     characters.restart();
-//                                     *editing.write() = false;
-//                                 }
-//                             },
-//                             ok_body: rsx! {"Save"},
-//                             on_cancel: move |_| {
-//                                 *editing.write() = false;
-//                             },
-//                             cancel_body: rsx! {"Cancel"}
-//                         }
-//                     }
-//                     ul {
-//                         for character in characters_vec {
-//                             li {
-//                                 p {
-//                                     class: "text-sm text-dark font-meiryo",
-//                                     {character.name}
-//                                 }
-//                             }
-//                         }
-//                     }
-//                 }
-//             },
-//             None => rsx! {},
-//         }
-//     }
-// }
+#[component]
+fn ActionMoveEdit(props: ActionEditProps<Action>) -> Element {
+    let Action::Move(value) = props.value else {
+        unreachable!()
+    };
+    let ActionMove {
+        position,
+        condition,
+        wait_after_move_ticks,
+    } = value;
+    let submit =
+        use_callback(move |action_move: ActionMove| (props.on_submit)(Action::Move(action_move)));
+    let set_position = use_callback(move |position| submit(ActionMove { position, ..value }));
+    let set_condition = use_callback(move |condition| submit(ActionMove { condition, ..value }));
+    let set_wait_after_move_ticks = use_callback(move |wait_after_move_ticks| {
+        submit(ActionMove {
+            wait_after_move_ticks,
+            ..value
+        })
+    });
+
+    rsx! {
+        PositionEdit {
+            on_submit: move |position| {
+                set_position(position);
+            },
+            value: position,
+        }
+        ActionConditions {
+            on_option: move |condition| {
+                set_condition(condition);
+            },
+            selected: condition,
+        }
+        if let ActionCondition::EveryMillis(millis) = condition {
+            NumberInput {
+                label: "Every millis",
+                on_input: move |millis| {
+                    set_condition(ActionCondition::EveryMillis(millis as u64));
+                },
+                value: millis as i32,
+            }
+        }
+        NumberInput {
+            label: "Wait for ticks after move",
+            on_input: move |wait_after_move_ticks| {
+                set_wait_after_move_ticks(wait_after_move_ticks as u32);
+            },
+            value: wait_after_move_ticks as i32,
+        }
+    }
+}
+
+#[component]
+fn ActionKeyEdit(props: ActionEditProps<Action>) -> Element {
+    let Action::Key(value) = props.value else {
+        unreachable!()
+    };
+    let ActionKey {
+        key,
+        position,
+        condition,
+        direction,
+        with,
+        wait_before_use_ticks,
+        wait_after_use_ticks,
+    } = value;
+    let submit =
+        use_callback(move |action_key: ActionKey| (props.on_submit)(Action::Key(action_key)));
+    let set_key = use_callback(move |key| submit(ActionKey { key, ..value }));
+    let set_position = use_callback(move |position| submit(ActionKey { position, ..value }));
+    let set_condition = use_callback(move |condition| submit(ActionKey { condition, ..value }));
+    let set_direction = use_callback(move |direction| submit(ActionKey { direction, ..value }));
+    let set_with = use_callback(move |with| submit(ActionKey { with, ..value }));
+    let set_wait_before_use_ticks = use_callback(move |wait_before_use_ticks| {
+        submit(ActionKey {
+            wait_before_use_ticks,
+            ..value
+        })
+    });
+    let set_wait_after_use_ticks = use_callback(move |wait_after_use_ticks| {
+        submit(ActionKey {
+            wait_after_use_ticks,
+            ..value
+        })
+    });
+
+    rsx! {
+        Checkbox {
+            label: "Has position",
+            on_input: move |checked: bool| {
+                set_position(checked.then_some(DEFAULT_POSITION));
+            },
+            value: position.is_some(),
+        }
+        if let Some(pos) = position {
+            PositionEdit {
+                on_submit: move |position| {
+                    set_position(Some(position));
+                },
+                value: pos,
+            }
+        }
+        KeyBindings {
+            on_option: move |key| {
+                set_key(key);
+            },
+            selected: key,
+        }
+        ActionConditions {
+            on_option: move |condition| {
+                set_condition(condition);
+            },
+            selected: condition,
+        }
+        if let ActionCondition::EveryMillis(millis) = condition {
+            NumberInput {
+                label: "Condition every millis",
+                on_input: move |millis| {
+                    set_condition(ActionCondition::EveryMillis(millis as u64));
+                },
+                value: millis as i32,
+            }
+        }
+        ActionKeyDirections {
+            on_option: move |direction| {
+                set_direction(direction);
+            },
+            selected: direction,
+        }
+        ActionKeyWiths {
+            on_option: move |with| {
+                set_with(with);
+            },
+            selected: with,
+        }
+        NumberInput {
+            label: "Wait for ticks before use",
+            on_input: move |ticks| {
+                set_wait_before_use_ticks(ticks as u32);
+            },
+            value: wait_before_use_ticks as i32,
+        }
+        NumberInput {
+            label: "Wait for ticks after use",
+            on_input: move |ticks| {
+                set_wait_after_use_ticks(ticks as u32);
+            },
+            value: wait_after_use_ticks as i32,
+        }
+    }
+}
+
+#[derive(PartialEq, Props, Clone)]
+struct ActionConfigProps<T: 'static + Copy + Clone + PartialEq> {
+    on_option: EventHandler<T>,
+    selected: T,
+}
+
+#[component]
+fn Actions(props: ActionConfigProps<Action>) -> Element {
+    let map_default = |action| match action {
+        ActionDiscriminants::Move => DEFAULT_MOVE_ACTION,
+        ActionDiscriminants::Key => DEFAULT_KEY_ACTION,
+    };
+    let options = ActionDiscriminants::iter()
+        .map(|condition| (condition, condition.to_string()))
+        .collect::<Vec<_>>();
+    let selected = ActionDiscriminants::from(props.selected);
+    rsx! {
+        Options {
+            label: "Action",
+            options,
+            on_select: move |action| {
+                (props.on_option)(map_default(action));
+            },
+            selected,
+        }
+    }
+}
+
+#[component]
+fn ActionConditions(props: ActionConfigProps<ActionCondition>) -> Element {
+    let map_default = |condition| match condition {
+        ActionConditionDiscriminants::Any => ActionCondition::Any,
+        ActionConditionDiscriminants::EveryMillis => ActionCondition::EveryMillis(0),
+        ActionConditionDiscriminants::ErdaShowerOffCooldown => {
+            ActionCondition::ErdaShowerOffCooldown
+        }
+    };
+    let options = ActionConditionDiscriminants::iter()
+        .map(|condition| (condition, condition.to_string()))
+        .collect::<Vec<_>>();
+    let selected = ActionConditionDiscriminants::from(props.selected);
+
+    rsx! {
+        Options {
+            label: "Condition",
+            options,
+            on_select: move |condition| {
+                (props.on_option)(map_default(condition));
+            },
+            selected,
+        }
+    }
+}
+
+#[component]
+fn ActionKeyDirections(props: ActionConfigProps<ActionKeyDirection>) -> Element {
+    let options = ActionKeyDirectionDiscriminants::iter()
+        .map(|disc| (disc, disc.to_string()))
+        .collect::<Vec<_>>();
+    let selected = ActionKeyDirectionDiscriminants::from(props.selected);
+
+    rsx! {
+        Options {
+            label: "Direction",
+            options,
+            on_select: move |disc: ActionKeyDirectionDiscriminants| {
+                (props.on_option)(ActionKeyDirection::from_str(&disc.to_string()).unwrap());
+            },
+            selected,
+        }
+    }
+}
+
+#[component]
+fn ActionKeyWiths(props: ActionConfigProps<ActionKeyWith>) -> Element {
+    let options = ActionKeyWithDiscriminants::iter()
+        .map(|disc| (disc, disc.to_string()))
+        .collect::<Vec<_>>();
+    let selected = ActionKeyWithDiscriminants::from(props.selected);
+
+    rsx! {
+        Options {
+            label: "Use with",
+            options,
+            on_select: move |disc: ActionKeyWithDiscriminants| {
+                (props.on_option)(ActionKeyWith::from_str(&disc.to_string()).unwrap());
+            },
+            selected,
+        }
+    }
+}
+
+#[component]
+fn KeyBindings(props: ActionConfigProps<KeyBinding>) -> Element {
+    let options = KeyBindingDiscriminants::iter()
+        .map(|disc| (disc, disc.to_string()))
+        .collect::<Vec<_>>();
+    let selected = KeyBindingDiscriminants::from(props.selected);
+
+    rsx! {
+        Options {
+            label: "Key binding",
+            options,
+            on_select: move |disc: KeyBindingDiscriminants| {
+                (props.on_option)(KeyBinding::from_str(&disc.to_string()).unwrap());
+            },
+            selected,
+        }
+    }
+}
