@@ -18,20 +18,20 @@ use platforms::windows::{
 };
 
 use crate::{
-    Request,
-    database::refresh_map,
+    Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, Request, RotationMode,
+    database::{Configuration, KeyBinding, delete_map, query_config, refresh_config, refresh_map},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
     player::{Player, PlayerState},
     poll_request,
-    rotator::Rotator,
+    rotator::{Rotator, RotatorMode},
     skill::{Skill, SkillKind, SkillState},
 };
 
-pub(crate) const ERDA_SHOWER_SKILL_POSITION: usize = 0;
+pub const ERDA_SHOWER_SKILL_POSITION: usize = 0;
 
 /// Represents a control flow after a context update.
-pub(crate) enum ControlFlow<T> {
+pub enum ControlFlow<T> {
     /// The context is updated immediately
     Immediate(T),
     /// The context is updated in the next tick
@@ -39,7 +39,7 @@ pub(crate) enum ControlFlow<T> {
 }
 
 /// Represents a context-based state.
-pub(crate) trait Contextual {
+pub trait Contextual {
     /// Represents a state that is persistent through each `update` tick.
     type Persistent = ();
 
@@ -55,11 +55,11 @@ pub(crate) trait Contextual {
 
 /// An object that stores the game information.
 #[derive(Debug)]
-pub(crate) struct Context {
-    pub(crate) keys: Keys,
-    pub(crate) minimap: Minimap,
-    pub(crate) player: Player,
-    pub(crate) skills: [Skill; mem::variant_count::<SkillKind>()],
+pub struct Context {
+    pub keys: Keys,
+    pub minimap: Minimap,
+    pub player: Player,
+    pub skills: [Skill; mem::variant_count::<SkillKind>()],
 }
 
 pub fn start_update_loop() {
@@ -89,6 +89,8 @@ pub fn start_update_loop() {
             let mut minimap_state = MinimapState::default();
             let mut skill_states = [SkillState::new(SkillKind::ErdaShower)];
             let mut rotator = Rotator::default();
+            let mut actions = Vec::<Action>::new();
+            let mut config = query_config().unwrap();
             let mut context = Context {
                 keys,
                 minimap: Minimap::Detecting,
@@ -96,9 +98,7 @@ pub fn start_update_loop() {
                 skills: [Skill::Detecting],
             };
 
-            player_state.interact_key = Some(KeyKind::Ctrl);
-            player_state.grappling_key = Some(KeyKind::F);
-            player_state.upjump_key = Some(KeyKind::C);
+            rotator.rotator_mode(map_rotate_mode(config.rotation_mode));
 
             loop_with_fps(30, || {
                 let Ok(mat) = capture.grab().map(OwnedMat::new) else {
@@ -123,18 +123,25 @@ pub fn start_update_loop() {
                         Box::new(())
                     }
                     Request::PrepareActions(preset) => {
-                        if matches!(context.minimap, Minimap::Idle(_))
-                            && let Some(actions) = minimap_state.data.actions.get(&preset)
-                        {
-                            rotator.build_actions(actions);
-                            Box::new(true)
-                        } else {
-                            Box::new(false)
+                        if let Some(preset_actions) = minimap_state.data.actions.get(&preset) {
+                            if matches!(context.minimap, Minimap::Idle(_)) {
+                                actions = preset_actions.clone();
+                                rotator.build_actions(
+                                    &[&default_actions(&config), actions.as_slice()]
+                                        .concat()
+                                        .to_vec(),
+                                );
+                                return Box::new(true);
+                            }
                         }
+                        Box::new(false)
                     }
                     Request::MinimapFrame => Box::new(extract_minimap(&context, &mat)),
-                    Request::RedetectMinimap => {
+                    Request::RedetectMinimap(delete) => {
                         context.minimap = Minimap::Detecting;
+                        if delete {
+                            let _ = delete_map(&minimap_state.data);
+                        }
                         Box::new(())
                     }
                     Request::MinimapData => Box::new(
@@ -144,6 +151,19 @@ pub fn start_update_loop() {
                     Request::PlayerPosition => Box::new(player_state.last_known_pos),
                     Request::RefreshMinimapData => {
                         let _ = refresh_map(&mut minimap_state.data);
+                        Box::new(())
+                    }
+                    Request::RefreshConfiguration => {
+                        let _ = refresh_config(&mut config);
+                        player_state.interact_key = Some(map_key(config.interact_key));
+                        player_state.grappling_key = Some(map_key(config.ropelift_key));
+                        player_state.upjump_key = config.up_jump_key.map(map_key);
+                        rotator.rotator_mode(map_rotate_mode(config.rotation_mode));
+                        rotator.build_actions(
+                            &[&default_actions(&config), actions.as_slice()]
+                                .concat()
+                                .to_vec(),
+                        );
                         Box::new(())
                     }
                 });
@@ -206,304 +226,96 @@ fn loop_with_fps(fps: u32, mut on_tick: impl FnMut()) {
     }
 }
 
-// fn populate_actions() -> Vec<Action> {
-//     vec![
-// // Potion
-// Action::Key {
-//     position: None,
-//     key: KeyBinding::One,
-//     condition: ActionCondition::EveryMillis(120000),
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Any,
-//     wait_before_use_ticks: 5,
-//     wait_after_use_ticks: 5,
-// },
-// // Feed pets
-// Action::Key {
-//     position: None,
-//     key: KeyBinding::F7,
-//     condition: ActionCondition::EveryMillis(120000),
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Any,
-//     wait_before_use_ticks: 5,
-//     wait_after_use_ticks: 5,
-// },
-// Action::Key {
-//     position: None,
-//     key: KeyBinding::F7,
-//     condition: ActionCondition::EveryMillis(120000),
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Any,
-//     wait_before_use_ticks: 5,
-//     wait_after_use_ticks: 5,
-// },
-// Action::Key {
-//     position: None,
-//     key: KeyBinding::F7,
-//     condition: ActionCondition::EveryMillis(120000),
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Any,
-//     wait_before_use_ticks: 5,
-//     wait_after_use_ticks: 5,
-// },
-// // Scurvy Summons
-// Action::Key {
-//     position: None,
-//     key: KeyBinding::Delete,
-//     condition: ActionCondition::EveryMillis(90000),
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Stationary,
-//     wait_before_use_ticks: 30,
-//     wait_after_use_ticks: 30,
-// },
-// // Roll of the Dice
-// Action::Key {
-//     position: None,
-//     key: KeyBinding::F2,
-//     condition: ActionCondition::EveryMillis(240000),
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Stationary,
-//     wait_before_use_ticks: 30,
-//     wait_after_use_ticks: 30,
-// },
-// // Loot
-// Action::Move {
-//     position: Position {
-//         x: 181,
-//         y: 27,
-//         allow_adjusting: false,
-//     },
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     wait_after_move_ticks: 3,
-// },
-// // Erda shower
-// Action::Key {
-//     position: Some(Position {
-//         x: 168,
-//         y: 13,
-//         allow_adjusting: false,
-//     }),
-//     key: KeyBinding::Y,
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Stationary,
-//     wait_before_use_ticks: 0,
-//     wait_after_use_ticks: 10,
-// },
-// // Trigger Erda Shower
-// Action::Key {
-//     position: None,
-//     key: KeyBinding::A,
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Any,
-//     wait_before_use_ticks: 0,
-//     wait_after_use_ticks: 3,
-// },
-// // Second portal
-// Action::Key {
-//     position: Some(Position {
-//         x: 168,
-//         y: 13,
-//         allow_adjusting: true,
-//     }),
-//     key: KeyBinding::Up,
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Stationary,
-//     wait_before_use_ticks: 0,
-//     wait_after_use_ticks: 3,
-// },
-// // Broadside
-// Action::Key {
-//     position: Some(Position {
-//         x: 47,
-//         y: 56,
-//         allow_adjusting: false,
-//     }),
-//     key: KeyBinding::W,
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     direction: ActionKeyDirection::Right,
-//     with: ActionKeyWith::Stationary,
-//     wait_before_use_ticks: 0,
-//     wait_after_use_ticks: 0,
-// },
-// // Loot
-// Action::Move {
-//     position: Position {
-//         x: 59,
-//         y: 56,
-//         allow_adjusting: false,
-//     },
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     wait_after_move_ticks: 0,
-// },
-// // Spam
-// Action::Key {
-//     position: None,
-//     key: KeyBinding::A,
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Any,
-//     wait_before_use_ticks: 0,
-//     wait_after_use_ticks: 0,
-// },
-// // Loot
-// Action::Move {
-//     position: Position {
-//         x: 59,
-//         y: 41,
-//         allow_adjusting: false,
-//     },
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     wait_after_move_ticks: 0,
-// },
-// // Solar Crest
-// Action::Key {
-//     position: None,
-//     key: KeyBinding::Six,
-//     condition: ActionCondition::EveryMillis(250000),
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Any,
-//     wait_before_use_ticks: 10,
-//     wait_after_use_ticks: 10,
-// },
-// // True Achranid Reflection
-// Action::Key {
-//     position: None,
-//     key: KeyBinding::F3,
-//     condition: ActionCondition::EveryMillis(250000),
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Any,
-//     wait_before_use_ticks: 10,
-//     wait_after_use_ticks: 10,
-// },
-// Action::Move {
-//     position: Position {
-//         x: 40,
-//         y: 41,
-//         allow_adjusting: false,
-//     },
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     wait_after_move_ticks: 0,
-// },
-// // Second Broadside
-// Action::Key {
-//     position: Some(Position {
-//         x: 47,
-//         y: 27,
-//         allow_adjusting: false,
-//     }),
-//     key: KeyBinding::W,
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     direction: ActionKeyDirection::Right,
-//     with: ActionKeyWith::Stationary,
-//     wait_before_use_ticks: 0,
-//     wait_after_use_ticks: 0,
-// },
-// // Loot
-// Action::Move {
-//     position: Position {
-//         x: 67,
-//         y: 13,
-//         allow_adjusting: false,
-//     },
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     wait_after_move_ticks: 0,
-// },
-// Action::Key {
-//     position: None,
-//     key: KeyBinding::A,
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Any,
-//     wait_before_use_ticks: 0,
-//     wait_after_use_ticks: 0,
-// },
-// Action::Move {
-//     position: Position {
-//         x: 149,
-//         y: 13,
-//         allow_adjusting: false,
-//     },
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     wait_after_move_ticks: 0,
-// },
-// // Sol Janus
-// Action::Key {
-//     position: Some(Position {
-//         x: 137,
-//         y: 33,
-//         allow_adjusting: false,
-//     }),
-//     key: KeyBinding::Four,
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Stationary,
-//     wait_before_use_ticks: 0,
-//     wait_after_use_ticks: 5,
-// },
-// Action::Key {
-//     position: None,
-//     key: KeyBinding::A,
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Any,
-//     wait_before_use_ticks: 0,
-//     wait_after_use_ticks: 0,
-// },
-// Action::Move {
-//     position: Position {
-//         x: 145,
-//         y: 45,
-//         allow_adjusting: false,
-//     },
-//     condition: ActionCondition::ErdaShowerOffCooldown,
-//     wait_after_move_ticks: 0,
-// },
-// // Target Lock
-// Action::Key {
-//     position: None,
-//     key: KeyBinding::R,
-//     condition: ActionCondition::EveryMillis(30000),
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Any,
-//     wait_before_use_ticks: 0,
-//     wait_after_use_ticks: 15,
-// },
-// // The Dreadnought
-// Action::Key {
-//     position: None,
-//     key: KeyBinding::F4,
-//     condition: ActionCondition::EveryMillis(360000),
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Any,
-//     wait_before_use_ticks: 0,
-//     wait_after_use_ticks: 0,
-// },
-// // Bullet Barrage
-// Action::Key {
-//     position: None,
-//     key: KeyBinding::D,
-//     condition: ActionCondition::EveryMillis(90000),
-//     direction: ActionKeyDirection::Any,
-//     with: ActionKeyWith::Any,
-//     wait_before_use_ticks: 0,
-//     wait_after_use_ticks: 0,
-// },
-// // Spam when erda shower on cooldown
-// Action::Key {
-//     position: Some(Position {
-//         x: 174,
-//         y: 58,
-//         allow_adjusting: false,
-//     }),
-//     key: KeyBinding::A,
-//     condition: ActionCondition::Any,
-//     direction: ActionKeyDirection::Left,
-//     with: ActionKeyWith::Stationary,
-//     wait_before_use_ticks: 5,
-//     wait_after_use_ticks: 5,
-// },
-// ]
-// }
+fn map_rotate_mode(mode: RotationMode) -> RotatorMode {
+    match mode {
+        RotationMode::StartToEnd => RotatorMode::StartToEnd,
+        RotationMode::StartToEndThenReverse => RotatorMode::StartToEndThenReverse,
+    }
+}
+
+pub fn map_key(key: KeyBinding) -> KeyKind {
+    match key {
+        KeyBinding::A => KeyKind::A,
+        KeyBinding::B => KeyKind::B,
+        KeyBinding::C => KeyKind::C,
+        KeyBinding::D => KeyKind::D,
+        KeyBinding::E => KeyKind::E,
+        KeyBinding::F => KeyKind::F,
+        KeyBinding::G => KeyKind::G,
+        KeyBinding::H => KeyKind::H,
+        KeyBinding::I => KeyKind::I,
+        KeyBinding::J => KeyKind::J,
+        KeyBinding::K => KeyKind::K,
+        KeyBinding::L => KeyKind::L,
+        KeyBinding::M => KeyKind::M,
+        KeyBinding::N => KeyKind::N,
+        KeyBinding::O => KeyKind::O,
+        KeyBinding::P => KeyKind::P,
+        KeyBinding::Q => KeyKind::Q,
+        KeyBinding::R => KeyKind::R,
+        KeyBinding::S => KeyKind::S,
+        KeyBinding::T => KeyKind::T,
+        KeyBinding::U => KeyKind::U,
+        KeyBinding::V => KeyKind::V,
+        KeyBinding::W => KeyKind::W,
+        KeyBinding::X => KeyKind::X,
+        KeyBinding::Y => KeyKind::Y,
+        KeyBinding::Z => KeyKind::Z,
+        KeyBinding::Zero => KeyKind::Zero,
+        KeyBinding::One => KeyKind::One,
+        KeyBinding::Two => KeyKind::Two,
+        KeyBinding::Three => KeyKind::Three,
+        KeyBinding::Four => KeyKind::Four,
+        KeyBinding::Five => KeyKind::Five,
+        KeyBinding::Six => KeyKind::Six,
+        KeyBinding::Seven => KeyKind::Seven,
+        KeyBinding::Eight => KeyKind::Eight,
+        KeyBinding::Nine => KeyKind::Nine,
+        KeyBinding::F1 => KeyKind::F1,
+        KeyBinding::F2 => KeyKind::F2,
+        KeyBinding::F3 => KeyKind::F3,
+        KeyBinding::F4 => KeyKind::F4,
+        KeyBinding::F5 => KeyKind::F5,
+        KeyBinding::F6 => KeyKind::F6,
+        KeyBinding::F7 => KeyKind::F7,
+        KeyBinding::F8 => KeyKind::F8,
+        KeyBinding::F9 => KeyKind::F9,
+        KeyBinding::F10 => KeyKind::F10,
+        KeyBinding::F11 => KeyKind::F11,
+        KeyBinding::F12 => KeyKind::F12,
+        KeyBinding::Up => KeyKind::Up,
+        KeyBinding::Home => KeyKind::Home,
+        KeyBinding::End => KeyKind::End,
+        KeyBinding::PageUp => KeyKind::PageUp,
+        KeyBinding::PageDown => KeyKind::PageDown,
+        KeyBinding::Insert => KeyKind::Insert,
+        KeyBinding::Delete => KeyKind::Delete,
+        KeyBinding::Enter => KeyKind::Enter,
+        KeyBinding::Space => KeyKind::Space,
+        KeyBinding::Tilde => KeyKind::Tilde,
+        KeyBinding::Esc => KeyKind::Esc,
+        KeyBinding::Shift => KeyKind::Shift,
+    }
+}
+
+fn default_actions(config: &Configuration) -> [Action; 4] {
+    let feed_pet_action = ActionKey {
+        key: config.feed_pet_key,
+        position: None,
+        condition: ActionCondition::Any,
+        direction: ActionKeyDirection::Any,
+        with: ActionKeyWith::Any,
+        wait_before_use_ticks: 5,
+        wait_after_use_ticks: 5,
+    };
+    let potion_action = ActionKey {
+        key: config.potion_key,
+        ..feed_pet_action
+    };
+    [
+        Action::Key(feed_pet_action),
+        Action::Key(feed_pet_action),
+        Action::Key(feed_pet_action),
+        Action::Key(potion_action),
+    ]
+}

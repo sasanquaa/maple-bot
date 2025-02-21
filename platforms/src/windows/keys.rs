@@ -12,8 +12,8 @@ use windows::Win32::{
             VK_A, VK_B, VK_C, VK_CONTROL, VK_D, VK_DELETE, VK_DOWN, VK_E, VK_END, VK_ESCAPE, VK_F,
             VK_F1, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_F10, VK_F11, VK_F12,
             VK_G, VK_H, VK_HOME, VK_I, VK_INSERT, VK_J, VK_K, VK_L, VK_LEFT, VK_M, VK_N, VK_NEXT,
-            VK_O, VK_OEM_3, VK_P, VK_PRIOR, VK_Q, VK_R, VK_RETURN, VK_RIGHT, VK_S, VK_SPACE, VK_T,
-            VK_U, VK_UP, VK_V, VK_W, VK_X, VK_Y, VK_Z,
+            VK_O, VK_OEM_3, VK_P, VK_PRIOR, VK_Q, VK_R, VK_RETURN, VK_RIGHT, VK_S, VK_SHIFT,
+            VK_SPACE, VK_T, VK_U, VK_UP, VK_V, VK_W, VK_X, VK_Y, VK_Z,
         },
         WindowsAndMessaging::{
             GetForegroundWindow, GetSystemMetrics, GetWindowRect, SM_CXSCREEN, SM_CYSCREEN,
@@ -94,6 +94,7 @@ pub enum KeyKind {
     Space,
     Tilde,
     Esc,
+    Shift,
 }
 
 impl Keys {
@@ -269,6 +270,7 @@ fn to_vkey(kind: KeyKind) -> VIRTUAL_KEY {
         KeyKind::Space => VK_SPACE,
         KeyKind::Tilde => VK_OEM_3,
         KeyKind::Esc => VK_ESCAPE,
+        KeyKind::Shift => VK_SHIFT,
     }
 }
 

@@ -4,21 +4,13 @@
 use std::str::FromStr;
 use std::string::ToString;
 
-use backend::database::{
-    ActionDiscriminants, ActionKey, ActionKeyDirectionDiscriminants, ActionKeyWithDiscriminants,
-    ActionMove, KeyBindingDiscriminants, upsert_map,
-};
 use backend::{
-    IntoEnumIterator,
-    context::start_update_loop,
-    database::{
-        Action, ActionCondition, ActionConditionDiscriminants, ActionKeyDirection, ActionKeyWith,
-        KeyBinding, Minimap as MinimapData, Position,
-    },
-    minimap_data, minimap_frame,
-};
-use backend::{
-    player_position, prepare_actions, redetect_minimap, refresh_minimap_data, rotate_actions,
+    Action, ActionCondition, ActionConditionDiscriminants, ActionDiscriminants, ActionKey,
+    ActionKeyDirection, ActionKeyDirectionDiscriminants, ActionKeyWith, ActionKeyWithDiscriminants,
+    ActionMove, IntoEnumIterator, KeyBinding, KeyBindingDiscriminants, Minimap as MinimapData,
+    Position, RotationMode, RotationModeDiscriminants, minimap_data, minimap_frame,
+    player_position, prepare_actions, query_config, redetect_minimap, refresh_configuration,
+    refresh_minimap_data, rotate_actions, start_update_loop, upsert_config, upsert_map,
 };
 use components::Checkbox;
 use components::{
@@ -217,7 +209,7 @@ fn Minimap() -> Element {
                     OneButton {
                         on_ok: move || async move {
                             reset(());
-                            redetect_minimap().await;
+                            redetect_minimap(false).await;
                         },
                         "Redetect"
                     }
@@ -234,6 +226,14 @@ fn Minimap() -> Element {
                             }
                         }
                     }
+                    OneButton {
+                        on_ok: move || async move {
+                            reset(());
+                            redetect_minimap(true).await;
+                        },
+                        "Delete map (for redetecting)"
+                    }
+                    Configuration {}
                     Divider {}
                     TextInput {
                         label: "Preset name",
@@ -276,6 +276,7 @@ fn Minimap() -> Element {
                         p { class: "font-main", "Editing {index}" }
                     }
                     Actions {
+                        label: "Action",
                         on_option: move |action| {
                             editing_action_set(action);
                         },
@@ -459,6 +460,7 @@ fn ActionMoveEdit(props: ActionEditProps<Action>) -> Element {
             value: position,
         }
         ActionConditions {
+            label: "Condition",
             on_option: move |condition| {
                 set_condition(condition);
             },
@@ -534,12 +536,14 @@ fn ActionKeyEdit(props: ActionEditProps<Action>) -> Element {
             }
         }
         KeyBindings {
+            label: "Key binding",
             on_option: move |key| {
                 set_key(key);
             },
             selected: key,
         }
         ActionConditions {
+            label: "Condition",
             on_option: move |condition| {
                 set_condition(condition);
             },
@@ -555,12 +559,14 @@ fn ActionKeyEdit(props: ActionEditProps<Action>) -> Element {
             }
         }
         ActionKeyDirections {
+            label: "Direction",
             on_option: move |direction| {
                 set_direction(direction);
             },
             selected: direction,
         }
         ActionKeyWiths {
+            label: "Use with",
             on_option: move |with| {
                 set_with(with);
             },
@@ -585,6 +591,7 @@ fn ActionKeyEdit(props: ActionEditProps<Action>) -> Element {
 
 #[derive(PartialEq, Props, Clone)]
 struct ActionConfigProps<T: 'static + Copy + Clone + PartialEq> {
+    label: String,
     on_option: EventHandler<T>,
     selected: T,
 }
@@ -601,7 +608,7 @@ fn Actions(props: ActionConfigProps<Action>) -> Element {
     let selected = ActionDiscriminants::from(props.selected);
     rsx! {
         Options {
-            label: "Action",
+            label: props.label,
             options,
             on_select: move |action| {
                 (props.on_option)(map_default(action));
@@ -627,7 +634,7 @@ fn ActionConditions(props: ActionConfigProps<ActionCondition>) -> Element {
 
     rsx! {
         Options {
-            label: "Condition",
+            label: props.label,
             options,
             on_select: move |condition| {
                 (props.on_option)(map_default(condition));
@@ -646,7 +653,7 @@ fn ActionKeyDirections(props: ActionConfigProps<ActionKeyDirection>) -> Element 
 
     rsx! {
         Options {
-            label: "Direction",
+            label: props.label,
             options,
             on_select: move |disc: ActionKeyDirectionDiscriminants| {
                 (props.on_option)(ActionKeyDirection::from_str(&disc.to_string()).unwrap());
@@ -665,7 +672,7 @@ fn ActionKeyWiths(props: ActionConfigProps<ActionKeyWith>) -> Element {
 
     rsx! {
         Options {
-            label: "Use with",
+            label: props.label,
             options,
             on_select: move |disc: ActionKeyWithDiscriminants| {
                 (props.on_option)(ActionKeyWith::from_str(&disc.to_string()).unwrap());
@@ -684,12 +691,103 @@ fn KeyBindings(props: ActionConfigProps<KeyBinding>) -> Element {
 
     rsx! {
         Options {
-            label: "Key binding",
+            label: props.label,
             options,
             on_select: move |disc: KeyBindingDiscriminants| {
                 (props.on_option)(KeyBinding::from_str(&disc.to_string()).unwrap());
             },
             selected,
+        }
+    }
+}
+
+#[component]
+fn RotationModes(props: ActionConfigProps<RotationMode>) -> Element {
+    let options = RotationModeDiscriminants::iter()
+        .map(|disc| (disc, disc.to_string()))
+        .collect::<Vec<_>>();
+    let selected = RotationModeDiscriminants::from(props.selected);
+
+    rsx! {
+        Options {
+            label: props.label,
+            options,
+            on_select: move |disc: RotationModeDiscriminants| {
+                (props.on_option)(RotationMode::from_str(&disc.to_string()).unwrap());
+            },
+            selected,
+        }
+    }
+}
+
+#[component]
+fn Configuration() -> Element {
+    let mut config = use_signal(|| query_config().unwrap());
+    let interact_key = use_memo(move || config().interact_key);
+    let ropelift_key = use_memo(move || config().ropelift_key);
+    let up_jump_key = use_memo(move || config().up_jump_key);
+    let feed_pet_key = use_memo(move || config().feed_pet_key);
+    let potion_key = use_memo(move || config().potion_key);
+    let rotation_mode = use_memo(move || config().rotation_mode);
+
+    use_effect(move || {
+        upsert_config(&mut config()).unwrap();
+        spawn(async move {
+            refresh_configuration().await;
+        });
+    });
+
+    rsx! {
+        KeyBindings {
+            label: "Interact key",
+            on_option: move |key| {
+                config.write().interact_key = key;
+            },
+            selected: interact_key(),
+        }
+        Checkbox {
+            label: "Has up jump key (Hero, Corsair, Blaster,...)",
+            on_input: move |checked: bool| {
+                config.write().up_jump_key = checked.then_some(KeyBinding::default());
+            },
+            value: up_jump_key().is_some(),
+        }
+        if let Some(key) = up_jump_key() {
+            KeyBindings {
+                label: "Up jump key",
+                on_option: move |key| {
+                    config.write().up_jump_key = Some(key);
+                },
+                selected: key,
+            }
+        }
+        KeyBindings {
+            label: "Rope lift key",
+            on_option: move |key| {
+                config.write().ropelift_key = key;
+            },
+            selected: ropelift_key(),
+        }
+        KeyBindings {
+            label: "Feed pet key",
+            on_option: move |key| {
+                config.write().feed_pet_key = key;
+            },
+            selected: feed_pet_key(),
+        }
+        KeyBindings {
+            label: "Potion key",
+            on_option: move |key| {
+                config.write().potion_key = key;
+            },
+            selected: potion_key(),
+        }
+        RotationModes {
+            label: "Rotation mode",
+            on_option: move |mode| {
+                config.write().rotation_mode = mode;
+            },
+            selected: rotation_mode(),
         }
     }
 }

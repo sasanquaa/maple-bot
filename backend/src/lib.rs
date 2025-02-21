@@ -13,23 +13,33 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use database::Minimap;
 use tokio::sync::{
     mpsc,
     oneshot::{self, Sender},
 };
 
-pub mod context;
-pub mod database;
+mod context;
+mod database;
 #[cfg(debug_assertions)]
 mod debug;
 mod detect;
 mod mat;
-pub mod minimap;
-pub mod player;
-pub use strum::IntoEnumIterator;
+mod minimap;
+mod player;
 mod rotator;
-pub mod skill;
+mod skill;
+
+pub use {
+    context::start_update_loop,
+    database::{
+        Action, ActionCondition, ActionConditionDiscriminants, ActionDiscriminants, ActionKey,
+        ActionKeyDirection, ActionKeyDirectionDiscriminants, ActionKeyWith,
+        ActionKeyWithDiscriminants, ActionMove, KeyBinding, KeyBindingDiscriminants, Minimap,
+        Position, RotationMode, RotationModeDiscriminants, query_config, upsert_config, upsert_map,
+    },
+    rotator::RotatorMode,
+    strum::IntoEnumIterator,
+};
 
 type Response = (Sender<Box<dyn Any + Send>>, Request);
 
@@ -43,8 +53,9 @@ static REQUESTS: LazyLock<(mpsc::Sender<Response>, Mutex<mpsc::Receiver<Response
 enum Request {
     PrepareActions(String),
     RotateActions(bool),
-    RedetectMinimap,
+    RedetectMinimap(bool),
     RefreshMinimapData,
+    RefreshConfiguration,
     PlayerPosition,
     MinimapFrame,
     MinimapData,
@@ -58,12 +69,16 @@ pub async fn rotate_actions(halting: bool) {
     request::<()>(Request::RotateActions(halting)).await
 }
 
-pub async fn redetect_minimap() {
-    request::<()>(Request::RedetectMinimap).await
+pub async fn redetect_minimap(delete: bool) {
+    request::<()>(Request::RedetectMinimap(delete)).await
 }
 
 pub async fn refresh_minimap_data() {
     request::<()>(Request::RefreshMinimapData).await
+}
+
+pub async fn refresh_configuration() {
+    request::<()>(Request::RefreshConfiguration).await
 }
 
 pub async fn player_position() -> Result<(i32, i32)> {

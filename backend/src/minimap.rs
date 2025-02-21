@@ -19,7 +19,7 @@ const MINIMAP_DETECT_RUNE_INTERVAL_TICKS: u32 = 305;
 
 #[derive(Debug, Default)]
 pub struct MinimapState {
-    pub(crate) data: MinimapData,
+    pub data: MinimapData,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -127,7 +127,9 @@ fn update_idle_context(mat: &Mat, idle: MinimapIdle) -> Option<Minimap> {
             let br = rune.br() - bbox.tl();
             let x = ((tl.x + br.x) / 2) as f32 / scale_w;
             let y = (bbox.height - br.y + 1) as f32 / scale_h;
-            Point::new(x as i32, y as i32)
+            let point = Point::new(x as i32, y as i32);
+            debug!(target: "minimap", "detected rune at {point:?}");
+            point
         });
     }
     Some(Minimap::Idle(MinimapIdle {

@@ -5,10 +5,9 @@ use opencv::{core::Point, prelude::Mat};
 use platforms::windows::keys::KeyKind;
 
 use crate::{
-    context::{Context, Contextual, ControlFlow},
+    context::{Context, Contextual, ControlFlow, map_key},
     database::{Action, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, KeyBinding},
-    detect::detect_player,
-    detect::{detect_cash_shop, detect_player_rune_buff, detect_rune_arrows},
+    detect::{detect_cash_shop, detect_player, detect_player_rune_buff, detect_rune_arrows},
     minimap::Minimap,
 };
 
@@ -46,7 +45,7 @@ pub struct PlayerState {
     /// Approximates the player direction for using key
     last_known_direction: ActionKeyDirection,
     /// Last known position after each detection used for unstucking
-    pub(crate) last_known_pos: Option<Point>,
+    pub last_known_pos: Option<Point>,
     /// Indicates whether to use `ControlFlow::Immediate` on this update
     use_immediate_control_flow: bool,
     /// Indicates whether to ignore update_pos and use last_known_pos on next update
@@ -408,10 +407,13 @@ fn update_idle_context(state: &mut PlayerState, cur_pos: Point) -> Player {
             Action::Key(ActionKey {
                 position: Some(position),
                 ..
-            }) => Some((
-                Player::Moving(Point::new(position.x, position.y), position.allow_adjusting),
-                false,
-            )),
+            }) => {
+                debug!(target: "player", "handling move: {} {}", position.x, position.y);
+                Some((
+                    Player::Moving(Point::new(position.x, position.y), position.allow_adjusting),
+                    false,
+                ))
+            }
             Action::Key(ActionKey {
                 position: None,
                 with: ActionKeyWith::DoubleJump,
@@ -502,67 +504,7 @@ fn update_use_key_context(
             if timeout.current < use_key.wait_before_use_ticks {
                 return update(timeout);
             }
-            let key = match use_key.key {
-                KeyBinding::A => KeyKind::A,
-                KeyBinding::B => KeyKind::B,
-                KeyBinding::C => KeyKind::C,
-                KeyBinding::D => KeyKind::D,
-                KeyBinding::E => KeyKind::E,
-                KeyBinding::F => KeyKind::F,
-                KeyBinding::G => KeyKind::G,
-                KeyBinding::H => KeyKind::H,
-                KeyBinding::I => KeyKind::I,
-                KeyBinding::J => KeyKind::J,
-                KeyBinding::K => KeyKind::K,
-                KeyBinding::L => KeyKind::L,
-                KeyBinding::M => KeyKind::M,
-                KeyBinding::N => KeyKind::N,
-                KeyBinding::O => KeyKind::O,
-                KeyBinding::P => KeyKind::P,
-                KeyBinding::Q => KeyKind::Q,
-                KeyBinding::R => KeyKind::R,
-                KeyBinding::S => KeyKind::S,
-                KeyBinding::T => KeyKind::T,
-                KeyBinding::U => KeyKind::U,
-                KeyBinding::V => KeyKind::V,
-                KeyBinding::W => KeyKind::W,
-                KeyBinding::X => KeyKind::X,
-                KeyBinding::Y => KeyKind::Y,
-                KeyBinding::Z => KeyKind::Z,
-                KeyBinding::Zero => KeyKind::Zero,
-                KeyBinding::One => KeyKind::One,
-                KeyBinding::Two => KeyKind::Two,
-                KeyBinding::Three => KeyKind::Three,
-                KeyBinding::Four => KeyKind::Four,
-                KeyBinding::Five => KeyKind::Five,
-                KeyBinding::Six => KeyKind::Six,
-                KeyBinding::Seven => KeyKind::Seven,
-                KeyBinding::Eight => KeyKind::Eight,
-                KeyBinding::Nine => KeyKind::Nine,
-                KeyBinding::F1 => KeyKind::F1,
-                KeyBinding::F2 => KeyKind::F2,
-                KeyBinding::F3 => KeyKind::F3,
-                KeyBinding::F4 => KeyKind::F4,
-                KeyBinding::F5 => KeyKind::F5,
-                KeyBinding::F6 => KeyKind::F6,
-                KeyBinding::F7 => KeyKind::F7,
-                KeyBinding::F8 => KeyKind::F8,
-                KeyBinding::F9 => KeyKind::F9,
-                KeyBinding::F10 => KeyKind::F10,
-                KeyBinding::F11 => KeyKind::F11,
-                KeyBinding::F12 => KeyKind::F12,
-                KeyBinding::Up => KeyKind::Up,
-                KeyBinding::Home => KeyKind::Home,
-                KeyBinding::End => KeyKind::End,
-                KeyBinding::PageUp => KeyKind::PageUp,
-                KeyBinding::PageDown => KeyKind::PageDown,
-                KeyBinding::Insert => KeyKind::Insert,
-                KeyBinding::Delete => KeyKind::Delete,
-                KeyBinding::Enter => KeyKind::Enter,
-                KeyBinding::Space => KeyKind::Space,
-                KeyBinding::Tilde => KeyKind::Tilde,
-                KeyBinding::Esc => KeyKind::Esc,
-            };
+            let key = map_key(use_key.key);
             let _ = context.keys.send(key);
             if use_key.wait_after_use_ticks > 0 {
                 Player::Stalling(Timeout::default(), use_key.wait_after_use_ticks)
@@ -648,7 +590,7 @@ fn update_moving_context(
             Player::Grappling(moving)
         }
         (_, y, d) if y > 0 && d >= PLAYER_UP_JUMP_THRESHOLD => Player::UpJumping(moving),
-        (_, y, d) if y > 0 && d < PLAYER_JUMP_THRESHOLD => Player::Jumping(moving),
+        (_, y, d) if y > 0 && d >= PLAYER_JUMP_THRESHOLD => Player::Jumping(moving),
         // this probably won't work if the platforms are far apart,
         // which is weird to begin with and only happen in very rare place (e.g. Haven)
         (_, y, d) if y < 0 && d >= PLAYER_VERTICAL_MOVE_THRESHOLD => Player::Falling(moving),
@@ -684,6 +626,7 @@ fn update_adjusting_context(
     const ADJUSTING_SHORT_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT - 2;
 
     fn on_fixed_action(
+        is_stationary: bool,
         action: Action,
         y_distance: i32,
         moving: PlayerMoving,
@@ -692,7 +635,9 @@ fn update_adjusting_context(
             Action::Key(ActionKey {
                 with: ActionKeyWith::DoubleJump,
                 ..
-            }) => (moving.completed && y_distance <= USE_KEY_AT_Y_DOUBLE_JUMP_THRESHOLD)
+            }) => (moving.completed
+                && y_distance <= USE_KEY_AT_Y_DOUBLE_JUMP_THRESHOLD
+                && is_stationary)
                 .then_some((Player::DoubleJumping(moving, true), false)),
             Action::Key(ActionKey {
                 with: ActionKeyWith::Any,
@@ -707,6 +652,7 @@ fn update_adjusting_context(
         }
     }
 
+    let is_stationary = state.is_stationary;
     let (x_distance, x_direction) = x_distance_direction(&moving.dest, &cur_pos);
     let (y_distance, y_direction) = y_distance_direction(&moving.dest, &cur_pos);
     if x_distance >= DOUBLE_JUMP_THRESHOLD {
@@ -780,14 +726,16 @@ fn update_adjusting_context(
             on_action(
                 state,
                 |action| match action {
-                    PlayerAction::Fixed(action) => on_fixed_action(action, y_distance, moving),
+                    PlayerAction::Fixed(action) => {
+                        on_fixed_action(is_stationary, action, y_distance, moving)
+                    }
                     PlayerAction::SolveRune(_) => None,
                 },
                 || {
                     if !moving.completed {
                         Player::Adjusting(moving)
                     } else {
-                        Player::Moving(moving.dest, moving.exact)
+                        Player::Adjusting(moving.timeout_current(PLAYER_MOVE_TIMEOUT))
                     }
                 },
             )
@@ -935,15 +883,17 @@ fn update_grappling_context(
         },
         None::<fn()>,
         |mut moving| {
-            let (distance, _) = y_distance_direction(&moving.dest, &moving.pos);
+            let (distance, direction) = y_distance_direction(&moving.dest, &moving.pos);
             if moving.timeout.current >= PLAYER_MOVE_TIMEOUT && x_changed {
                 // during double jump and grappling failed
                 moving = moving.timeout_current(GRAPPLING_TIMEOUT);
-            } else if !moving.completed && distance <= GRAPPLING_STOPPING_THRESHOLD {
-                let _ = context.keys.send(key);
-                moving = moving.completed(true);
             }
-            if moving.timeout.current >= GRAPPLING_STOPPING_TIMEOUT {
+            if !moving.completed {
+                if direction <= 0 || distance <= GRAPPLING_STOPPING_THRESHOLD {
+                    let _ = context.keys.send(key);
+                    moving = moving.completed(true);
+                }
+            } else if moving.timeout.current >= GRAPPLING_STOPPING_TIMEOUT {
                 moving = moving.timeout_current(GRAPPLING_TIMEOUT);
             }
             Player::Grappling(moving)
@@ -1006,6 +956,7 @@ fn update_falling_context(
     moving: PlayerMoving,
 ) -> Player {
     const FALLING_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 2;
+    const TIMEOUT_EARLY_THRESHOLD: i32 = -3;
 
     let y_changed = cur_pos.y - moving.pos.y;
     let (x_distance, _) = x_distance_direction(&moving.dest, &cur_pos);
@@ -1026,7 +977,7 @@ fn update_falling_context(
         |mut moving| {
             // only timeout early when the player is not super close to
             // the destination x-wise, useful for falling + double jumping
-            if x_distance >= ADJUSTING_MEDIUM_THRESHOLD && y_changed <= -2 {
+            if x_distance >= ADJUSTING_MEDIUM_THRESHOLD && y_changed <= TIMEOUT_EARLY_THRESHOLD {
                 moving = moving.timeout_current(FALLING_TIMEOUT);
             }
             Player::Falling(moving)

@@ -18,10 +18,18 @@ struct PriorityAction {
 }
 
 #[derive(Debug, Default)]
+pub enum RotatorMode {
+    StartToEnd,
+    #[default]
+    StartToEndThenReverse,
+}
+
+#[derive(Debug, Default)]
 pub struct Rotator {
     normal_actions: Vec<PlayerAction>,
     normal_index: usize,
     normal_action_backward: bool,
+    normal_rotate_mode: RotatorMode,
     priority_actions: Vec<PriorityAction>,
     priority_actions_queue: VecDeque<PlayerAction>,
 }
@@ -48,6 +56,11 @@ impl Rotator {
                 },
             }
         }
+    }
+
+    pub fn rotator_mode(&mut self, mode: RotatorMode) {
+        self.normal_rotate_mode = mode;
+        self.reset();
     }
 
     pub fn reset(&mut self) {
@@ -79,17 +92,26 @@ impl Rotator {
             }
         }
         if !player.has_normal_action() && !self.normal_actions.is_empty() {
-            let len = self.normal_actions.len();
-            let i = if self.normal_action_backward {
-                (len - self.normal_index).saturating_sub(1)
-            } else {
-                self.normal_index
-            };
-            if (self.normal_index + 1) == len {
-                self.normal_action_backward = !self.normal_action_backward
+            match self.normal_rotate_mode {
+                RotatorMode::StartToEnd => {
+                    let action = self.normal_actions[self.normal_index];
+                    self.normal_index = (self.normal_index + 1) % self.normal_actions.len();
+                    player.set_normal_action(action);
+                }
+                RotatorMode::StartToEndThenReverse => {
+                    let len = self.normal_actions.len();
+                    let i = if self.normal_action_backward {
+                        (len - self.normal_index).saturating_sub(1)
+                    } else {
+                        self.normal_index
+                    };
+                    if (self.normal_index + 1) == len {
+                        self.normal_action_backward = !self.normal_action_backward
+                    }
+                    self.normal_index = (self.normal_index + 1) % len;
+                    player.set_normal_action(self.normal_actions[i]);
+                }
             }
-            self.normal_index = (self.normal_index + 1) % len;
-            player.set_normal_action(self.normal_actions[i]);
         }
     }
 }

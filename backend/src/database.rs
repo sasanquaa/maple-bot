@@ -23,6 +23,10 @@ static CONNECTION: LazyLock<Mutex<Connection>> = LazyLock::new(|| {
             id INTEGER PRIMARY KEY,
             data TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS configurations (
+            id INTEGER PRIMARY KEY,
+            data TEXT NOT NULL
+        );
         "#,
     )
     .unwrap();
@@ -36,6 +40,38 @@ trait Identifiable {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Configuration {
+    #[serde(skip_serializing, default)]
+    pub id: Option<i64>,
+    pub ropelift_key: KeyBinding,
+    pub up_jump_key: Option<KeyBinding>,
+    pub interact_key: KeyBinding,
+    pub feed_pet_key: KeyBinding,
+    pub potion_key: KeyBinding,
+    pub rotation_mode: RotationMode,
+}
+
+#[derive(
+    Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumString, EnumDiscriminants,
+)]
+#[strum_discriminants(derive(EnumIter, strum::Display))]
+pub enum RotationMode {
+    StartToEnd,
+    #[default]
+    StartToEndThenReverse,
+}
+
+impl Identifiable for Configuration {
+    fn id(&self) -> Option<i64> {
+        self.id
+    }
+
+    fn set_id(&mut self, id: i64) {
+        self.id = Some(id)
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Minimap {
     #[serde(skip_serializing, default)]
     pub id: Option<i64>,
@@ -45,7 +81,6 @@ pub struct Minimap {
     pub actions: HashMap<String, Vec<Action>>,
 }
 
-// TODO: probably not needed because there is only one model
 impl Identifiable for Minimap {
     fn id(&self) -> Option<i64> {
         self.id
@@ -115,9 +150,12 @@ pub enum ActionKeyDirection {
     Right,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, EnumString, EnumDiscriminants)]
+#[derive(
+    Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumString, EnumDiscriminants,
+)]
 #[strum_discriminants(derive(EnumIter, strum::Display))]
 pub enum KeyBinding {
+    #[default]
     A,
     B,
     C,
@@ -177,9 +215,28 @@ pub enum KeyBinding {
     Space,
     Tilde,
     Esc,
+    Shift,
 }
 
-pub(crate) fn query_maps() -> Result<Vec<Minimap>> {
+pub fn query_config() -> Result<Configuration> {
+    query_from_table("configurations").map(|vec| {
+        vec.into_iter().next().unwrap_or_else(|| {
+            let mut config = Configuration::default();
+            upsert_config(&mut config).unwrap();
+            config
+        })
+    })
+}
+
+pub fn upsert_config(config: &mut Configuration) -> Result<()> {
+    upsert_to_table("configurations", config)
+}
+
+pub fn refresh_config(config: &mut Configuration) -> Result<()> {
+    refresh_data_from_table("configurations", config)
+}
+
+pub fn query_maps() -> Result<Vec<Minimap>> {
     query_from_table("maps")
 }
 
@@ -191,7 +248,7 @@ pub fn delete_map(map: &Minimap) -> Result<()> {
     delete_from_table("maps", map)
 }
 
-pub(crate) fn refresh_map(map: &mut Minimap) -> Result<()> {
+pub fn refresh_map(map: &mut Minimap) -> Result<()> {
     refresh_data_from_table("maps", map)
 }
 
