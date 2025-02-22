@@ -11,6 +11,10 @@ use crate::{
     minimap::Minimap,
 };
 
+/// Maximum number of times adjusting or double jump states can be transitioned to without changing position
+const UNSTUCK_TRACKER_THRESHOLD: u32 = 10;
+
+/// Minimium y distance required to perform a fall and double jump/adjusting
 const ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD: i32 = 4;
 
 /// Minimum x distance from the destination required to spam small movement
@@ -57,12 +61,12 @@ pub struct PlayerState {
     /// Code that uses this variable must clear it after use
     was_falling: bool,
     /// Tracks whether the player has a rune buff
-    pub(crate) has_rune_buff: bool,
+    pub has_rune_buff: bool,
     /// The interval between rune buff checks
     has_rune_buff_check_interval: u32,
     /// Tracks whether movement-related actions do not change the player position after a while.
-    /// Resets when a limit is reached (for unstucking) or when in `Player::Idle`.
-    unstuck_tracker: u32,
+    /// Resets when a limit is reached (for unstucking) or position did change.
+    unstuck_counter: u32,
 }
 
 /// Represents an action the `Rotator` can use
@@ -75,25 +79,25 @@ pub enum PlayerAction {
 }
 
 impl PlayerState {
-    pub(crate) fn has_normal_action(&self) -> bool {
+    pub fn has_normal_action(&self) -> bool {
         self.normal_action.is_some()
     }
 
-    pub(crate) fn set_normal_action(&mut self, action: PlayerAction) {
+    pub fn set_normal_action(&mut self, action: PlayerAction) {
         self.reset_to_idle_next_update = true;
         self.normal_action = Some(action);
     }
 
-    pub(crate) fn has_priority_action(&self) -> bool {
+    pub fn has_priority_action(&self) -> bool {
         self.priority_action.is_some()
     }
 
-    pub(crate) fn set_priority_action(&mut self, action: PlayerAction) {
+    pub fn set_priority_action(&mut self, action: PlayerAction) {
         self.reset_to_idle_next_update = true;
         self.priority_action = Some(action);
     }
 
-    pub(crate) fn abort_actions(&mut self) {
+    pub fn abort_actions(&mut self) {
         self.reset_to_idle_next_update = true;
         self.priority_action = None;
         self.normal_action = None;
@@ -430,8 +434,6 @@ fn update_idle_context(state: &mut PlayerState, cur_pos: Point) -> Player {
         }
     }
 
-    state.unstuck_tracker = 0;
-
     on_action(
         state,
         |action| match action {
@@ -456,31 +458,21 @@ fn update_use_key_context(
         timeout: Timeout,
         direction: ActionKeyDirection,
     ) -> bool {
+        let mut change_direction = |key: KeyKind| {
+            if !matches!(state.last_known_direction, direction) {
+                let _ = context.keys.send_down(key);
+                if timeout.current >= CHANGE_DIRECTION_TIMEOUT {
+                    let _ = context.keys.send_up(key);
+                    state.last_known_direction = direction;
+                }
+                false
+            } else {
+                true
+            }
+        };
         match direction {
-            ActionKeyDirection::Left => {
-                if !matches!(state.last_known_direction, ActionKeyDirection::Left) {
-                    let _ = context.keys.send_down(KeyKind::Left);
-                    if timeout.current >= CHANGE_DIRECTION_TIMEOUT {
-                        state.last_known_direction = ActionKeyDirection::Left;
-                    }
-                    false
-                } else {
-                    let _ = context.keys.send_up(KeyKind::Left);
-                    true
-                }
-            }
-            ActionKeyDirection::Right => {
-                if !matches!(state.last_known_direction, ActionKeyDirection::Right) {
-                    let _ = context.keys.send_down(KeyKind::Right);
-                    if timeout.current >= CHANGE_DIRECTION_TIMEOUT {
-                        state.last_known_direction = ActionKeyDirection::Right;
-                    }
-                    false
-                } else {
-                    let _ = context.keys.send_up(KeyKind::Right);
-                    true
-                }
-            }
+            ActionKeyDirection::Left => change_direction(KeyKind::Left),
+            ActionKeyDirection::Right => change_direction(KeyKind::Right),
             ActionKeyDirection::Any => true,
         }
     }
@@ -541,10 +533,16 @@ fn update_moving_context(
         PLAYER_JUMP_THRESHOLD..PLAYER_UP_JUMP_THRESHOLD
     };
 
+    state.use_immediate_control_flow = true;
+    state.unstuck_counter += 1;
+    if state.unstuck_counter >= UNSTUCK_TRACKER_THRESHOLD {
+        state.unstuck_counter = 0;
+        return Player::Unstucking(Timeout::default());
+    }
+
     let (x_distance, _) = x_distance_direction(&dest, &cur_pos);
     let (y_distance, y_direction) = y_distance_direction(&dest, &cur_pos);
     let moving = PlayerMoving::new(cur_pos, dest, exact);
-    state.use_immediate_control_flow = true;
 
     fn on_fixed_action(action: Action, moving: PlayerMoving) -> Option<(Player, bool)> {
         match action {
@@ -620,7 +618,6 @@ fn update_adjusting_context(
     cur_pos: Point,
     moving: PlayerMoving,
 ) -> Player {
-    const UNSTUCK_TRACKER_THRESHOLD: u32 = 10;
     const USE_KEY_AT_Y_DOUBLE_JUMP_THRESHOLD: i32 = 0;
     const USE_KEY_AT_Y_PROXIMITY_THRESHOLD: i32 = 2;
     const ADJUSTING_SHORT_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT - 2;
@@ -671,11 +668,6 @@ fn update_adjusting_context(
 
     if !moving.timeout.started {
         state.use_immediate_control_flow = true;
-        state.unstuck_tracker += 1;
-    }
-    if state.unstuck_tracker >= UNSTUCK_TRACKER_THRESHOLD {
-        state.unstuck_tracker = 0;
-        return Player::Unstucking(Timeout::default());
     }
 
     update_moving_axis_context(
@@ -1007,6 +999,8 @@ fn update_unstucking_context(context: &Context, cur_pos: Point, timeout: Timeout
             } else {
                 let _ = context.keys.send_down(KeyKind::Left);
             }
+            let _ = context.keys.send(KeyKind::Space);
+            let _ = context.keys.send(KeyKind::Esc);
             Player::Unstucking(timeout)
         },
         || {
@@ -1014,12 +1008,7 @@ fn update_unstucking_context(context: &Context, cur_pos: Point, timeout: Timeout
             let _ = context.keys.send_up(KeyKind::Left);
             Player::Detecting
         },
-        |timeout| {
-            if y > Y_IGNORE_THRESHOLD {
-                let _ = context.keys.send(KeyKind::Space);
-            }
-            Player::Unstucking(timeout)
-        },
+        Player::Unstucking,
     )
 }
 
@@ -1272,6 +1261,11 @@ fn update_state(context: &Context, mat: &Mat, state: &mut PlayerState) -> Option
     );
     state.is_stationary = state.is_stationary_timeout.current > PLAYER_MOVE_TIMEOUT;
     state.last_known_pos = Some(pos);
+    state.unstuck_counter = if state.is_stationary_timeout.current == 0 {
+        0
+    } else {
+        state.unstuck_counter
+    };
     update_rune_buff(mat, state, false);
     Some(pos)
 }

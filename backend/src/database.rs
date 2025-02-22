@@ -216,6 +216,7 @@ pub enum KeyBinding {
     Tilde,
     Esc,
     Shift,
+    Ctrl,
 }
 
 pub fn query_config() -> Result<Configuration> {

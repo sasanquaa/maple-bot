@@ -295,6 +295,7 @@ pub fn map_key(key: KeyBinding) -> KeyKind {
         KeyBinding::Tilde => KeyKind::Tilde,
         KeyBinding::Esc => KeyKind::Esc,
         KeyBinding::Shift => KeyKind::Shift,
+        KeyBinding::Ctrl => KeyKind::Ctrl,
     }
 }
 
