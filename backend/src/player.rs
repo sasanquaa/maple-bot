@@ -1103,7 +1103,6 @@ fn update_unstucking_context(context: &Context, cur_pos: Point, timeout: Timeout
             }
             let _ = context.keys.send(KeyKind::Space);
             let _ = context.keys.send(KeyKind::Esc);
-            let _ = context.keys.send(KeyKind::Esc);
             Player::Unstucking(timeout)
         },
         || {
