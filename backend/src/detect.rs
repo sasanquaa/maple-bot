@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use log::debug;
+use log::{debug, info};
 use opencv::{
     boxed_ref::BoxedRef,
     core::{
@@ -251,6 +251,7 @@ pub fn detect_rune_arrows(mat: &Mat) -> Result<[KeyKind; 4]> {
         })
         .collect::<Vec<_>>();
     if preds.len() != 4 {
+        info!(target: "player", "failed to detect rune arrows {preds:?}");
         return Err(anyhow!("failed to detect rune arrows"));
     }
     // sort by x for arrow order
@@ -260,7 +261,7 @@ pub fn detect_rune_arrows(mat: &Mat) -> Result<[KeyKind; 4]> {
     let second = map_arrow(preds[1]);
     let third = map_arrow(preds[2]);
     let fourth = map_arrow(preds[3]);
-    debug!(
+    info!(
         target: "player",
         "solving rune result {first:?} ({}), {second:?} ({}), {third:?} ({}), {fourth:?} ({})",
         preds[0][4],
