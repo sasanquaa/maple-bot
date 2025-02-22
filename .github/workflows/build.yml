@@ -20,6 +20,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack
+
       - uses: lukka/get-cmake@latest
 
       - name: Setup vcpkg
@@ -31,11 +35,11 @@ jobs:
       - name: Install tools
         shell: bash
         run: |
-          export OPENCV_DIR=$VCPKG_ROOT/installed/$VCPKG_DEFAULT_TRIPLET/share/opencv4
           rustup toolchain install nightly-x86_64-pc-windows-msvc
           cargo install dioxus-cli
 
       - name: Build
         shell: bash
         run: |
+          export OPENCV_DIR=$VCPKG_ROOT/installed/$VCPKG_DEFAULT_TRIPLET/share/opencv4
           dx build --release --package ui
