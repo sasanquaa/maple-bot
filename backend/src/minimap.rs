@@ -31,11 +31,11 @@ struct Anchors {
 #[derive(Clone, Copy, Debug)]
 pub struct MinimapIdle {
     anchors: Anchors,
-    pub(crate) bbox: Rect,
-    pub(crate) scale_w: f32,
-    pub(crate) scale_h: f32,
-    pub(crate) partially_overlapping: bool,
-    pub(crate) rune: Option<Point>,
+    pub bbox: Rect,
+    pub scale_w: f32,
+    pub scale_h: f32,
+    pub partially_overlapping: bool,
+    pub rune: Option<Point>,
     rune_detect_interval: u32,
 }
 

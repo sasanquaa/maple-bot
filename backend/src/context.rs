@@ -302,11 +302,11 @@ fn default_actions(config: &Configuration) -> [Action; 4] {
     let feed_pet_action = ActionKey {
         key: config.feed_pet_key,
         position: None,
-        condition: ActionCondition::Any,
+        condition: ActionCondition::EveryMillis(120000),
         direction: ActionKeyDirection::Any,
         with: ActionKeyWith::Any,
-        wait_before_use_ticks: 5,
-        wait_after_use_ticks: 5,
+        wait_before_use_ticks: 10,
+        wait_after_use_ticks: 10,
     };
     let potion_action = ActionKey {
         key: config.potion_key,
