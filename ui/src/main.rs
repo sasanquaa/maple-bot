@@ -103,7 +103,9 @@ fn Minimap() -> Element {
     let mut editing = use_signal::<Option<usize>>(|| None);
     let mut editing_preset = use_signal::<String>(String::new);
     let mut editing_action = use_signal::<Action>(|| DEFAULT_MOVE_ACTION);
+    let mut editing_action_last = use_signal::<ActionDiscriminants>(|| ActionDiscriminants::Move);
     let editing_action_set = use_callback(move |action: Action| {
+        let action_disc = ActionDiscriminants::from(action);
         if let Some(i) = *editing.peek() {
             let minimap = minimap.peek();
             let minimap = minimap.as_ref().unwrap();
@@ -113,17 +115,21 @@ fn Minimap() -> Element {
                 .unwrap()
                 .get(i)
                 .unwrap();
-            if ActionDiscriminants::from(action) == ActionDiscriminants::from(existing_action) {
+            if action_disc != *editing_action_last.peek()
+                && action_disc == ActionDiscriminants::from(existing_action)
+            {
                 let is_default = match action {
                     Action::Move(_) => action == DEFAULT_MOVE_ACTION,
                     Action::Key(_) => action == DEFAULT_KEY_ACTION,
                 };
                 if is_default {
+                    editing_action_last.set(action_disc);
                     editing_action.set(*existing_action);
                     return;
                 }
             }
         }
+        editing_action_last.set(action_disc);
         editing_action.set(action);
     });
 

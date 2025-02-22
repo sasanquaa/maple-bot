@@ -56,17 +56,23 @@ pub struct PlayerState {
     ignore_pos_update: bool,
     /// Indicates whether to reset the contextual state back to `Player::Idle` on next update
     reset_to_idle_next_update: bool,
-    /// Indicates whether the contextual state was `Player::Falling`
-    /// Helps for coordinating between double jump / adjusting + falling
-    /// Code that uses this variable must clear it after use
-    was_falling: bool,
+    /// Indicates whether the contextual state was `Player::DoubleJumping` or `Player::Falling`
+    /// Helps for coordinating: use key with direction + double jumping and falling + double jumping
+    /// Resets to `None` when the destination is reached or in `Player::Idle`
+    last_moving_state: Option<PlayerLastMovingState>,
     /// Tracks whether the player has a rune buff
     pub has_rune_buff: bool,
     /// The interval between rune buff checks
     has_rune_buff_check_interval: u32,
     /// Tracks whether movement-related actions do not change the player position after a while.
-    /// Resets when a limit is reached (for unstucking) or position did change.
+    /// Resets when a limit is reached (for unstucking), in `Player::Idle` or position did change.
     unstuck_counter: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PlayerLastMovingState {
+    DoubleJumping,
+    Falling,
 }
 
 /// Represents an action the `Rotator` can use
@@ -225,7 +231,7 @@ pub enum Player {
     UseKey(PlayerUseKey),
     Moving(Point, bool),
     Adjusting(PlayerMoving),
-    DoubleJumping(PlayerMoving, bool),
+    DoubleJumping(PlayerMoving, bool, bool),
     Grappling(PlayerMoving),
     Jumping(PlayerMoving),
     UpJumping(PlayerMoving),
@@ -353,7 +359,7 @@ fn update_non_positional_context(
         | Player::Idle
         | Player::Moving(_, _)
         | Player::Adjusting(_)
-        | Player::DoubleJumping(_, _)
+        | Player::DoubleJumping(_, _, _)
         | Player::Grappling(_)
         | Player::Jumping(_)
         | Player::UpJumping(_)
@@ -372,9 +378,14 @@ fn update_positional_context(
         Player::Idle => update_idle_context(context, state, cur_pos),
         Player::Moving(dest, exact) => update_moving_context(state, cur_pos, dest, exact),
         Player::Adjusting(moving) => update_adjusting_context(context, state, cur_pos, moving),
-        Player::DoubleJumping(moving, ignore_grappling) => {
-            update_double_jumping_context(context, state, cur_pos, moving, ignore_grappling)
-        }
+        Player::DoubleJumping(moving, forced, require_stationary) => update_double_jumping_context(
+            context,
+            state,
+            cur_pos,
+            moving,
+            forced,
+            require_stationary,
+        ),
         Player::Grappling(moving) => update_grappling_context(context, state, cur_pos, moving),
         Player::UpJumping(moving) => update_up_jumping_context(context, state, cur_pos, moving),
         Player::Jumping(moving) => update_moving_axis_context(
@@ -399,7 +410,11 @@ fn update_positional_context(
 }
 
 fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Point) -> Player {
-    fn on_fixed_action(action: Action, cur_pos: Point) -> Option<(Player, bool)> {
+    fn on_fixed_action(
+        last_known_direction: ActionKeyDirection,
+        action: Action,
+        cur_pos: Point,
+    ) -> Option<(Player, bool)> {
         match action {
             Action::Move(ActionMove { position, .. }) => {
                 debug!(target: "player", "handling move: {} {}", position.x, position.y);
@@ -421,11 +436,24 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
             Action::Key(ActionKey {
                 position: None,
                 with: ActionKeyWith::DoubleJump,
+                direction,
                 ..
-            }) => Some((
-                Player::DoubleJumping(PlayerMoving::new(cur_pos, cur_pos, false), true),
-                false,
-            )),
+            }) => {
+                if (matches!(direction, ActionKeyDirection::Any)
+                    || direction == last_known_direction)
+                {
+                    Some((
+                        Player::DoubleJumping(
+                            PlayerMoving::new(cur_pos, cur_pos, false),
+                            true,
+                            true,
+                        ),
+                        false,
+                    ))
+                } else {
+                    Some((Player::UseKey(PlayerUseKey::new_from_action(action)), false))
+                }
+            }
             Action::Key(ActionKey {
                 position: None,
                 with: ActionKeyWith::Any | ActionKeyWith::Stationary,
@@ -434,6 +462,9 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
         }
     }
 
+    state.unstuck_counter = 0;
+    state.last_moving_state = None;
+    let last_known_direction = state.last_known_direction;
     let _ = context.keys.send_up(KeyKind::Up);
     let _ = context.keys.send_up(KeyKind::Down);
     let _ = context.keys.send_up(KeyKind::Left);
@@ -442,7 +473,7 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
     on_action(
         state,
         |action| match action {
-            PlayerAction::Fixed(action) => on_fixed_action(action, cur_pos),
+            PlayerAction::Fixed(action) => on_fixed_action(last_known_direction, action, cur_pos),
             PlayerAction::SolveRune(dest) => Some((Player::Moving(dest, true), false)),
         },
         || Player::Idle,
@@ -454,7 +485,7 @@ fn update_use_key_context(
     state: &mut PlayerState,
     use_key: PlayerUseKey,
 ) -> Player {
-    const USE_KEY_TIMEOUT: u32 = 10;
+    const USE_KEY_TIMEOUT: u32 = 12;
     const CHANGE_DIRECTION_TIMEOUT: u32 = 3;
 
     fn update_direction(
@@ -493,8 +524,26 @@ fn update_use_key_context(
             if !update_direction(context, state, timeout, use_key.direction) {
                 return update(timeout);
             }
-            if matches!(use_key.with, ActionKeyWith::Stationary) && !state.is_stationary {
-                return update(timeout);
+            match use_key.with {
+                ActionKeyWith::Any => (),
+                ActionKeyWith::Stationary => {
+                    if !state.is_stationary {
+                        return update(timeout);
+                    }
+                }
+                ActionKeyWith::DoubleJump => {
+                    if !matches!(
+                        state.last_moving_state,
+                        Some(PlayerLastMovingState::DoubleJumping)
+                    ) {
+                        let pos = state.last_known_pos.unwrap();
+                        return Player::DoubleJumping(
+                            PlayerMoving::new(pos, pos, false),
+                            true,
+                            true,
+                        );
+                    }
+                }
             }
             if timeout.current < use_key.wait_before_use_ticks {
                 return update(timeout);
@@ -547,7 +596,11 @@ fn update_moving_context(
     let (y_distance, y_direction) = y_distance_direction(&dest, &cur_pos);
     let moving = PlayerMoving::new(cur_pos, dest, exact);
 
-    fn on_fixed_action(action: Action, moving: PlayerMoving) -> Option<(Player, bool)> {
+    fn on_fixed_action(
+        last_known_direction: ActionKeyDirection,
+        action: Action,
+        moving: PlayerMoving,
+    ) -> Option<(Player, bool)> {
         match action {
             Action::Move(ActionMove {
                 wait_after_move_ticks,
@@ -564,8 +617,17 @@ fn update_moving_context(
             }
             Action::Key(ActionKey {
                 with: ActionKeyWith::DoubleJump,
+                direction,
                 ..
-            }) => Some((Player::DoubleJumping(moving, true), false)),
+            }) => {
+                if (matches!(direction, ActionKeyDirection::Any)
+                    || direction == last_known_direction)
+                {
+                    Some((Player::DoubleJumping(moving, true, false), false))
+                } else {
+                    Some((Player::UseKey(PlayerUseKey::new_from_action(action)), false))
+                }
+            }
             Action::Key(ActionKey {
                 with: ActionKeyWith::Any | ActionKeyWith::Stationary,
                 ..
@@ -574,7 +636,7 @@ fn update_moving_context(
     }
 
     match (x_distance, y_direction, y_distance) {
-        (d, _, _) if d >= DOUBLE_JUMP_THRESHOLD => Player::DoubleJumping(moving, false),
+        (d, _, _) if d >= DOUBLE_JUMP_THRESHOLD => Player::DoubleJumping(moving, false, false),
         (d, _, _)
             if (exact && d >= ADJUSTING_SHORT_THRESHOLD)
                 || (!exact && d >= ADJUSTING_MEDIUM_THRESHOLD) =>
@@ -601,10 +663,14 @@ fn update_moving_context(
                 "reached {:?} with actual position {:?}",
                 dest, cur_pos
             );
+            state.last_moving_state = None;
+            let last_known_direction = state.last_known_direction;
             on_action(
                 state,
                 |action| match action {
-                    PlayerAction::Fixed(action) => on_fixed_action(action, moving),
+                    PlayerAction::Fixed(action) => {
+                        on_fixed_action(last_known_direction, action, moving)
+                    }
                     PlayerAction::SolveRune(_) => {
                         Some((Player::SolvingRune(PlayerSolvingRune::default()), false))
                     }
@@ -626,7 +692,7 @@ fn update_adjusting_context(
     const ADJUSTING_SHORT_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT - 2;
 
     fn on_fixed_action(
-        is_stationary: bool,
+        last_known_direction: ActionKeyDirection,
         action: Action,
         y_distance: i32,
         moving: PlayerMoving,
@@ -634,11 +700,26 @@ fn update_adjusting_context(
         match action {
             Action::Key(ActionKey {
                 with: ActionKeyWith::DoubleJump,
+                direction,
                 ..
-            }) => (moving.completed
-                && y_distance <= USE_KEY_AT_Y_DOUBLE_JUMP_THRESHOLD
-                && is_stationary)
-                .then_some((Player::DoubleJumping(moving, true), false)),
+            }) => {
+                (moving.completed && y_distance <= USE_KEY_AT_Y_DOUBLE_JUMP_THRESHOLD).then(|| {
+                    if matches!(direction, ActionKeyDirection::Any)
+                        || direction == last_known_direction
+                    {
+                        (
+                            Player::DoubleJumping(
+                                moving.timeout(Timeout::default()).completed(false),
+                                true,
+                                false,
+                            ),
+                            false,
+                        )
+                    } else {
+                        (Player::UseKey(PlayerUseKey::new_from_action(action)), false)
+                    }
+                })
+            }
             Action::Key(ActionKey {
                 with: ActionKeyWith::Any,
                 ..
@@ -652,7 +733,7 @@ fn update_adjusting_context(
         }
     }
 
-    let is_stationary = state.is_stationary;
+    let last_known_direction = state.last_known_direction;
     let (x_distance, x_direction) = x_distance_direction(&moving.dest, &cur_pos);
     let (y_distance, y_direction) = y_distance_direction(&moving.dest, &cur_pos);
     if x_distance >= DOUBLE_JUMP_THRESHOLD {
@@ -662,12 +743,13 @@ fn update_adjusting_context(
     if y_direction < 0
         && y_distance >= ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD
         && state.is_stationary
-        && !state.was_falling
+        && !matches!(
+            state.last_moving_state,
+            Some(PlayerLastMovingState::Falling)
+        )
         && !moving.timeout.started
     {
         return Player::Falling(moving.pos(cur_pos));
-    } else {
-        state.was_falling = false;
     }
 
     if !moving.timeout.started {
@@ -723,7 +805,7 @@ fn update_adjusting_context(
                 state,
                 |action| match action {
                     PlayerAction::Fixed(action) => {
-                        on_fixed_action(is_stationary, action, y_distance, moving)
+                        on_fixed_action(last_known_direction, action, y_distance, moving)
                     }
                     PlayerAction::SolveRune(_) => None,
                 },
@@ -745,7 +827,8 @@ fn update_double_jumping_context(
     state: &mut PlayerState,
     cur_pos: Point,
     moving: PlayerMoving,
-    ignore_grappling: bool,
+    forced: bool,
+    require_stationary: bool,
 ) -> Player {
     const DOUBLE_JUMP_USE_KEY_X_PROXIMITY_THRESHOLD: i32 = DOUBLE_JUMP_THRESHOLD;
     const DOUBLE_JUMP_USE_KEY_Y_PROXIMITY_THRESHOLD: i32 = 10;
@@ -753,18 +836,23 @@ fn update_double_jumping_context(
     const DOUBLE_JUMPED_FORCE_THRESHOLD: i32 = 3;
 
     fn on_fixed_action(
+        forced: bool,
         action: Action,
         x_distance: i32,
         y_distance: i32,
         moving: PlayerMoving,
     ) -> Option<(Player, bool)> {
         match action {
+            // ignore proximity check when it is forced to double jumped
+            // this indicates the player is already near the destination
             Action::Key(ActionKey {
                 with: ActionKeyWith::DoubleJump | ActionKeyWith::Any,
                 ..
             }) => (moving.completed
-                && x_distance <= DOUBLE_JUMP_USE_KEY_X_PROXIMITY_THRESHOLD
-                && y_distance <= DOUBLE_JUMP_USE_KEY_Y_PROXIMITY_THRESHOLD)
+                && ((!moving.exact
+                    && x_distance <= DOUBLE_JUMP_USE_KEY_X_PROXIMITY_THRESHOLD
+                    && y_distance <= DOUBLE_JUMP_USE_KEY_Y_PROXIMITY_THRESHOLD)
+                    || forced))
                 .then_some((Player::UseKey(PlayerUseKey::new_from_action(action)), false)),
             Action::Key(ActionKey {
                 with: ActionKeyWith::Stationary,
@@ -780,15 +868,22 @@ fn update_double_jumping_context(
     if y_direction < 0
         && y_distance >= ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD
         && state.is_stationary
-        && !state.was_falling
+        && !matches!(
+            state.last_moving_state,
+            Some(PlayerLastMovingState::Falling)
+        )
         && !moving.timeout.started
     {
         return Player::Falling(moving.pos(cur_pos));
-    } else {
-        state.was_falling = false;
     }
 
     if !moving.timeout.started {
+        if require_stationary && !state.is_stationary {
+            let _ = context.keys.send_up(KeyKind::Right);
+            let _ = context.keys.send_up(KeyKind::Left);
+            return Player::DoubleJumping(moving.pos(cur_pos), forced, require_stationary);
+        }
+        state.last_moving_state = Some(PlayerLastMovingState::DoubleJumping);
         state.use_immediate_control_flow = true;
     }
 
@@ -796,27 +891,30 @@ fn update_double_jumping_context(
         moving,
         cur_pos,
         PLAYER_MOVE_TIMEOUT * 2,
-        |moving| Player::DoubleJumping(moving, ignore_grappling),
+        |moving| Player::DoubleJumping(moving, forced, require_stationary),
         Some(|| {
             let _ = context.keys.send_up(KeyKind::Right);
             let _ = context.keys.send_up(KeyKind::Left);
         }),
         |mut moving| {
             if !moving.completed {
-                match x_direction {
-                    d if d > 0 => {
-                        let _ = context.keys.send_up(KeyKind::Left);
-                        let _ = context.keys.send_down(KeyKind::Right);
-                        state.last_known_direction = ActionKeyDirection::Right;
+                if !forced {
+                    match x_direction {
+                        d if d > 0 => {
+                            let _ = context.keys.send_up(KeyKind::Left);
+                            let _ = context.keys.send_down(KeyKind::Right);
+                            state.last_known_direction = ActionKeyDirection::Right;
+                        }
+                        d if d < 0 => {
+                            let _ = context.keys.send_up(KeyKind::Right);
+                            let _ = context.keys.send_down(KeyKind::Left);
+                            state.last_known_direction = ActionKeyDirection::Left;
+                        }
+                        _ => (),
                     }
-                    d if d < 0 => {
-                        let _ = context.keys.send_up(KeyKind::Right);
-                        let _ = context.keys.send_down(KeyKind::Left);
-                        state.last_known_direction = ActionKeyDirection::Left;
-                    }
-                    _ => (),
                 }
-                if x_distance >= DOUBLE_JUMP_THRESHOLD || x_changed <= DOUBLE_JUMPED_FORCE_THRESHOLD
+                if (!forced && x_distance >= DOUBLE_JUMP_THRESHOLD)
+                    || x_changed <= DOUBLE_JUMPED_FORCE_THRESHOLD
                 {
                     let _ = context.keys.send(KeyKind::Space);
                 } else {
@@ -829,13 +927,13 @@ fn update_double_jumping_context(
                 state,
                 |action| match action {
                     PlayerAction::Fixed(action) => {
-                        on_fixed_action(action, x_distance, y_distance, moving)
+                        on_fixed_action(forced, action, x_distance, y_distance, moving)
                     }
                     PlayerAction::SolveRune(_) => None,
                 },
                 || {
                     if moving.completed
-                        && !ignore_grappling
+                        && !forced
                         && x_distance <= DOUBLE_JUMP_GRAPPLING_THRESHOLD
                         && y_direction > 0
                     {
@@ -844,7 +942,7 @@ fn update_double_jumping_context(
                     } else if moving.completed && moving.timeout.current >= PLAYER_MOVE_TIMEOUT {
                         Player::Moving(moving.dest, moving.exact)
                     } else {
-                        Player::DoubleJumping(moving, ignore_grappling)
+                        Player::DoubleJumping(moving, forced, require_stationary)
                     }
                 },
             )
@@ -956,13 +1054,15 @@ fn update_falling_context(
     const TIMEOUT_EARLY_THRESHOLD: i32 = -3;
 
     let y_changed = cur_pos.y - moving.pos.y;
+    if !moving.timeout.started {
+        state.last_moving_state = Some(PlayerLastMovingState::Falling);
+    }
 
     update_moving_axis_context(
         moving,
         cur_pos,
         FALLING_TIMEOUT,
         |moving| {
-            state.was_falling = true;
             let _ = context.keys.send_down(KeyKind::Down);
             let _ = context.keys.send(KeyKind::Space);
             Player::Falling(moving)
