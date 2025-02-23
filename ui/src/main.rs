@@ -58,7 +58,7 @@ fn main() {
     LogTracer::init().unwrap();
     start_update_loop();
     let window = WindowBuilder::new()
-        .with_inner_size(Size::Physical(PhysicalSize::new(800, 780)))
+        .with_inner_size(Size::Physical(PhysicalSize::new(1200, 780)))
         .with_resizable(false)
         .with_maximizable(false)
         .with_title("Maple Bot")
@@ -89,6 +89,23 @@ fn Minimap() -> Element {
             None
         }
     });
+    let preset_insert_positions = use_memo::<Vec<(usize, String)>>(move || {
+        if let Some(minimap) = &minimap() {
+            if let Some(preset) = &preset() {
+                let mut vec = minimap
+                    .actions
+                    .get(preset)
+                    .unwrap_or(&Vec::new())
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| (i, i.to_string()))
+                    .collect::<Vec<(usize, String)>>();
+                vec.push((vec.len(), vec.len().to_string()));
+                return vec;
+            }
+        }
+        vec![]
+    });
     let presets = use_memo::<Option<Vec<(String, String)>>>(move || {
         minimap().map(|minimap| {
             minimap
@@ -103,6 +120,7 @@ fn Minimap() -> Element {
     let mut editing = use_signal::<Option<usize>>(|| None);
     let mut editing_preset = use_signal::<String>(String::new);
     let mut editing_action = use_signal::<Action>(|| DEFAULT_MOVE_ACTION);
+    let mut editing_insert_position = use_signal::<usize>(|| 0);
     let mut editing_action_last = use_signal::<ActionDiscriminants>(|| ActionDiscriminants::Move);
     let editing_action_set = use_callback(move |action: Action| {
         let action_disc = ActionDiscriminants::from(action);
@@ -149,6 +167,13 @@ fn Minimap() -> Element {
     });
 
     use_effect(move || {
+        let i = preset_insert_positions()
+            .last()
+            .map(|(i, _)| *i)
+            .unwrap_or(0);
+        editing_insert_position.set(i);
+    });
+    use_effect(move || {
         if let Some(preset) = preset() {
             spawn(async move {
                 prepare_actions(preset).await;
@@ -192,7 +217,7 @@ fn Minimap() -> Element {
     });
 
     rsx! {
-        div { class: "grid grid-cols-2 w-[720px] gap-x-[32px] p-[16px]",
+        div { class: "grid grid-cols-3 gap-x-[32px] p-[16px]",
             div { class: "grid grid-flow-row auto-rows-max gap-[8px] w-[350px] place-items-center",
                 p { class: "font-main",
                     if let Some(minimap) = &minimap() {
@@ -265,8 +290,9 @@ fn Minimap() -> Element {
                         "Create preset"
                     }
                 }
-                if preset().is_some() {
-                    Divider {}
+            }
+            if preset().is_some() {
+                div { class: "grid grid-flow-row auto-rows-max gap-[8px] w-[350px] place-items-center",
                     if let Some(presets) = presets() {
                         Options {
                             label: "Presets",
@@ -345,6 +371,14 @@ fn Minimap() -> Element {
                             cancel_body: rsx! { "Cancel" },
                         }
                     } else {
+                        Options {
+                            label: "Insert position",
+                            options: preset_insert_positions(),
+                            on_select: move |pos| {
+                                editing_insert_position.set(pos);
+                            },
+                            selected: editing_insert_position(),
+                        }
                         OneButton {
                             on_ok: move || {
                                 minimap
@@ -354,16 +388,16 @@ fn Minimap() -> Element {
                                     .actions
                                     .get_mut(preset.peek().as_ref().unwrap())
                                     .unwrap()
-                                    .push(*editing_action.peek());
+                                    .insert(*editing_insert_position.peek(), *editing_action.peek());
                             },
                             "Add action"
                         }
                     }
                 }
             }
-            div { class: "grid grid-flow-row auto-rows-max gap-[8px] w-[350px] place-items-center",
-                if let Some(preset) = preset() {
-                    if let Some(minimap) = minimap().as_ref() {
+            if let Some(preset) = preset() {
+                if let Some(minimap) = minimap().as_ref() {
+                    div { class: "grid grid-flow-row auto-rows-max gap-[8px] w-[350px] place-items-center",
                         {
                             let actions = minimap.actions.get(&preset).unwrap().clone();
                             rsx! {
@@ -735,6 +769,10 @@ fn Configuration() -> Element {
     let feed_pet_key = use_memo(move || config().feed_pet_key);
     let potion_key = use_memo(move || config().potion_key);
     let rotation_mode = use_memo(move || config().rotation_mode);
+    let exp_x3_key = use_memo(move || config().exp_x3_key);
+    let legion_wealth_key = use_memo(move || config().legion_wealth_key);
+    let legion_luck_key = use_memo(move || config().legion_luck_key);
+    let sayram_elixir_key = use_memo(move || config().sayram_elixir_key);
 
     use_effect(move || {
         upsert_config(&mut config()).unwrap();
@@ -794,6 +832,70 @@ fn Configuration() -> Element {
                 config.write().rotation_mode = mode;
             },
             selected: rotation_mode(),
+        }
+        Checkbox {
+            label: "Has x3 exp coupon",
+            on_input: move |checked: bool| {
+                config.write().exp_x3_key = checked.then_some(KeyBinding::default());
+            },
+            value: exp_x3_key().is_some(),
+        }
+        if let Some(key) = exp_x3_key() {
+            KeyBindings {
+                label: "x3 exp coupon key",
+                on_option: move |key| {
+                    config.write().exp_x3_key = Some(key);
+                },
+                selected: key,
+            }
+        }
+        Checkbox {
+            label: "Has legion wealth",
+            on_input: move |checked: bool| {
+                config.write().legion_wealth_key = checked.then_some(KeyBinding::default());
+            },
+            value: legion_wealth_key().is_some(),
+        }
+        if let Some(key) = legion_wealth_key() {
+            KeyBindings {
+                label: "Legion wealth key",
+                on_option: move |key| {
+                    config.write().legion_wealth_key = Some(key);
+                },
+                selected: key,
+            }
+        }
+        Checkbox {
+            label: "Has legion luck",
+            on_input: move |checked: bool| {
+                config.write().legion_luck_key = checked.then_some(KeyBinding::default());
+            },
+            value: legion_luck_key().is_some(),
+        }
+        if let Some(key) = legion_luck_key() {
+            KeyBindings {
+                label: "Legion luck key",
+                on_option: move |key| {
+                    config.write().legion_luck_key = Some(key);
+                },
+                selected: key,
+            }
+        }
+        Checkbox {
+            label: "Has sayram's elixir",
+            on_input: move |checked: bool| {
+                config.write().sayram_elixir_key = checked.then_some(KeyBinding::default());
+            },
+            value: sayram_elixir_key().is_some(),
+        }
+        if let Some(key) = sayram_elixir_key() {
+            KeyBindings {
+                label: "Sayram's elixir key",
+                on_option: move |key| {
+                    config.write().sayram_elixir_key = Some(key);
+                },
+                selected: key,
+            }
         }
     }
 }

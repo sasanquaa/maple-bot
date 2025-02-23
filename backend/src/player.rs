@@ -5,9 +5,10 @@ use opencv::{core::Point, prelude::Mat};
 use platforms::windows::keys::KeyKind;
 
 use crate::{
-    context::{Context, Contextual, ControlFlow, map_key},
+    buff::Buff,
+    context::{Context, Contextual, ControlFlow, RUNE_BUFF_POSITION, map_key},
     database::{Action, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, KeyBinding},
-    detect::{detect_cash_shop, detect_player, detect_player_rune_buff, detect_rune_arrows},
+    detect::{detect_cash_shop, detect_player, detect_rune_arrows},
     minimap::Minimap,
 };
 
@@ -60,10 +61,6 @@ pub struct PlayerState {
     /// Helps for coordinating: use key with direction + double jumping and falling + double jumping
     /// Resets to `None` when the destination is reached or in `Player::Idle`
     last_moving_state: Option<PlayerLastMovingState>,
-    /// Tracks whether the player has a rune buff
-    pub has_rune_buff: bool,
-    /// The interval between rune buff checks
-    has_rune_buff_check_interval: u32,
     /// Tracks whether movement-related actions do not change the player position after a while.
     /// Resets when a limit is reached (for unstucking), in `Player::Idle` or position did change.
     unstuck_counter: u32,
@@ -439,8 +436,7 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
                 direction,
                 ..
             }) => {
-                if (matches!(direction, ActionKeyDirection::Any)
-                    || direction == last_known_direction)
+                if matches!(direction, ActionKeyDirection::Any) || direction == last_known_direction
                 {
                     Some((
                         Player::DoubleJumping(
@@ -620,8 +616,7 @@ fn update_moving_context(
                 direction,
                 ..
             }) => {
-                if (matches!(direction, ActionKeyDirection::Any)
-                    || direction == last_known_direction)
+                if matches!(direction, ActionKeyDirection::Any) || direction == last_known_direction
                 {
                     Some((Player::DoubleJumping(moving, true, false), false))
                 } else {
@@ -1051,7 +1046,7 @@ fn update_falling_context(
     moving: PlayerMoving,
 ) -> Player {
     const FALLING_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 2;
-    const TIMEOUT_EARLY_THRESHOLD: i32 = -3;
+    const TIMEOUT_EARLY_THRESHOLD: i32 = -4;
 
     let y_changed = cur_pos.y - moving.pos.y;
     if !moving.timeout.started {
@@ -1101,7 +1096,6 @@ fn update_unstucking_context(context: &Context, cur_pos: Point, timeout: Timeout
             } else {
                 let _ = context.keys.send_down(KeyKind::Left);
             }
-            let _ = context.keys.send(KeyKind::Space);
             let _ = context.keys.send(KeyKind::Esc);
             Player::Unstucking(timeout)
         },
@@ -1110,7 +1104,12 @@ fn update_unstucking_context(context: &Context, cur_pos: Point, timeout: Timeout
             let _ = context.keys.send_up(KeyKind::Left);
             Player::Detecting
         },
-        Player::Unstucking,
+        |timeout| {
+            if y > Y_IGNORE_THRESHOLD {
+                let _ = context.keys.send(KeyKind::Space);
+            }
+            Player::Unstucking(timeout)
+        },
     )
 }
 
@@ -1120,15 +1119,14 @@ fn update_solving_rune_context(
     state: &mut PlayerState,
     solving_rune: PlayerSolvingRune,
 ) -> Player {
-    const RUNE_COOLDOWN_TIMEOUT: u32 = 305; // around 10 secs
+    const RUNE_COOLDOWN_TIMEOUT: u32 = 305; // around 10 secs (cooldown or redetect)
     const SOLVE_RUNE_TIMEOUT: u32 = RUNE_COOLDOWN_TIMEOUT + 100;
     const DETECT_RUNE_ARROWS_INTERVAL: u32 = 35;
     const PRESS_KEY_INTERVAL: u32 = 10;
     const MAX_FAILED_COUNT: usize = 2;
 
     fn validate_rune_solved(
-        mat: &Mat,
-        state: &mut PlayerState,
+        context: &Context,
         solving_rune: PlayerSolvingRune,
         timeout: Timeout,
     ) -> Player {
@@ -1138,8 +1136,7 @@ fn update_solving_rune_context(
                 ..solving_rune
             });
         }
-        update_rune_buff(mat, state, true);
-        if state.has_rune_buff {
+        if matches!(context.buffs[RUNE_BUFF_POSITION], Buff::HasBuff) {
             Player::Idle
         } else {
             let failed_count = solving_rune.failed_count + 1;
@@ -1180,11 +1177,14 @@ fn update_solving_rune_context(
             }
         },
         |mut timeout| {
+            if matches!(context.buffs[RUNE_BUFF_POSITION], Buff::HasBuff) {
+                return Player::Idle;
+            }
             if solving_rune.failed_count >= MAX_FAILED_COUNT {
                 return Player::CashShopThenExit(Timeout::default(), false);
             }
             if solving_rune.validating {
-                return validate_rune_solved(mat, state, solving_rune, timeout);
+                return validate_rune_solved(context, solving_rune, timeout);
             }
             if solving_rune.keys.is_none() {
                 let keys = if timeout.current % DETECT_RUNE_ARROWS_INTERVAL == 0 {
@@ -1372,17 +1372,5 @@ fn update_state(context: &Context, mat: &Mat, state: &mut PlayerState) -> Option
     );
     state.is_stationary = state.is_stationary_timeout.current >= PLAYER_MOVE_TIMEOUT;
     state.last_known_pos = Some(pos);
-    update_rune_buff(mat, state, false);
     Some(pos)
-}
-
-#[inline(always)]
-fn update_rune_buff(mat: &Mat, state: &mut PlayerState, forced: bool) {
-    const RUNE_BUFF_CHECK_INTERVAL_TICKS: u32 = 305;
-
-    if state.has_rune_buff_check_interval % RUNE_BUFF_CHECK_INTERVAL_TICKS == 0 || forced {
-        state.has_rune_buff = detect_player_rune_buff(mat);
-    }
-    state.has_rune_buff_check_interval =
-        (state.has_rune_buff_check_interval + 1) % RUNE_BUFF_CHECK_INTERVAL_TICKS;
 }

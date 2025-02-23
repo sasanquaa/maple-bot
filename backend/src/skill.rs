@@ -39,21 +39,31 @@ pub enum SkillKind {
 impl Contextual for Skill {
     type Persistent = SkillState;
 
-    fn update(self, _: &Context, mat: &Mat, state: &mut SkillState) -> ControlFlow<Self> {
-        ControlFlow::Next(update_context(self, mat, state))
+    fn update(self, context: &Context, mat: &Mat, state: &mut SkillState) -> ControlFlow<Self> {
+        ControlFlow::Next(update_context(self, context, mat, state))
     }
 }
 
-fn update_context(contextual: Skill, mat: &Mat, state: &mut SkillState) -> Skill {
+fn update_context(
+    contextual: Skill,
+    context: &Context,
+    mat: &Mat,
+    state: &mut SkillState,
+) -> Skill {
     match contextual {
-        Skill::Detecting => match state.kind {
-            SkillKind::ErdaShower => detect_erda_shower(mat),
+        Skill::Detecting => {
+            if !matches!(context.minimap, crate::minimap::Minimap::Idle(_)) {
+                return Skill::Detecting;
+            }
+            match state.kind {
+                SkillKind::ErdaShower => detect_erda_shower(mat),
+            }
+            .map(|bbox| {
+                state.anchor = get_anchor(mat, bbox);
+                Skill::Idle
+            })
+            .unwrap_or(Skill::Detecting)
         }
-        .map(|bbox| {
-            state.anchor = get_anchor(mat, bbox);
-            Skill::Idle
-        })
-        .unwrap_or(Skill::Detecting),
         Skill::Idle => {
             let Ok(pixel) = mat.at_pt::<Vec4b>(state.anchor.0) else {
                 return Skill::Detecting;

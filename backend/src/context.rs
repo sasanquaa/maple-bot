@@ -19,6 +19,7 @@ use platforms::windows::{
 
 use crate::{
     Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, Request, RotationMode,
+    buff::{Buff, BuffKind, BuffState},
     database::{Configuration, KeyBinding, delete_map, query_config, refresh_config, refresh_map},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
@@ -29,6 +30,11 @@ use crate::{
 };
 
 pub const ERDA_SHOWER_SKILL_POSITION: usize = 0;
+pub const RUNE_BUFF_POSITION: usize = 0;
+const SAYRAM_ELIXIR_BUFF_POSITION: usize = 1;
+const EXP_X3_BUFF_POSITION: usize = 2;
+const LEGION_WEALTH_BUFF_POSITION: usize = 3;
+const LEGION_LUCK_BUFF_POSITION: usize = 4;
 
 /// Represents a control flow after a context update.
 pub enum ControlFlow<T> {
@@ -60,6 +66,7 @@ pub struct Context {
     pub minimap: Minimap,
     pub player: Player,
     pub skills: [Skill; mem::variant_count::<SkillKind>()],
+    pub buffs: [Buff; mem::variant_count::<BuffKind>()],
 }
 
 pub fn start_update_loop() {
@@ -88,14 +95,23 @@ pub fn start_update_loop() {
             let mut player_state = PlayerState::default();
             let mut minimap_state = MinimapState::default();
             let mut skill_states = [SkillState::new(SkillKind::ErdaShower)];
+            let mut buff_states = [
+                BuffState::new(BuffKind::Rune),
+                BuffState::new(BuffKind::SayramElixir),
+                BuffState::new(BuffKind::ExpCouponX3),
+                BuffState::new(BuffKind::LegionWealth),
+                BuffState::new(BuffKind::LegionLuck),
+            ];
             let mut rotator = Rotator::default();
             let mut actions = Vec::<Action>::new();
             let mut config = query_config().unwrap();
+            let mut buffs = default_buffs(&config);
             let mut context = Context {
                 keys,
                 minimap: Minimap::Detecting,
                 player: Player::Detecting,
                 skills: [Skill::Detecting],
+                buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
             };
 
             rotator.rotator_mode(map_rotate_mode(config.rotation_mode));
@@ -109,6 +125,10 @@ pub fn start_update_loop() {
                 (0..context.skills.len()).for_each(|i| {
                     context.skills[i] =
                         fold_context(&context, &mat, context.skills[i], &mut skill_states[i]);
+                });
+                (0..context.buffs.len()).for_each(|i| {
+                    context.buffs[i] =
+                        fold_context(&context, &mat, context.buffs[i], &mut buff_states[i]);
                 });
                 if !halting {
                     rotator.rotate_action(&context, &mut player_state);
@@ -130,6 +150,7 @@ pub fn start_update_loop() {
                                     &[&default_actions(&config), actions.as_slice()]
                                         .concat()
                                         .to_vec(),
+                                    &buffs,
                                 );
                                 return Box::new(true);
                             }
@@ -158,11 +179,13 @@ pub fn start_update_loop() {
                         player_state.interact_key = Some(map_key(config.interact_key));
                         player_state.grappling_key = Some(map_key(config.ropelift_key));
                         player_state.upjump_key = config.up_jump_key.map(map_key);
+                        buffs = default_buffs(&config);
                         rotator.rotator_mode(map_rotate_mode(config.rotation_mode));
                         rotator.build_actions(
                             &[&default_actions(&config), actions.as_slice()]
                                 .concat()
                                 .to_vec(),
+                            &buffs,
                         );
                         Box::new(())
                     }
@@ -296,7 +319,25 @@ pub fn map_key(key: KeyBinding) -> KeyKind {
         KeyBinding::Esc => KeyKind::Esc,
         KeyBinding::Shift => KeyKind::Shift,
         KeyBinding::Ctrl => KeyKind::Ctrl,
+        KeyBinding::Alt => KeyKind::Alt,
     }
+}
+
+fn default_buffs(config: &Configuration) -> Vec<(usize, KeyBinding)> {
+    let mut buffs = Vec::<(usize, KeyBinding)>::new();
+    if let Some(key) = config.sayram_elixir_key {
+        buffs.push((SAYRAM_ELIXIR_BUFF_POSITION, key));
+    }
+    if let Some(key) = config.exp_x3_key {
+        buffs.push((EXP_X3_BUFF_POSITION, key));
+    }
+    if let Some(key) = config.legion_luck_key {
+        buffs.push((LEGION_LUCK_BUFF_POSITION, key));
+    }
+    if let Some(key) = config.legion_wealth_key {
+        buffs.push((LEGION_WEALTH_BUFF_POSITION, key));
+    }
+    buffs
 }
 
 fn default_actions(config: &Configuration) -> [Action; 4] {

@@ -14,13 +14,18 @@ use opencv::{
     imgcodecs::imwrite_def,
 };
 use platforms::windows::keys::KeyKind;
+use std::env;
 use std::sync::LazyLock;
-use std::{fs, path::PathBuf, str::FromStr};
+use std::{fs, path::PathBuf};
 
 use rand::distr::{Alphanumeric, SampleString};
 
 static DATASET_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
-    let dir = PathBuf::from_str(env!("OUT_DIR")).unwrap().join("dataset");
+    let dir = env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("dataset");
     fs::create_dir_all(dir.clone()).unwrap();
     dir
 });

@@ -11,12 +11,13 @@ use windows::Win32::{
             SendInput, VIRTUAL_KEY, VK_0, VK_1, VK_2, VK_3, VK_4, VK_5, VK_6, VK_7, VK_8, VK_9,
             VK_A, VK_B, VK_C, VK_CONTROL, VK_D, VK_DELETE, VK_DOWN, VK_E, VK_END, VK_ESCAPE, VK_F,
             VK_F1, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_F10, VK_F11, VK_F12,
-            VK_G, VK_H, VK_HOME, VK_I, VK_INSERT, VK_J, VK_K, VK_L, VK_LEFT, VK_M, VK_N, VK_NEXT,
-            VK_O, VK_OEM_3, VK_P, VK_PRIOR, VK_Q, VK_R, VK_RETURN, VK_RIGHT, VK_S, VK_SHIFT,
-            VK_SPACE, VK_T, VK_U, VK_UP, VK_V, VK_W, VK_X, VK_Y, VK_Z,
+            VK_G, VK_H, VK_HOME, VK_I, VK_INSERT, VK_J, VK_K, VK_L, VK_LEFT, VK_M, VK_MENU, VK_N,
+            VK_NEXT, VK_O, VK_OEM_3, VK_P, VK_PRIOR, VK_Q, VK_R, VK_RETURN, VK_RIGHT, VK_S,
+            VK_SHIFT, VK_SPACE, VK_T, VK_U, VK_UP, VK_V, VK_W, VK_X, VK_Y, VK_Z,
         },
         WindowsAndMessaging::{
             GetForegroundWindow, GetSystemMetrics, GetWindowRect, SM_CXSCREEN, SM_CYSCREEN,
+            SetForegroundWindow,
         },
     },
 };
@@ -95,6 +96,7 @@ pub enum KeyKind {
     Tilde,
     Esc,
     Shift,
+    Alt,
 }
 
 impl Keys {
@@ -118,9 +120,7 @@ impl Keys {
     // FIXME: hack for now
     pub fn send_click_to_focus_inner(&self) -> Result<(), Error> {
         let handle = self.get_handle()?;
-        if !is_foreground(handle) {
-            return Err(Error::NotSent);
-        }
+        unsafe { SetForegroundWindow(handle).ok()? };
         let x_metric = unsafe { GetSystemMetrics(SM_CXSCREEN) };
         let y_metric = unsafe { GetSystemMetrics(SM_CYSCREEN) };
         let mut rect = RECT::default();
@@ -163,7 +163,8 @@ impl Keys {
 
     #[inline(always)]
     fn send_input(&self, kind: KeyKind, is_up: bool) -> Result<(), Error> {
-        if !is_foreground(self.get_handle()?) {
+        let handle = self.get_handle()?;
+        if !is_foreground(handle) {
             return Err(Error::NotSent);
         }
         let key = to_vkey(kind);
@@ -271,6 +272,7 @@ fn to_vkey(kind: KeyKind) -> VIRTUAL_KEY {
         KeyKind::Tilde => VK_OEM_3,
         KeyKind::Esc => VK_ESCAPE,
         KeyKind::Shift => VK_SHIFT,
+        KeyKind::Alt => VK_MENU,
     }
 }
 

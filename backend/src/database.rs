@@ -49,6 +49,10 @@ pub struct Configuration {
     pub feed_pet_key: KeyBinding,
     pub potion_key: KeyBinding,
     pub rotation_mode: RotationMode,
+    pub sayram_elixir_key: Option<KeyBinding>,
+    pub exp_x3_key: Option<KeyBinding>,
+    pub legion_wealth_key: Option<KeyBinding>,
+    pub legion_luck_key: Option<KeyBinding>,
 }
 
 #[derive(
@@ -217,6 +221,7 @@ pub enum KeyBinding {
     Esc,
     Shift,
     Ctrl,
+    Alt,
 }
 
 pub fn query_config() -> Result<Configuration> {

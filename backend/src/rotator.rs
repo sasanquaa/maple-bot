@@ -3,7 +3,9 @@ use std::{collections::VecDeque, time::Instant};
 use log::debug;
 
 use crate::{
-    context::{Context, ERDA_SHOWER_SKILL_POSITION},
+    ActionKeyDirection, ActionKeyWith, KeyBinding,
+    buff::Buff,
+    context::{Context, ERDA_SHOWER_SKILL_POSITION, RUNE_BUFF_POSITION},
     database::{Action, ActionCondition, ActionKey, ActionMove},
     minimap::Minimap,
     player::{PlayerAction, PlayerState},
@@ -30,14 +32,16 @@ pub struct Rotator {
     normal_index: usize,
     normal_action_backward: bool,
     normal_rotate_mode: RotatorMode,
+    buffs: Vec<(usize, KeyBinding)>,
     priority_actions: Vec<PriorityAction>,
     priority_actions_queue: VecDeque<PlayerAction>,
 }
 
 impl Rotator {
-    pub fn build_actions(&mut self, actions: &[Action]) {
-        debug!(target: "rotator", "preparing actions {actions:?}");
+    pub fn build_actions(&mut self, actions: &[Action], buffs: &[(usize, KeyBinding)]) {
+        debug!(target: "rotator", "preparing actions {actions:?} {buffs:?}");
         self.reset();
+        self.buffs.clear();
         self.normal_actions.clear();
         self.priority_actions.clear();
 
@@ -56,6 +60,7 @@ impl Rotator {
                 },
             }
         }
+        self.buffs.extend_from_slice(buffs);
     }
 
     pub fn rotator_mode(&mut self, mode: RotatorMode) {
@@ -78,10 +83,24 @@ impl Rotator {
         }
         if let Minimap::Idle(idle) = context.minimap {
             if let Some(rune) = idle.rune
-                && !player.has_rune_buff
+                && matches!(context.buffs[RUNE_BUFF_POSITION], Buff::NoBuff)
             {
                 self.priority_actions_queue
                     .push_back(PlayerAction::SolveRune(rune));
+            }
+            for (i, key) in self.buffs.iter().copied() {
+                if matches!(context.buffs[i], Buff::NoBuff) {
+                    self.priority_actions_queue
+                        .push_back(PlayerAction::Fixed(Action::Key(ActionKey {
+                            key,
+                            position: None,
+                            condition: ActionCondition::Any,
+                            direction: ActionKeyDirection::Any,
+                            with: ActionKeyWith::Stationary,
+                            wait_before_use_ticks: 10,
+                            wait_after_use_ticks: 10,
+                        })));
+                }
             }
         }
         if !self.priority_actions.is_empty() {

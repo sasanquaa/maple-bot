@@ -22,13 +22,14 @@ use opencv::{
         ModelTrait, TextRecognitionModel, TextRecognitionModelTrait,
         TextRecognitionModelTraitConst, read_net_from_onnx_buffer,
     },
-    imgcodecs::{self, IMREAD_GRAYSCALE},
+    imgcodecs::{self, IMREAD_COLOR, IMREAD_GRAYSCALE},
     imgproc::{
         CC_STAT_AREA, CC_STAT_HEIGHT, CC_STAT_LEFT, CC_STAT_TOP, CC_STAT_WIDTH,
-        CHAIN_APPROX_SIMPLE, COLOR_BGRA2GRAY, COLOR_BGRA2RGB, INTER_AREA, INTER_CUBIC, MORPH_RECT,
-        RETR_EXTERNAL, THRESH_BINARY, THRESH_OTSU, TM_CCOEFF_NORMED, bounding_rect,
-        connected_components_with_stats, cvt_color_def, dilate_def, find_contours_def,
-        get_structuring_element_def, match_template_def, min_area_rect, resize, threshold,
+        CHAIN_APPROX_SIMPLE, COLOR_BGRA2BGR, COLOR_BGRA2GRAY, COLOR_BGRA2RGB, INTER_AREA,
+        INTER_CUBIC, MORPH_RECT, RETR_EXTERNAL, THRESH_BINARY, THRESH_OTSU, TM_CCOEFF_NORMED,
+        bounding_rect, connected_components_with_stats, cvt_color_def, dilate_def,
+        find_contours_def, get_structuring_element_def, match_template_def, min_area_rect, resize,
+        threshold,
     },
     traits::OpenCVIntoExternContainer,
 };
@@ -77,6 +78,15 @@ pub fn detect_cash_shop(mat: &Mat) -> bool {
     .is_ok()
 }
 
+fn crop_image_to_buff_bar(mat: &Mat) -> BoxedRef<Mat> {
+    let size = mat.size().unwrap();
+    // crop to top right of the image for buff bar
+    let crop_x = size.width / 3;
+    let crop_y = size.height / 5;
+    let crop_bbox = Rect::new(size.width - crop_x, 0, crop_x, crop_y);
+    mat.roi(crop_bbox).unwrap()
+}
+
 /// Detects whether the player has a rune buff from the given BGRA `Mat` image.
 pub fn detect_player_rune_buff(mat: &Mat) -> bool {
     /// TODO: Support default ratio
@@ -84,16 +94,10 @@ pub fn detect_player_rune_buff(mat: &Mat) -> bool {
         imgcodecs::imdecode(include_bytes!(env!("RUNE_BUFF_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    let size = mat.size().unwrap();
-    // crop to top right of the image for buff bar
-    let crop_x = size.width / 3;
-    let crop_y = size.height / 5;
-    let crop_bbox = Rect::new(size.width - crop_x, 0, crop_x, crop_y);
-    let buff_bar = mat.roi(crop_bbox).unwrap();
-    let buff_bar = to_grayscale(&buff_bar, true);
+    let buff_bar = to_grayscale(&crop_image_to_buff_bar(mat), true);
     #[cfg(debug_assertions)]
     {
-        debug_mat("Buff", &buff_bar, 1, &[], &[]);
+        debug_mat("Buff bar", &buff_bar, 1, &[], &[]);
     }
     detect_template(
         &buff_bar,
@@ -101,6 +105,118 @@ pub fn detect_player_rune_buff(mat: &Mat) -> bool {
         Point::default(),
         0.75,
         Some("rune buff"),
+    )
+    .is_ok()
+}
+
+/// Detects whether the player has a exp coupon x3 buff from the given BGRA `Mat` image.
+pub fn detect_player_exp_coupon_x3_buff(mat: &Mat) -> bool {
+    /// TODO: Support default ratio
+    static EXP_COUPON_X3_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("EXP_COUPON_X3_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+
+    let mut buff_bar = crop_image_to_buff_bar(mat).clone_pointee();
+    unsafe {
+        // SAFETY: can be modified inplace
+        buff_bar.modify_inplace(|mat, mat_mut| {
+            cvt_color_def(mat, mat_mut, COLOR_BGRA2BGR).unwrap();
+        });
+    }
+    detect_template(
+        &buff_bar,
+        LazyLock::force(&EXP_COUPON_X3_BUFF),
+        Point::default(),
+        0.75,
+        Some("exp coupon x3 buff"),
+    )
+    .is_ok()
+}
+
+/// Detects whether the player has a legion wealth buff from the given BGRA `Mat` image.
+pub fn detect_player_legion_wealth_buff(mat: &Mat) -> bool {
+    /// TODO: Support default ratio
+    static LEGION_WEALTH_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("LEGION_WEALTH_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+
+    let mut buff_bar = crop_image_to_buff_bar(mat).clone_pointee();
+    unsafe {
+        // SAFETY: can be modified inplace
+        buff_bar.modify_inplace(|mat, mat_mut| {
+            cvt_color_def(mat, mat_mut, COLOR_BGRA2BGR).unwrap();
+        });
+    }
+    detect_template(
+        &buff_bar,
+        LazyLock::force(&LEGION_WEALTH_BUFF),
+        Point::default(),
+        0.75,
+        Some("legion wealth buff"),
+    )
+    .is_ok()
+}
+
+/// Detects whether the player has a legion luck buff from the given BGRA `Mat` image.
+pub fn detect_player_legion_luck_buff(mat: &Mat) -> bool {
+    /// TODO: Support default ratio
+    static LEGION_WEALTH_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("LEGION_LUCK_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+
+    let mut buff_bar = crop_image_to_buff_bar(mat).clone_pointee();
+    unsafe {
+        // SAFETY: can be modified inplace
+        buff_bar.modify_inplace(|mat, mat_mut| {
+            cvt_color_def(mat, mat_mut, COLOR_BGRA2BGR).unwrap();
+        });
+    }
+    detect_template(
+        &buff_bar,
+        LazyLock::force(&LEGION_WEALTH_BUFF),
+        Point::default(),
+        0.75,
+        Some("legion luck buff"),
+    )
+    .is_ok()
+}
+
+/// Detects whether the player has a sayram elixir buff from the given BGRA `Mat` image.
+pub fn detect_player_sayram_elixir_buff(mat: &Mat) -> bool {
+    /// TODO: Support default ratio
+    static SAYRAM_ELIXIR_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("SAYRAM_ELIXIR_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+
+    let mut buff_bar = crop_image_to_buff_bar(mat).clone_pointee();
+    unsafe {
+        // SAFETY: can be modified inplace
+        buff_bar.modify_inplace(|mat, mat_mut| {
+            cvt_color_def(mat, mat_mut, COLOR_BGRA2BGR).unwrap();
+        });
+    }
+    detect_template(
+        &buff_bar,
+        LazyLock::force(&SAYRAM_ELIXIR_BUFF),
+        Point::default(),
+        0.75,
+        Some("sayram elixir buff"),
     )
     .is_ok()
 }
@@ -126,7 +242,7 @@ pub fn detect_erda_shower(mat: &Mat) -> Result<Rect> {
     let skill_bar = to_grayscale(&skill_bar, true);
     #[cfg(debug_assertions)]
     {
-        debug_mat("Skill", &skill_bar, 1, &[], &[]);
+        debug_mat("Skill bar", &skill_bar, 1, &[], &[]);
     }
     detect_template(
         &skill_bar,

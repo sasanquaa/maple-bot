@@ -37,7 +37,7 @@ jobs:
 
       - uses: lukka/get-cmake@latest
 
-      - name: Setup vcpkg
+      - name: Setup vcpkg and install dependencies
         uses: lukka/run-vcpkg@v11
         with:
           runVcpkgInstall: true

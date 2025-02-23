@@ -1,4 +1,4 @@
-use windows::Win32::UI::HiDpi::{PROCESS_SYSTEM_DPI_AWARE, SetProcessDpiAwareness};
+use windows::Win32::UI::HiDpi::{PROCESS_PER_MONITOR_DPI_AWARE, SetProcessDpiAwareness};
 
 pub mod capture;
 
@@ -11,6 +11,6 @@ pub mod error;
 pub fn init() {
     unsafe {
         // I really don't get it
-        SetProcessDpiAwareness(PROCESS_SYSTEM_DPI_AWARE).unwrap();
+        SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE).unwrap();
     }
 }
