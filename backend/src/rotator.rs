@@ -12,27 +12,29 @@ use crate::{
     skill::Skill,
 };
 
-#[derive(Debug)]
+const COOLDOWN_BETWEEN_QUEUE_MILLIS: u128 = 10_000;
+
+type PriorityPredicate = Box<dyn Fn(&Context, Option<Instant>) -> bool>;
+
 struct PriorityAction {
-    condition: ActionCondition,
+    condition: PriorityPredicate,
     action: PlayerAction,
     last_queued_time: Option<Instant>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub enum RotatorMode {
     StartToEnd,
     #[default]
     StartToEndThenReverse,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Rotator {
     normal_actions: Vec<PlayerAction>,
     normal_index: usize,
     normal_action_backward: bool,
     normal_rotate_mode: RotatorMode,
-    buffs: Vec<(usize, KeyBinding)>,
     priority_actions: Vec<PriorityAction>,
     priority_actions_queue: VecDeque<PlayerAction>,
 }
@@ -41,7 +43,6 @@ impl Rotator {
     pub fn build_actions(&mut self, actions: &[Action], buffs: &[(usize, KeyBinding)]) {
         debug!(target: "rotator", "preparing actions {actions:?} {buffs:?}");
         self.reset();
-        self.buffs.clear();
         self.normal_actions.clear();
         self.priority_actions.clear();
 
@@ -51,7 +52,9 @@ impl Rotator {
                 | Action::Key(ActionKey { condition, .. }) => match condition {
                     ActionCondition::EveryMillis(_) | ActionCondition::ErdaShowerOffCooldown => {
                         self.priority_actions.push(PriorityAction {
-                            condition,
+                            condition: Box::new(move |context, last_queued_time| {
+                                should_queue_fixed_action(context, last_queued_time, condition)
+                            }),
                             action: PlayerAction::Fixed(action),
                             last_queued_time: None,
                         })
@@ -60,7 +63,46 @@ impl Rotator {
                 },
             }
         }
-        self.buffs.extend_from_slice(buffs);
+        self.priority_actions.push(PriorityAction {
+            condition: Box::new(|context, last_queued_time| {
+                if !at_least_millis_passed_since(last_queued_time, COOLDOWN_BETWEEN_QUEUE_MILLIS) {
+                    return false;
+                }
+                if let Minimap::Idle(idle) = context.minimap {
+                    return idle.rune.is_some()
+                        && matches!(context.buffs[RUNE_BUFF_POSITION], Buff::NoBuff);
+                }
+                false
+            }),
+            action: PlayerAction::SolveRune,
+            last_queued_time: None,
+        });
+        for (i, key) in buffs.iter().copied() {
+            self.priority_actions.push(PriorityAction {
+                condition: Box::new(move |context, last_queued_time| {
+                    if !at_least_millis_passed_since(
+                        last_queued_time,
+                        COOLDOWN_BETWEEN_QUEUE_MILLIS,
+                    ) {
+                        return false;
+                    }
+                    if !matches!(context.minimap, Minimap::Idle(_)) {
+                        return false;
+                    }
+                    matches!(context.buffs[i], Buff::NoBuff)
+                }),
+                action: PlayerAction::Fixed(Action::Key(ActionKey {
+                    key,
+                    position: None,
+                    condition: ActionCondition::Any,
+                    direction: ActionKeyDirection::Any,
+                    with: ActionKeyWith::Stationary,
+                    wait_before_use_ticks: 10,
+                    wait_after_use_ticks: 10,
+                })),
+                last_queued_time: None,
+            });
+        }
     }
 
     pub fn rotator_mode(&mut self, mode: RotatorMode) {
@@ -81,31 +123,10 @@ impl Rotator {
             }
             return;
         }
-        if let Minimap::Idle(idle) = context.minimap {
-            if let Some(rune) = idle.rune
-                && matches!(context.buffs[RUNE_BUFF_POSITION], Buff::NoBuff)
-            {
-                self.priority_actions_queue
-                    .push_back(PlayerAction::SolveRune(rune));
-            }
-            for (i, key) in self.buffs.iter().copied() {
-                if matches!(context.buffs[i], Buff::NoBuff) {
-                    self.priority_actions_queue
-                        .push_back(PlayerAction::Fixed(Action::Key(ActionKey {
-                            key,
-                            position: None,
-                            condition: ActionCondition::Any,
-                            direction: ActionKeyDirection::Any,
-                            with: ActionKeyWith::Stationary,
-                            wait_before_use_ticks: 10,
-                            wait_after_use_ticks: 10,
-                        })));
-                }
-            }
-        }
         if !self.priority_actions.is_empty() {
             for action in self.priority_actions.iter_mut() {
-                if try_to_queue(context, action) {
+                if (action.condition)(context, action.last_queued_time) {
+                    action.last_queued_time = Some(Instant::now());
                     self.priority_actions_queue.push_back(action.action);
                 }
             }
@@ -135,27 +156,29 @@ impl Rotator {
     }
 }
 
-fn try_to_queue(context: &Context, action: &mut PriorityAction) -> bool {
-    const ERDA_SHOWER_COOLDOWN_BETWEEN_QUEUE_MILLIS: u128 = 10_000;
+fn at_least_millis_passed_since(last_queued_time: Option<Instant>, millis: u128) -> bool {
+    last_queued_time
+        .map(|instant| Instant::now().duration_since(instant).as_millis() < millis)
+        .unwrap_or(true)
+}
 
-    let millis_should_passed = match action.condition {
+fn should_queue_fixed_action(
+    context: &Context,
+    last_queued_time: Option<Instant>,
+    condition: ActionCondition,
+) -> bool {
+    let millis_should_passed = match condition {
         ActionCondition::EveryMillis(millis) => millis as u128,
-        ActionCondition::ErdaShowerOffCooldown => ERDA_SHOWER_COOLDOWN_BETWEEN_QUEUE_MILLIS,
+        ActionCondition::ErdaShowerOffCooldown => COOLDOWN_BETWEEN_QUEUE_MILLIS,
         ActionCondition::Any => unreachable!(),
     };
-    let now = Instant::now();
-    if action
-        .last_queued_time
-        .map(|instant| now.duration_since(instant).as_millis() < millis_should_passed as u128)
-        .unwrap_or(false)
-    {
+    if !at_least_millis_passed_since(last_queued_time, millis_should_passed) {
         return false;
     }
-    if matches!(action.condition, ActionCondition::ErdaShowerOffCooldown)
+    if matches!(condition, ActionCondition::ErdaShowerOffCooldown)
         && !matches!(context.skills[ERDA_SHOWER_SKILL_POSITION], Skill::Idle)
     {
         return false;
     }
-    action.last_queued_time = Some(Instant::now());
     true
 }

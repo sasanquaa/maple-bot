@@ -78,7 +78,7 @@ pub enum PlayerAction {
     /// Fixed action provided by the user
     Fixed(Action),
     /// Solve rune action
-    SolveRune(Point),
+    SolveRune,
 }
 
 impl PlayerState {
@@ -347,7 +347,7 @@ fn update_non_positional_context(
                 state,
                 |action| match action {
                     PlayerAction::Fixed(_) => None,
-                    PlayerAction::SolveRune(_) => Some((next, false)),
+                    PlayerAction::SolveRune => Some((next, false)),
                 },
                 || next,
             ))
@@ -470,7 +470,14 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
         state,
         |action| match action {
             PlayerAction::Fixed(action) => on_fixed_action(last_known_direction, action, cur_pos),
-            PlayerAction::SolveRune(dest) => Some((Player::Moving(dest, true), false)),
+            PlayerAction::SolveRune => {
+                if let Minimap::Idle(idle) = context.minimap {
+                    if let Some(rune) = idle.rune {
+                        return Some((Player::Moving(rune, true), false));
+                    }
+                }
+                None
+            }
         },
         || Player::Idle,
     )
@@ -560,7 +567,7 @@ fn update_use_key_context(
             PlayerAction::Fixed(Action::Key(ActionKey { .. })) => {
                 Some((next, matches!(next, Player::Idle)))
             }
-            PlayerAction::Fixed(Action::Move { .. }) | PlayerAction::SolveRune(_) => None,
+            PlayerAction::Fixed(Action::Move { .. }) | PlayerAction::SolveRune => None,
         },
         || next,
     )
@@ -666,7 +673,7 @@ fn update_moving_context(
                     PlayerAction::Fixed(action) => {
                         on_fixed_action(last_known_direction, action, moving)
                     }
-                    PlayerAction::SolveRune(_) => {
+                    PlayerAction::SolveRune => {
                         Some((Player::SolvingRune(PlayerSolvingRune::default()), false))
                     }
                 },
@@ -802,7 +809,7 @@ fn update_adjusting_context(
                     PlayerAction::Fixed(action) => {
                         on_fixed_action(last_known_direction, action, y_distance, moving)
                     }
-                    PlayerAction::SolveRune(_) => None,
+                    PlayerAction::SolveRune => None,
                 },
                 || {
                     if !moving.completed {
@@ -924,7 +931,7 @@ fn update_double_jumping_context(
                     PlayerAction::Fixed(action) => {
                         on_fixed_action(forced, action, x_distance, y_distance, moving)
                     }
-                    PlayerAction::SolveRune(_) => None,
+                    PlayerAction::SolveRune => None,
                 },
                 || {
                     if moving.completed
@@ -1221,7 +1228,7 @@ fn update_solving_rune_context(
     on_action(
         state,
         |action| match action {
-            PlayerAction::SolveRune(_) => Some((next, matches!(next, Player::Idle))),
+            PlayerAction::SolveRune => Some((next, matches!(next, Player::Idle))),
             PlayerAction::Fixed(_) => unreachable!(),
         },
         || next,
