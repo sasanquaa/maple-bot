@@ -1,7 +1,8 @@
 {
-  "name": "main",
+  "name": "master",
   "version": "0.1.0",
   "dependencies": [
+    "llvm",
     {
       "name": "opencv4",
       "features": ["contrib", "nonfree"]

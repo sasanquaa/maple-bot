@@ -1,4 +1,4 @@
-name: Build windows-x64
+name: Build windows-x64-static
 
 on:
   push:
@@ -7,9 +7,10 @@ on:
     branches: ["master"]
 
 env:
-  CARGO_TERM_COLOR: always
   VCPKG_DEFAULT_TRIPLET: x64-windows-static
+  VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
   VCPKG_ENABLE_METRICS: 0
+  CARGO_TERM_COLOR: always
   OPENCV_MSVC_CRT: static
 
 jobs:
@@ -20,9 +21,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install toolchain
+        run: |
+          rustup toolchain install nightly-x86_64-pc-windows-msvc --profile minimal
+          rustup default nightly-x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-hack
+          tool: cargo-binstall
+
+      - name: Install dioxus-cli
+        run: cargo binstall dioxus-cli
 
       - uses: lukka/get-cmake@latest
 
@@ -30,16 +41,10 @@ jobs:
         uses: lukka/run-vcpkg@v11
         with:
           runVcpkgInstall: true
-          vcpkgJsonGlob: "**/vcpkg.json"
+          doNotCache: false
 
-      - name: Install tools
-        shell: bash
-        run: |
-          rustup toolchain install nightly-x86_64-pc-windows-msvc
-          cargo install dioxus-cli
-
-      - name: Build
-        shell: bash
-        run: |
-          export OPENCV_DIR=$VCPKG_ROOT/installed/$VCPKG_DEFAULT_TRIPLET/share/opencv4
-          dx build --release --package ui
+      # - name: Build
+      #   shell: bash
+      #   run: |
+      #     export OPENCV_DIR=$VCPKG_ROOT/installed/$VCPKG_DEFAULT_TRIPLET/share/opencv4
+      #     dx build --release --package ui
