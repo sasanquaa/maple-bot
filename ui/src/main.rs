@@ -58,7 +58,7 @@ fn main() {
     LogTracer::init().unwrap();
     start_update_loop();
     let window = WindowBuilder::new()
-        .with_inner_size(Size::Physical(PhysicalSize::new(1200, 780)))
+        .with_inner_size(Size::Physical(PhysicalSize::new(1200, 800)))
         .with_resizable(false)
         .with_maximizable(false)
         .with_title("Maple Bot")
@@ -229,7 +229,7 @@ fn Minimap() -> Element {
                 if let Some((x, y)) = position() {
                     p { class: "font-main", "{x}, {y}" }
                 }
-                div { class: "flex w-full relative",
+                div { class: "flex w-[280px] relative",
                     canvas { class: "w-full", id: "canvas-minimap" }
                     canvas {
                         id: "canvas-minimap-magnifier",
@@ -265,34 +265,34 @@ fn Minimap() -> Element {
                         "Delete map (for redetecting)"
                     }
                     Configuration {}
-                    Divider {}
-                    TextInput {
-                        label: "Preset name",
-                        on_input: move |value| {
-                            editing_preset.set(value);
-                        },
-                        value: editing_preset(),
-                    }
-                    OneButton {
-                        on_ok: move || {
-                            let name = editing_preset.peek().to_owned();
-                            if !name.is_empty() {
-                                let _ = minimap
-                                    .write()
-                                    .as_mut()
-                                    .unwrap()
-                                    .actions
-                                    .try_insert(name.clone(), vec![]);
-                                preset.set(Some(name));
-                                editing.set(None);
-                            }
-                        },
-                        "Create preset"
-                    }
                 }
             }
-            if preset().is_some() {
-                div { class: "grid grid-flow-row auto-rows-max gap-[8px] w-[350px] place-items-center",
+            div { class: "grid grid-flow-row auto-rows-max gap-[8px] w-[350px] place-items-center",
+                TextInput {
+                    label: "Preset name",
+                    on_input: move |value| {
+                        editing_preset.set(value);
+                    },
+                    value: editing_preset(),
+                }
+                OneButton {
+                    on_ok: move || {
+                        let name = editing_preset.peek().to_owned();
+                        if !name.is_empty() {
+                            let _ = minimap
+                                .write()
+                                .as_mut()
+                                .unwrap()
+                                .actions
+                                .try_insert(name.clone(), vec![]);
+                            preset.set(Some(name));
+                            editing.set(None);
+                        }
+                    },
+                    "Create preset"
+                }
+                if preset().is_some() {
+                    Divider {}
                     if let Some(presets) = presets() {
                         Options {
                             label: "Presets",
@@ -397,7 +397,7 @@ fn Minimap() -> Element {
             }
             if let Some(preset) = preset() {
                 if let Some(minimap) = minimap().as_ref() {
-                    div { class: "grid grid-flow-row auto-rows-max gap-[8px] w-[350px] place-items-center",
+                    div { class: "grid grid-flow-row auto-rows-max gap-[8px] w-[350px] h-[780px] place-items-center overflow-y-scroll",
                         {
                             let actions = minimap.actions.get(&preset).unwrap().clone();
                             rsx! {
@@ -411,7 +411,7 @@ fn Minimap() -> Element {
                                             editing.set(Some(i));
                                             editing_action.set(action);
                                         },
-                                        "{action:?}"
+                                        "{i} - {action:?}"
                                     }
                                 }
                             }
@@ -742,6 +742,28 @@ fn KeyBindings(props: ActionConfigProps<KeyBinding>) -> Element {
 }
 
 #[component]
+fn OptionalKeyBindings(props: ActionConfigProps<Option<KeyBinding>>) -> Element {
+    rsx! {
+        Checkbox {
+            label: props.label,
+            on_input: move |checked: bool| {
+                (props.on_option)(checked.then_some(KeyBinding::default()));
+            },
+            value: props.selected.is_some(),
+        }
+        if let Some(key) = props.selected {
+            KeyBindings {
+                label: "Key",
+                on_option: move |key| {
+                    (props.on_option)(Some(key));
+                },
+                selected: key,
+            }
+        }
+    }
+}
+
+#[component]
 fn RotationModes(props: ActionConfigProps<RotationMode>) -> Element {
     let options = RotationModeDiscriminants::iter()
         .map(|disc| (disc, disc.to_string()))
@@ -769,10 +791,11 @@ fn Configuration() -> Element {
     let feed_pet_key = use_memo(move || config().feed_pet_key);
     let potion_key = use_memo(move || config().potion_key);
     let rotation_mode = use_memo(move || config().rotation_mode);
+    let sayram_elixir_key = use_memo(move || config().sayram_elixir_key);
     let exp_x3_key = use_memo(move || config().exp_x3_key);
+    let bonus_exp_key = use_memo(move || config().bonus_exp_key);
     let legion_wealth_key = use_memo(move || config().legion_wealth_key);
     let legion_luck_key = use_memo(move || config().legion_luck_key);
-    let sayram_elixir_key = use_memo(move || config().sayram_elixir_key);
 
     use_effect(move || {
         upsert_config(&mut config()).unwrap();
@@ -789,21 +812,12 @@ fn Configuration() -> Element {
             },
             selected: interact_key(),
         }
-        Checkbox {
+        OptionalKeyBindings {
             label: "Has up jump key (Hero, Corsair, Blaster,...)",
-            on_input: move |checked: bool| {
-                config.write().up_jump_key = checked.then_some(KeyBinding::default());
+            on_option: move |value| {
+                config.write().up_jump_key = value;
             },
-            value: up_jump_key().is_some(),
-        }
-        if let Some(key) = up_jump_key() {
-            KeyBindings {
-                label: "Up jump key",
-                on_option: move |key| {
-                    config.write().up_jump_key = Some(key);
-                },
-                selected: key,
-            }
+            selected: up_jump_key(),
         }
         KeyBindings {
             label: "Rope lift key",
@@ -833,69 +847,40 @@ fn Configuration() -> Element {
             },
             selected: rotation_mode(),
         }
-        Checkbox {
+        OptionalKeyBindings {
             label: "Has sayram's elixir",
-            on_input: move |checked: bool| {
-                config.write().sayram_elixir_key = checked.then_some(KeyBinding::default());
+            on_option: move |value| {
+                config.write().sayram_elixir_key = value;
             },
-            value: sayram_elixir_key().is_some(),
+            selected: sayram_elixir_key(),
         }
-        if let Some(key) = sayram_elixir_key() {
-            KeyBindings {
-                label: "Sayram's elixir key",
-                on_option: move |key| {
-                    config.write().sayram_elixir_key = Some(key);
-                },
-                selected: key,
-            }
-        }
-        Checkbox {
+        OptionalKeyBindings {
             label: "Has x3 exp coupon",
-            on_input: move |checked: bool| {
-                config.write().exp_x3_key = checked.then_some(KeyBinding::default());
+            on_option: move |value| {
+                config.write().exp_x3_key = value;
             },
-            value: exp_x3_key().is_some(),
+            selected: exp_x3_key(),
         }
-        if let Some(key) = exp_x3_key() {
-            KeyBindings {
-                label: "x3 exp coupon key",
-                on_option: move |key| {
-                    config.write().exp_x3_key = Some(key);
-                },
-                selected: key,
-            }
+        OptionalKeyBindings {
+            label: "Bonus exp coupon",
+            on_option: move |value| {
+                config.write().bonus_exp_key = value;
+            },
+            selected: bonus_exp_key(),
         }
-        Checkbox {
+        OptionalKeyBindings {
             label: "Has legion wealth",
-            on_input: move |checked: bool| {
-                config.write().legion_wealth_key = checked.then_some(KeyBinding::default());
+            on_option: move |value| {
+                config.write().legion_wealth_key = value;
             },
-            value: legion_wealth_key().is_some(),
+            selected: legion_wealth_key(),
         }
-        if let Some(key) = legion_wealth_key() {
-            KeyBindings {
-                label: "Legion wealth key",
-                on_option: move |key| {
-                    config.write().legion_wealth_key = Some(key);
-                },
-                selected: key,
-            }
-        }
-        Checkbox {
+        OptionalKeyBindings {
             label: "Has legion luck",
-            on_input: move |checked: bool| {
-                config.write().legion_luck_key = checked.then_some(KeyBinding::default());
+            on_option: move |value| {
+                config.write().legion_luck_key = value;
             },
-            value: legion_luck_key().is_some(),
-        }
-        if let Some(key) = legion_luck_key() {
-            KeyBindings {
-                label: "Legion luck key",
-                on_option: move |key| {
-                    config.write().legion_luck_key = Some(key);
-                },
-                selected: key,
-            }
+            selected: legion_luck_key(),
         }
     }
 }

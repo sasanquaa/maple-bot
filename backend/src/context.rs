@@ -333,6 +333,9 @@ fn default_buffs(config: &Configuration) -> Vec<(usize, KeyBinding)> {
     if let Some(key) = config.exp_x3_key {
         buffs.push((EXP_X3_BUFF_POSITION, key));
     }
+    if let Some(key) = config.bonus_exp_key {
+        buffs.push((BONUS_EXP_BUFF_POSITION, key));
+    }
     if let Some(key) = config.legion_luck_key {
         buffs.push((LEGION_LUCK_BUFF_POSITION, key));
     }
