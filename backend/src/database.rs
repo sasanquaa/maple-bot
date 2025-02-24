@@ -51,6 +51,7 @@ pub struct Configuration {
     pub rotation_mode: RotationMode,
     pub sayram_elixir_key: Option<KeyBinding>,
     pub exp_x3_key: Option<KeyBinding>,
+    pub bonus_exp_key: Option<KeyBinding>,
     pub legion_wealth_key: Option<KeyBinding>,
     pub legion_luck_key: Option<KeyBinding>,
 }

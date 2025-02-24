@@ -3,8 +3,8 @@ use opencv::core::Mat;
 use crate::{
     context::{Context, Contextual, ControlFlow},
     detect::{
-        detect_player_exp_coupon_x3_buff, detect_player_legion_luck_buff,
-        detect_player_legion_wealth_buff, detect_player_rune_buff,
+        detect_player_bonus_exp_coupon_buff, detect_player_exp_coupon_x3_buff,
+        detect_player_legion_luck_buff, detect_player_legion_wealth_buff, detect_player_rune_buff,
         detect_player_sayram_elixir_buff,
     },
 };
@@ -32,6 +32,7 @@ pub enum BuffKind {
     Rune,
     SayramElixir,
     ExpCouponX3,
+    BonusExpCoupon,
     LegionWealth,
     LegionLuck,
 }
@@ -52,6 +53,7 @@ fn update_context(contextual: Buff, mat: &Mat, state: &mut BuffState) -> Buff {
             BuffKind::Rune => detect_player_rune_buff(mat),
             BuffKind::SayramElixir => detect_player_sayram_elixir_buff(mat),
             BuffKind::ExpCouponX3 => detect_player_exp_coupon_x3_buff(mat),
+            BuffKind::BonusExpCoupon => detect_player_bonus_exp_coupon_buff(mat),
             BuffKind::LegionWealth => detect_player_legion_wealth_buff(mat),
             BuffKind::LegionLuck => detect_player_legion_luck_buff(mat),
         };

@@ -115,24 +115,40 @@ pub fn detect_player_exp_coupon_x3_buff(mat: &Mat) -> bool {
     static EXP_COUPON_X3_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
             include_bytes!(env!("EXP_COUPON_X3_BUFF_TEMPLATE")),
-            IMREAD_COLOR,
+            IMREAD_GRAYSCALE,
         )
         .unwrap()
     });
 
-    let mut buff_bar = crop_image_to_buff_bar(mat).clone_pointee();
-    unsafe {
-        // SAFETY: can be modified inplace
-        buff_bar.modify_inplace(|mat, mat_mut| {
-            cvt_color_def(mat, mat_mut, COLOR_BGRA2BGR).unwrap();
-        });
-    }
+    let buff_bar = to_grayscale(&crop_image_to_buff_bar(mat), true);
     detect_template(
         &buff_bar,
         LazyLock::force(&EXP_COUPON_X3_BUFF),
         Point::default(),
         0.75,
         Some("exp coupon x3 buff"),
+    )
+    .is_ok()
+}
+
+/// Detects whether the player has a bonus exp coupon 50% buff from the given BGRA `Mat` image.
+pub fn detect_player_bonus_exp_coupon_buff(mat: &Mat) -> bool {
+    /// TODO: Support default ratio
+    static BONUS_EXP_COUPON_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("BONUS_EXP_COUPON_BUFF_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+
+    let buff_bar = to_grayscale(&crop_image_to_buff_bar(mat), true);
+    detect_template(
+        &buff_bar,
+        LazyLock::force(&BONUS_EXP_COUPON_BUFF),
+        Point::default(),
+        0.75,
+        Some("bonus exp coupon buff"),
     )
     .is_ok()
 }
@@ -199,18 +215,12 @@ pub fn detect_player_sayram_elixir_buff(mat: &Mat) -> bool {
     static SAYRAM_ELIXIR_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
             include_bytes!(env!("SAYRAM_ELIXIR_BUFF_TEMPLATE")),
-            IMREAD_COLOR,
+            IMREAD_GRAYSCALE,
         )
         .unwrap()
     });
 
-    let mut buff_bar = crop_image_to_buff_bar(mat).clone_pointee();
-    unsafe {
-        // SAFETY: can be modified inplace
-        buff_bar.modify_inplace(|mat, mat_mut| {
-            cvt_color_def(mat, mat_mut, COLOR_BGRA2BGR).unwrap();
-        });
-    }
+    let buff_bar = to_grayscale(&crop_image_to_buff_bar(mat), true);
     detect_template(
         &buff_bar,
         LazyLock::force(&SAYRAM_ELIXIR_BUFF),

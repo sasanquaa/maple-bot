@@ -834,6 +834,22 @@ fn Configuration() -> Element {
             selected: rotation_mode(),
         }
         Checkbox {
+            label: "Has sayram's elixir",
+            on_input: move |checked: bool| {
+                config.write().sayram_elixir_key = checked.then_some(KeyBinding::default());
+            },
+            value: sayram_elixir_key().is_some(),
+        }
+        if let Some(key) = sayram_elixir_key() {
+            KeyBindings {
+                label: "Sayram's elixir key",
+                on_option: move |key| {
+                    config.write().sayram_elixir_key = Some(key);
+                },
+                selected: key,
+            }
+        }
+        Checkbox {
             label: "Has x3 exp coupon",
             on_input: move |checked: bool| {
                 config.write().exp_x3_key = checked.then_some(KeyBinding::default());
@@ -877,22 +893,6 @@ fn Configuration() -> Element {
                 label: "Legion luck key",
                 on_option: move |key| {
                     config.write().legion_luck_key = Some(key);
-                },
-                selected: key,
-            }
-        }
-        Checkbox {
-            label: "Has sayram's elixir",
-            on_input: move |checked: bool| {
-                config.write().sayram_elixir_key = checked.then_some(KeyBinding::default());
-            },
-            value: sayram_elixir_key().is_some(),
-        }
-        if let Some(key) = sayram_elixir_key() {
-            KeyBindings {
-                label: "Sayram's elixir key",
-                on_option: move |key| {
-                    config.write().sayram_elixir_key = Some(key);
                 },
                 selected: key,
             }

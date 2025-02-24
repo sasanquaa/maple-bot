@@ -33,8 +33,9 @@ pub const ERDA_SHOWER_SKILL_POSITION: usize = 0;
 pub const RUNE_BUFF_POSITION: usize = 0;
 const SAYRAM_ELIXIR_BUFF_POSITION: usize = 1;
 const EXP_X3_BUFF_POSITION: usize = 2;
-const LEGION_WEALTH_BUFF_POSITION: usize = 3;
-const LEGION_LUCK_BUFF_POSITION: usize = 4;
+const BONUS_EXP_BUFF_POSITION: usize = 3;
+const LEGION_WEALTH_BUFF_POSITION: usize = 4;
+const LEGION_LUCK_BUFF_POSITION: usize = 5;
 
 /// Represents a control flow after a context update.
 pub enum ControlFlow<T> {
@@ -99,6 +100,7 @@ pub fn start_update_loop() {
                 BuffState::new(BuffKind::Rune),
                 BuffState::new(BuffKind::SayramElixir),
                 BuffState::new(BuffKind::ExpCouponX3),
+                BuffState::new(BuffKind::BonusExpCoupon),
                 BuffState::new(BuffKind::LegionWealth),
                 BuffState::new(BuffKind::LegionLuck),
             ];

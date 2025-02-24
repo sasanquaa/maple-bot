@@ -12,12 +12,12 @@ use crate::{
     skill::Skill,
 };
 
-const COOLDOWN_BETWEEN_QUEUE_MILLIS: u128 = 10_000;
+const COOLDOWN_BETWEEN_QUEUE_MILLIS: u128 = 20_000;
 
-type PriorityPredicate = Box<dyn Fn(&Context, Option<Instant>) -> bool>;
+type Condition = Box<dyn Fn(&Context, Option<Instant>) -> bool>;
 
 struct PriorityAction {
-    condition: PriorityPredicate,
+    condition: Condition,
     action: PlayerAction,
     last_queued_time: Option<Instant>,
 }
@@ -158,7 +158,7 @@ impl Rotator {
 
 fn at_least_millis_passed_since(last_queued_time: Option<Instant>, millis: u128) -> bool {
     last_queued_time
-        .map(|instant| Instant::now().duration_since(instant).as_millis() < millis)
+        .map(|instant| Instant::now().duration_since(instant).as_millis() >= millis)
         .unwrap_or(true)
 }
 
