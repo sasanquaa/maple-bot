@@ -12,7 +12,7 @@ env:
   VCPKG_ENABLE_METRICS: 0
   CARGO_TERM_COLOR: always
   OPENCV_MSVC_CRT: static
-  OPENCV_DISABLE_PROBES: environment,pkg_config,cmake
+  OPENCV_DISABLE_PROBES: environment,pkg_config,cmake,vcpkg_cmake
 
 jobs:
   build:
@@ -49,7 +49,6 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
           cargo binstall dioxus-cli --no-confirm
           cargo build --release
 

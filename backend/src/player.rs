@@ -1,14 +1,14 @@
 use std::ops::Range;
 
 use log::debug;
-use opencv::{core::Point, prelude::Mat};
+use opencv::core::Point;
 use platforms::windows::keys::KeyKind;
 
 use crate::{
     buff::Buff,
     context::{Context, Contextual, ControlFlow, RUNE_BUFF_POSITION, map_key},
     database::{Action, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, KeyBinding},
-    detect::{detect_cash_shop, detect_player, detect_rune_arrows},
+    detect::Detector,
     minimap::Minimap,
 };
 
@@ -245,14 +245,19 @@ impl Contextual for Player {
     // 草草ｗｗ。。。
     // TODO: detect if a point is reachable after number of retries?
     // TODO: add unit tests
-    fn update(self, context: &Context, mat: &Mat, state: &mut PlayerState) -> ControlFlow<Self> {
+    fn update(
+        self,
+        context: &Context,
+        detector: &mut impl Detector,
+        state: &mut PlayerState,
+    ) -> ControlFlow<Self> {
         let cur_pos = if state.ignore_pos_update {
             state.last_known_pos
         } else {
-            update_state(context, mat, state)
+            update_state(context, detector, state)
         };
         let Some(cur_pos) = cur_pos else {
-            if let Some(next) = update_non_positional_context(self, context, mat, state) {
+            if let Some(next) = update_non_positional_context(self, context, detector, state) {
                 return ControlFlow::Next(next);
             }
             let next = if let Minimap::Idle(idle) = context.minimap
@@ -276,7 +281,7 @@ impl Contextual for Player {
         } else {
             self
         };
-        let next = update_non_positional_context(contextual, context, mat, state)
+        let next = update_non_positional_context(contextual, context, detector, state)
             .unwrap_or_else(|| update_positional_context(contextual, context, cur_pos, state));
         if let Player::UseKey(use_key) = next
             && !use_key.timeout.started
@@ -298,7 +303,7 @@ impl Contextual for Player {
 fn update_non_positional_context(
     contextual: Player,
     context: &Context,
-    mat: &Mat,
+    detector: &mut impl Detector,
     state: &mut PlayerState,
 ) -> Option<Player> {
     match contextual {
@@ -319,15 +324,15 @@ fn update_non_positional_context(
         }
         Player::SolvingRune(solving_rune) => Some(update_solving_rune_context(
             context,
-            mat,
+            detector,
             state,
             solving_rune,
         )),
         Player::CashShopThenExit(timeout, in_cash_shop) => {
             let next = if !in_cash_shop {
                 let _ = context.keys.send(KeyKind::Tilde);
-                Player::CashShopThenExit(timeout, detect_cash_shop(mat))
-            } else if detect_cash_shop(mat) {
+                Player::CashShopThenExit(timeout, detector.detect_player_in_cash_shop())
+            } else if detector.detect_player_in_cash_shop() {
                 update_timeout(
                     timeout,
                     305, // exits after 10 secs
@@ -705,22 +710,22 @@ fn update_adjusting_context(
                 direction,
                 ..
             }) => {
-                (moving.completed && y_distance <= USE_KEY_AT_Y_DOUBLE_JUMP_THRESHOLD).then(|| {
-                    if matches!(direction, ActionKeyDirection::Any)
-                        || direction == last_known_direction
-                    {
-                        (
-                            Player::DoubleJumping(
-                                moving.timeout(Timeout::default()).completed(false),
-                                true,
-                                false,
-                            ),
+                if !moving.completed || y_distance > USE_KEY_AT_Y_DOUBLE_JUMP_THRESHOLD {
+                    return None;
+                }
+                if matches!(direction, ActionKeyDirection::Any) || direction == last_known_direction
+                {
+                    Some((
+                        Player::DoubleJumping(
+                            moving.timeout(Timeout::default()).completed(false),
+                            true,
                             false,
-                        )
-                    } else {
-                        (Player::UseKey(PlayerUseKey::new_from_action(action)), false)
-                    }
-                })
+                        ),
+                        false,
+                    ))
+                } else {
+                    Some((Player::UseKey(PlayerUseKey::new_from_action(action)), false))
+                }
             }
             Action::Key(ActionKey {
                 with: ActionKeyWith::Any,
@@ -1056,6 +1061,7 @@ fn update_falling_context(
     const TIMEOUT_EARLY_THRESHOLD: i32 = -2;
 
     let y_changed = cur_pos.y - moving.pos.y;
+    let (x_distance, _) = x_distance_direction(&moving.dest, &cur_pos);
     if !moving.timeout.started {
         state.last_moving_state = Some(PlayerLastMovingState::Falling);
     }
@@ -1073,7 +1079,7 @@ fn update_falling_context(
             let _ = context.keys.send_up(KeyKind::Down);
         }),
         |mut moving| {
-            if y_changed <= TIMEOUT_EARLY_THRESHOLD {
+            if x_distance >= ADJUSTING_MEDIUM_THRESHOLD && y_changed <= TIMEOUT_EARLY_THRESHOLD {
                 moving = moving.timeout_current(FALLING_TIMEOUT);
             }
             Player::Falling(moving)
@@ -1122,7 +1128,7 @@ fn update_unstucking_context(context: &Context, cur_pos: Point, timeout: Timeout
 
 fn update_solving_rune_context(
     context: &Context,
-    mat: &Mat,
+    detector: &mut impl Detector,
     state: &mut PlayerState,
     solving_rune: PlayerSolvingRune,
 ) -> Player {
@@ -1195,7 +1201,7 @@ fn update_solving_rune_context(
             }
             if solving_rune.keys.is_none() {
                 let keys = if timeout.current % DETECT_RUNE_ARROWS_INTERVAL == 0 {
-                    detect_rune_arrows(mat).ok()
+                    detector.detect_rune_arrows().ok()
                 } else {
                     None
                 };
@@ -1342,14 +1348,18 @@ fn update_timeout(
 }
 
 #[inline(always)]
-fn update_state(context: &Context, mat: &Mat, state: &mut PlayerState) -> Option<Point> {
+fn update_state(
+    context: &Context,
+    detector: &mut impl Detector,
+    state: &mut PlayerState,
+) -> Option<Point> {
     const STATIONARY_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 2;
 
     let Minimap::Idle(idle) = &context.minimap else {
         return None;
     };
     let minimap_bbox = idle.bbox;
-    let Ok(bbox) = detect_player(mat, &minimap_bbox) else {
+    let Ok(bbox) = detector.detect_player(minimap_bbox) else {
         return None;
     };
     let tl = bbox.tl() - minimap_bbox.tl();

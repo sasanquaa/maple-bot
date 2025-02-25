@@ -10,7 +10,7 @@ use strsim::normalized_damerau_levenshtein;
 use crate::{
     context::{Context, Contextual, ControlFlow},
     database::{Action, ActionKey, ActionMove, Minimap as MinimapData, query_maps, upsert_map},
-    detect::{detect_minimap, detect_minimap_name, detect_minimap_rune},
+    detect::Detector,
 };
 
 const MINIMAP_CHANGE_TIMEOUT: u32 = 200;
@@ -51,21 +51,30 @@ pub enum Minimap {
 impl Contextual for Minimap {
     type Persistent = MinimapState;
 
-    fn update(self, _: &Context, mat: &Mat, state: &mut MinimapState) -> ControlFlow<Self> {
-        ControlFlow::Next(update_context(self, mat, state))
+    fn update(
+        self,
+        _: &Context,
+        detector: &mut impl Detector,
+        state: &mut MinimapState,
+    ) -> ControlFlow<Self> {
+        ControlFlow::Next(update_context(self, detector, state))
     }
 }
 
-fn update_context(contextual: Minimap, mat: &Mat, state: &mut MinimapState) -> Minimap {
+fn update_context(
+    contextual: Minimap,
+    detector: &mut impl Detector,
+    state: &mut MinimapState,
+) -> Minimap {
     match contextual {
         Minimap::Detecting => {
-            let Some((contextual, data)) = update_detecting_context(mat) else {
+            let Some((contextual, data)) = update_detecting_context(detector) else {
                 return Minimap::Timeout(0);
             };
             state.data = data;
             contextual
         }
-        Minimap::Idle(idle) => update_idle_context(mat, idle).unwrap_or(Minimap::Timeout(0)),
+        Minimap::Idle(idle) => update_idle_context(detector, idle).unwrap_or(Minimap::Timeout(0)),
         // stalling for a bit before re-detecting
         // maybe useful for dragging
         Minimap::Timeout(timeout) => {
@@ -78,12 +87,14 @@ fn update_context(contextual: Minimap, mat: &Mat, state: &mut MinimapState) -> M
     }
 }
 
-fn update_detecting_context(mat: &Mat) -> Option<(Minimap, MinimapData)> {
-    let bbox = detect_minimap(mat, 0.5, MINIMAP_BORDER_WHITENESS_THRESHOLD).ok()?;
-    let name = detect_minimap_name(mat, &bbox).ok()?;
+fn update_detecting_context(detector: &mut impl Detector) -> Option<(Minimap, MinimapData)> {
+    let bbox = detector
+        .detect_minimap(MINIMAP_BORDER_WHITENESS_THRESHOLD)
+        .ok()?;
+    let name = detector.detect_minimap_name(bbox).ok()?;
     let size = bbox.width.min(bbox.height) as usize;
-    let tl = anchor_at(mat, bbox.tl(), size, 1)?;
-    let br = anchor_at(mat, bbox.br(), size, -1)?;
+    let tl = anchor_at(detector.mat(), bbox.tl(), size, 1)?;
+    let br = anchor_at(detector.mat(), bbox.br(), size, -1)?;
     let anchors = Anchors { tl, br };
     let (data, scale_w, scale_h) = get_data_for_minimap(&bbox, &name)?;
     debug!(target: "minimap", "anchor points: {:?}", anchors);
@@ -101,7 +112,7 @@ fn update_detecting_context(mat: &Mat) -> Option<(Minimap, MinimapData)> {
     ))
 }
 
-fn update_idle_context(mat: &Mat, idle: MinimapIdle) -> Option<Minimap> {
+fn update_idle_context(detector: &mut impl Detector, idle: MinimapIdle) -> Option<Minimap> {
     let MinimapIdle {
         anchors,
         bbox,
@@ -109,8 +120,8 @@ fn update_idle_context(mat: &Mat, idle: MinimapIdle) -> Option<Minimap> {
         scale_h,
         ..
     } = idle;
-    let tl_pixel = pixel_at(mat, anchors.tl.0)?;
-    let br_pixel = pixel_at(mat, anchors.br.0)?;
+    let tl_pixel = pixel_at(detector.mat(), anchors.tl.0)?;
+    let br_pixel = pixel_at(detector.mat(), anchors.br.0)?;
     let tl_match = tl_pixel == anchors.tl.1;
     let br_match = br_pixel == anchors.br.1;
     if !tl_match && !br_match {
@@ -124,7 +135,7 @@ fn update_idle_context(mat: &Mat, idle: MinimapIdle) -> Option<Minimap> {
     }
     let mut rune = idle.rune;
     if idle.rune_detect_interval % MINIMAP_DETECT_RUNE_INTERVAL_TICKS == 0 {
-        rune = detect_minimap_rune(mat, &bbox).ok().map(|rune| {
+        rune = detector.detect_minimap_rune(bbox).ok().map(|rune| {
             let tl = rune.tl() - bbox.tl();
             let br = rune.br() - bbox.tl();
             let x = ((tl.x + br.x) / 2) as f32 / scale_w;

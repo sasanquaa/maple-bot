@@ -1,12 +1,6 @@
-use opencv::core::Mat;
-
 use crate::{
     context::{Context, Contextual, ControlFlow},
-    detect::{
-        detect_player_bonus_exp_coupon_buff, detect_player_exp_coupon_x3_buff,
-        detect_player_legion_luck_buff, detect_player_legion_wealth_buff, detect_player_rune_buff,
-        detect_player_sayram_elixir_buff,
-    },
+    detect::Detector,
 };
 
 #[derive(Debug)]
@@ -40,22 +34,27 @@ pub enum BuffKind {
 impl Contextual for Buff {
     type Persistent = BuffState;
 
-    fn update(self, _: &Context, mat: &Mat, state: &mut BuffState) -> ControlFlow<Self> {
-        ControlFlow::Next(update_context(self, mat, state))
+    fn update(
+        self,
+        _: &Context,
+        detector: &mut impl Detector,
+        state: &mut BuffState,
+    ) -> ControlFlow<Self> {
+        ControlFlow::Next(update_context(self, detector, state))
     }
 }
 
-fn update_context(contextual: Buff, mat: &Mat, state: &mut BuffState) -> Buff {
+fn update_context(contextual: Buff, detector: &mut impl Detector, state: &mut BuffState) -> Buff {
     const BUFF_CHECK_EVERY_TICKS: u32 = 215; // around 7 seconds
 
     let next = if state.interval % BUFF_CHECK_EVERY_TICKS == 0 {
         let has_buff = match state.kind {
-            BuffKind::Rune => detect_player_rune_buff(mat),
-            BuffKind::SayramElixir => detect_player_sayram_elixir_buff(mat),
-            BuffKind::ExpCouponX3 => detect_player_exp_coupon_x3_buff(mat),
-            BuffKind::BonusExpCoupon => detect_player_bonus_exp_coupon_buff(mat),
-            BuffKind::LegionWealth => detect_player_legion_wealth_buff(mat),
-            BuffKind::LegionLuck => detect_player_legion_luck_buff(mat),
+            BuffKind::Rune => detector.detect_player_rune_buff(),
+            BuffKind::SayramElixir => detector.detect_player_sayram_elixir_buff(),
+            BuffKind::ExpCouponX3 => detector.detect_player_exp_coupon_x3_buff(),
+            BuffKind::BonusExpCoupon => detector.detect_player_bonus_exp_coupon_buff(),
+            BuffKind::LegionWealth => detector.detect_player_legion_wealth_buff(),
+            BuffKind::LegionLuck => detector.detect_player_legion_luck_buff(),
         };
         if has_buff {
             Buff::HasBuff

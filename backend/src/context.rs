@@ -21,6 +21,7 @@ use crate::{
     Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, Request, RotationMode,
     buff::{Buff, BuffKind, BuffState},
     database::{Configuration, KeyBinding, delete_map, query_config, refresh_config, refresh_map},
+    detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
     player::{Player, PlayerState},
@@ -53,7 +54,7 @@ pub trait Contextual {
     fn update(
         self,
         context: &Context,
-        mat: &Mat,
+        detector: &mut impl Detector,
         persistent: &mut Self::Persistent,
     ) -> ControlFlow<Self>
     where
@@ -135,15 +136,26 @@ pub fn start_update_loop() {
                 let Ok(mat) = capture.grab().map(OwnedMat::new) else {
                     return;
                 };
-                context.minimap = fold_context(&context, &mat, context.minimap, &mut minimap_state);
-                context.player = fold_context(&context, &mat, context.player, &mut player_state);
+                let mut detector = CachedDetector::new(&mat);
+                context.minimap =
+                    fold_context(&context, &mut detector, context.minimap, &mut minimap_state);
+                context.player =
+                    fold_context(&context, &mut detector, context.player, &mut player_state);
                 (0..context.skills.len()).for_each(|i| {
-                    context.skills[i] =
-                        fold_context(&context, &mat, context.skills[i], &mut skill_states[i]);
+                    context.skills[i] = fold_context(
+                        &context,
+                        &mut detector,
+                        context.skills[i],
+                        &mut skill_states[i],
+                    );
                 });
                 (0..context.buffs.len()).for_each(|i| {
-                    context.buffs[i] =
-                        fold_context(&context, &mat, context.buffs[i], &mut buff_states[i]);
+                    context.buffs[i] = fold_context(
+                        &context,
+                        &mut detector,
+                        context.buffs[i],
+                        &mut buff_states[i],
+                    );
                 });
                 if !halting {
                     rotator.rotate_action(&context, &mut player_state);
@@ -229,18 +241,18 @@ fn extract_minimap(context: &Context, mat: &Mat) -> Option<(Vec<u8>, usize, usiz
 
 fn fold_context<C>(
     context: &Context,
-    mat: &Mat,
+    detector: &mut impl Detector,
     contextual: C,
     persistent: &mut <C as Contextual>::Persistent,
 ) -> C
 where
     C: Contextual,
 {
-    let mut control_flow = contextual.update(context, mat, persistent);
+    let mut control_flow = contextual.update(context, detector, persistent);
     loop {
         match control_flow {
             ControlFlow::Immediate(contextual) => {
-                control_flow = contextual.update(context, mat, persistent);
+                control_flow = contextual.update(context, detector, persistent);
             }
             ControlFlow::Next(contextual) => return contextual,
         }

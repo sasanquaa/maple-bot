@@ -42,34 +42,166 @@ use platforms::windows::keys::KeyKind;
 #[cfg(debug_assertions)]
 use crate::debug::debug_mat;
 
-/// Detects the rune from the given BGRA `Mat` image and `minimap`.
-pub fn detect_minimap_rune(mat: &Mat, minimap: &Rect) -> Result<Rect> {
+pub trait Detector {
+    fn mat(&self) -> &Mat;
+
+    /// Detects the minimap.
+    ///
+    /// `confidence_threshold` determines the threshold for the detection to consider a match.
+    /// And the `border_threshold` determines the "whiteness" of the minimap's white border.
+    fn detect_minimap(&mut self, border_threshold: u8) -> Result<Rect>;
+
+    /// Detects the minimap name from the given `minimap` rectangle.
+    ///
+    /// `minimap` provides the previously detected minimap region so it can be cropped into.
+    /// `score_threshold` determines the threshold for selecting text from the minimap region.
+    fn detect_minimap_name(&mut self, minimap: Rect) -> Result<String>;
+
+    /// Detects the rune from the given `minimap` rectangle.
+    fn detect_minimap_rune(&mut self, minimap: Rect) -> Result<Rect>;
+
+    /// Detects whether the player in the provided `minimap` rectangle.
+    fn detect_player(&mut self, minimap: Rect) -> Result<Rect>;
+
+    /// Detects whether the player is in cash shop.
+    fn detect_player_in_cash_shop(&mut self) -> bool;
+
+    /// Detects whether the player has a rune buff.
+    fn detect_player_rune_buff(&mut self) -> bool;
+
+    /// Detects whether the player has a x3 exp coupon buff.
+    fn detect_player_exp_coupon_x3_buff(&mut self) -> bool;
+
+    /// Detects whether the player has a bonus exp coupon buff.
+    fn detect_player_bonus_exp_coupon_buff(&mut self) -> bool;
+
+    /// Detects whether the player has a legion wealth buff.
+    fn detect_player_legion_wealth_buff(&mut self) -> bool;
+
+    /// Detects whether the player has a legion luck buff.
+    fn detect_player_legion_luck_buff(&mut self) -> bool;
+
+    /// Detects whether the player has a sayram elixir buff.
+    fn detect_player_sayram_elixir_buff(&mut self) -> bool;
+
+    /// Detects rune arrows from the given RGBA image `Mat`.
+    fn detect_rune_arrows(&mut self) -> Result<[KeyKind; 4]>;
+
+    /// Detects the Erda Shower skill from the given BGRA `Mat` image.
+    fn detect_erda_shower(&mut self) -> Result<Rect>;
+}
+
+/// A detector temporary caches transformed `Mat`.
+///
+/// It is useful when there are multiple detections in a single tick that rely on grayscale (e.g. buffs).
+#[derive(Debug)]
+pub struct CachedDetector<'a> {
+    mat: &'a Mat,
+    grayscale: Option<Mat>,
+}
+
+impl<'a> CachedDetector<'a> {
+    pub fn new(mat: &'a Mat) -> CachedDetector<'a> {
+        Self {
+            mat,
+            grayscale: None,
+        }
+    }
+
+    fn grayscale(&mut self) -> &Mat {
+        if self.grayscale.is_none() {
+            self.grayscale = Some(to_grayscale(self.mat, true));
+        }
+        self.grayscale.as_ref().unwrap()
+    }
+}
+
+impl Detector for CachedDetector<'_> {
+    fn mat(&self) -> &Mat {
+        self.mat
+    }
+
+    fn detect_minimap(&mut self, border_threshold: u8) -> Result<Rect> {
+        detect_minimap(self.mat, border_threshold)
+    }
+
+    fn detect_minimap_name(&mut self, minimap: Rect) -> Result<String> {
+        detect_minimap_name(self.mat, minimap)
+    }
+
+    fn detect_minimap_rune(&mut self, minimap: Rect) -> Result<Rect> {
+        let minimap_grayscale = self.grayscale().roi(minimap).unwrap();
+        detect_minimap_rune(&minimap_grayscale, minimap.tl())
+    }
+
+    fn detect_player(&mut self, minimap: Rect) -> Result<Rect> {
+        let minimap_grayscale = self.grayscale().roi(minimap).unwrap();
+        let result = detect_player(&minimap_grayscale, minimap.tl());
+        #[cfg(debug_assertions)]
+        {
+            if let Ok(bbox) = result {
+                debug_mat("Minimap", &minimap_grayscale, 1, &[bbox - minimap.tl()], &[
+                    "Player",
+                ]);
+            }
+        }
+        result
+    }
+
+    fn detect_player_in_cash_shop(&mut self) -> bool {
+        detect_cash_shop(self.grayscale())
+    }
+
+    fn detect_player_rune_buff(&mut self) -> bool {
+        detect_player_rune_buff(&crop_to_buffs_region(self.grayscale()))
+    }
+
+    fn detect_player_exp_coupon_x3_buff(&mut self) -> bool {
+        detect_player_exp_coupon_x3_buff(&crop_to_buffs_region(self.grayscale()))
+    }
+
+    fn detect_player_bonus_exp_coupon_buff(&mut self) -> bool {
+        detect_player_bonus_exp_coupon_buff(&crop_to_buffs_region(self.grayscale()))
+    }
+
+    fn detect_player_legion_wealth_buff(&mut self) -> bool {
+        detect_player_legion_wealth_buff(&to_bgr(&crop_to_buffs_region(self.mat)))
+    }
+
+    fn detect_player_legion_luck_buff(&mut self) -> bool {
+        detect_player_legion_luck_buff(&to_bgr(&crop_to_buffs_region(self.mat)))
+    }
+
+    fn detect_player_sayram_elixir_buff(&mut self) -> bool {
+        detect_player_sayram_elixir_buff(&crop_to_buffs_region(self.grayscale()))
+    }
+
+    fn detect_rune_arrows(&mut self) -> Result<[KeyKind; 4]> {
+        detect_rune_arrows(self.mat)
+    }
+
+    fn detect_erda_shower(&mut self) -> Result<Rect> {
+        detect_erda_shower(self.grayscale())
+    }
+}
+
+fn detect_minimap_rune(minimap: &impl ToInputArray, offset: Point) -> Result<Rect> {
     /// TODO: Support default ratio
     static RUNE: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("RUNE_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    let minimap_region = mat.roi(*minimap)?;
-    let minimap_region = to_grayscale(&minimap_region, true);
-    detect_template(
-        &minimap_region,
-        LazyLock::force(&RUNE),
-        minimap.tl(),
-        0.7,
-        Some("rune"),
-    )
+    detect_template(minimap, LazyLock::force(&RUNE), offset, 0.7, Some("rune"))
 }
 
-/// Detects whether the player is in cash shop  from the given BGRA `Mat` image.
-pub fn detect_cash_shop(mat: &Mat) -> bool {
+fn detect_cash_shop(mat: &impl ToInputArray) -> bool {
     /// TODO: Support default ratio
     static CASH_SHOP: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("CASH_SHOP_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    let mat = to_grayscale(mat, true);
     detect_template(
-        &mat,
+        mat,
         LazyLock::force(&CASH_SHOP),
         Point::default(),
         0.9,
@@ -78,29 +210,23 @@ pub fn detect_cash_shop(mat: &Mat) -> bool {
     .is_ok()
 }
 
-fn crop_image_to_buff_bar(mat: &Mat) -> BoxedRef<Mat> {
+fn crop_to_buffs_region(mat: &Mat) -> BoxedRef<Mat> {
     let size = mat.size().unwrap();
-    // crop to top right of the image for buff bar
+    // crop to top right of the image for buffs region
     let crop_x = size.width / 3;
     let crop_y = size.height / 5;
     let crop_bbox = Rect::new(size.width - crop_x, 0, crop_x, crop_y);
     mat.roi(crop_bbox).unwrap()
 }
 
-/// Detects whether the player has a rune buff from the given BGRA `Mat` image.
-pub fn detect_player_rune_buff(mat: &Mat) -> bool {
+fn detect_player_rune_buff(mat: &impl ToInputArray) -> bool {
     /// TODO: Support default ratio
     static RUNE_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("RUNE_BUFF_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    let buff_bar = to_grayscale(&crop_image_to_buff_bar(mat), true);
-    #[cfg(debug_assertions)]
-    {
-        debug_mat("Buff bar", &buff_bar, 1, &[], &[]);
-    }
     detect_template(
-        &buff_bar,
+        mat,
         LazyLock::force(&RUNE_BUFF),
         Point::default(),
         0.75,
@@ -109,8 +235,7 @@ pub fn detect_player_rune_buff(mat: &Mat) -> bool {
     .is_ok()
 }
 
-/// Detects whether the player has a exp coupon x3 buff from the given BGRA `Mat` image.
-pub fn detect_player_exp_coupon_x3_buff(mat: &Mat) -> bool {
+fn detect_player_exp_coupon_x3_buff(mat: &impl ToInputArray) -> bool {
     /// TODO: Support default ratio
     static EXP_COUPON_X3_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
@@ -120,9 +245,8 @@ pub fn detect_player_exp_coupon_x3_buff(mat: &Mat) -> bool {
         .unwrap()
     });
 
-    let buff_bar = to_grayscale(&crop_image_to_buff_bar(mat), true);
     detect_template(
-        &buff_bar,
+        mat,
         LazyLock::force(&EXP_COUPON_X3_BUFF),
         Point::default(),
         0.75,
@@ -131,8 +255,7 @@ pub fn detect_player_exp_coupon_x3_buff(mat: &Mat) -> bool {
     .is_ok()
 }
 
-/// Detects whether the player has a bonus exp coupon 50% buff from the given BGRA `Mat` image.
-pub fn detect_player_bonus_exp_coupon_buff(mat: &Mat) -> bool {
+fn detect_player_bonus_exp_coupon_buff(mat: &impl ToInputArray) -> bool {
     /// TODO: Support default ratio
     static BONUS_EXP_COUPON_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
@@ -142,9 +265,8 @@ pub fn detect_player_bonus_exp_coupon_buff(mat: &Mat) -> bool {
         .unwrap()
     });
 
-    let buff_bar = to_grayscale(&crop_image_to_buff_bar(mat), true);
     detect_template(
-        &buff_bar,
+        mat,
         LazyLock::force(&BONUS_EXP_COUPON_BUFF),
         Point::default(),
         0.75,
@@ -153,8 +275,7 @@ pub fn detect_player_bonus_exp_coupon_buff(mat: &Mat) -> bool {
     .is_ok()
 }
 
-/// Detects whether the player has a legion wealth buff from the given BGRA `Mat` image.
-pub fn detect_player_legion_wealth_buff(mat: &Mat) -> bool {
+fn detect_player_legion_wealth_buff(mat: &impl ToInputArray) -> bool {
     /// TODO: Support default ratio
     static LEGION_WEALTH_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
@@ -164,15 +285,8 @@ pub fn detect_player_legion_wealth_buff(mat: &Mat) -> bool {
         .unwrap()
     });
 
-    let mut buff_bar = crop_image_to_buff_bar(mat).clone_pointee();
-    unsafe {
-        // SAFETY: can be modified inplace
-        buff_bar.modify_inplace(|mat, mat_mut| {
-            cvt_color_def(mat, mat_mut, COLOR_BGRA2BGR).unwrap();
-        });
-    }
     detect_template(
-        &buff_bar,
+        mat,
         LazyLock::force(&LEGION_WEALTH_BUFF),
         Point::default(),
         0.75,
@@ -181,8 +295,7 @@ pub fn detect_player_legion_wealth_buff(mat: &Mat) -> bool {
     .is_ok()
 }
 
-/// Detects whether the player has a legion luck buff from the given BGRA `Mat` image.
-pub fn detect_player_legion_luck_buff(mat: &Mat) -> bool {
+fn detect_player_legion_luck_buff(mat: &impl ToInputArray) -> bool {
     /// TODO: Support default ratio
     static LEGION_WEALTH_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
@@ -192,15 +305,8 @@ pub fn detect_player_legion_luck_buff(mat: &Mat) -> bool {
         .unwrap()
     });
 
-    let mut buff_bar = crop_image_to_buff_bar(mat).clone_pointee();
-    unsafe {
-        // SAFETY: can be modified inplace
-        buff_bar.modify_inplace(|mat, mat_mut| {
-            cvt_color_def(mat, mat_mut, COLOR_BGRA2BGR).unwrap();
-        });
-    }
     detect_template(
-        &buff_bar,
+        mat,
         LazyLock::force(&LEGION_WEALTH_BUFF),
         Point::default(),
         0.75,
@@ -209,8 +315,7 @@ pub fn detect_player_legion_luck_buff(mat: &Mat) -> bool {
     .is_ok()
 }
 
-/// Detects whether the player has a sayram elixir buff from the given BGRA `Mat` image.
-pub fn detect_player_sayram_elixir_buff(mat: &Mat) -> bool {
+fn detect_player_sayram_elixir_buff(mat: &impl ToInputArray) -> bool {
     /// TODO: Support default ratio
     static SAYRAM_ELIXIR_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
@@ -220,9 +325,8 @@ pub fn detect_player_sayram_elixir_buff(mat: &Mat) -> bool {
         .unwrap()
     });
 
-    let buff_bar = to_grayscale(&crop_image_to_buff_bar(mat), true);
     detect_template(
-        &buff_bar,
+        mat,
         LazyLock::force(&SAYRAM_ELIXIR_BUFF),
         Point::default(),
         0.75,
@@ -231,8 +335,7 @@ pub fn detect_player_sayram_elixir_buff(mat: &Mat) -> bool {
     .is_ok()
 }
 
-/// Detects the Erda Shower skill from the given BGRA `Mat` image.
-pub fn detect_erda_shower(mat: &Mat) -> Result<Rect> {
+fn detect_erda_shower(mat: &Mat) -> Result<Rect> {
     /// TODO: Support default ratio
     static ERDA_SHOWER: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
@@ -249,7 +352,6 @@ pub fn detect_erda_shower(mat: &Mat) -> Result<Rect> {
     let crop_y = size.height / 5;
     let crop_bbox = Rect::new(size.width - crop_x, size.height - crop_y, crop_x, crop_y);
     let skill_bar = mat.roi(crop_bbox).unwrap();
-    let skill_bar = to_grayscale(&skill_bar, true);
     #[cfg(debug_assertions)]
     {
         debug_mat("Skill bar", &skill_bar, 1, &[], &[]);
@@ -263,8 +365,7 @@ pub fn detect_erda_shower(mat: &Mat) -> Result<Rect> {
     )
 }
 
-/// Detects the player from the given BGRA image `Mat` and `minimap` bounding box.
-pub fn detect_player(mat: &Mat, minimap: &Rect) -> Result<Rect> {
+fn detect_player(mat: &impl ToInputArray, offset: Point) -> Result<Rect> {
     const PLAYER_IDEAL_RATIO_THRESHOLD: f64 = 0.8;
     const PLAYER_DEFAULT_RATIO_THRESHOLD: f64 = 0.6;
     static PLAYER_IDEAL_RATIO: LazyLock<Mat> = LazyLock::new(|| {
@@ -283,8 +384,6 @@ pub fn detect_player(mat: &Mat, minimap: &Rect) -> Result<Rect> {
     });
     static WAS_IDEAL_RATIO: AtomicBool = AtomicBool::new(false);
 
-    let minimap_region = mat.roi(*minimap)?;
-    let minimap_region = to_grayscale(&minimap_region, true);
     let was_ideal_ratio = WAS_IDEAL_RATIO.load(Ordering::Acquire);
     let template = if was_ideal_ratio {
         LazyLock::force(&PLAYER_IDEAL_RATIO)
@@ -296,15 +395,7 @@ pub fn detect_player(mat: &Mat, minimap: &Rect) -> Result<Rect> {
     } else {
         PLAYER_DEFAULT_RATIO_THRESHOLD
     };
-    let result = detect_template(&minimap_region, template, minimap.tl(), threshold, None);
-    #[cfg(debug_assertions)]
-    {
-        if let Ok(bbox) = result {
-            debug_mat("Minimap", &minimap_region, 1, &[bbox - minimap.tl()], &[
-                "Player",
-            ]);
-        }
-    }
+    let result = detect_template(mat, template, offset, threshold, None);
     if result.is_err() {
         WAS_IDEAL_RATIO.store(!was_ideal_ratio, Ordering::Release);
     }
@@ -347,8 +438,7 @@ fn detect_template(
     }
 }
 
-/// Detects rune arrows from the given RGBA image `Mat`.
-pub fn detect_rune_arrows(mat: &Mat) -> Result<[KeyKind; 4]> {
+fn detect_rune_arrows(mat: &Mat) -> Result<[KeyKind; 4]> {
     static RUNE_MODEL: LazyLock<Session> = LazyLock::new(|| {
         Session::builder()
             .and_then(|b| b.commit_from_memory(include_bytes!(env!("RUNE_MODEL"))))
@@ -398,11 +488,7 @@ pub fn detect_rune_arrows(mat: &Mat) -> Result<[KeyKind; 4]> {
     Ok([first, second, third, fourth])
 }
 
-/// Detects the minimap from the given BGRA `Mat` image.
-///
-/// `confidence_threshold` determines the threshold for the detection to consider a match.
-/// And the `border_threshold` determines the "whiteness" of the minimap's white border.
-pub fn detect_minimap(mat: &Mat, confidence_threshold: f32, border_threshold: u8) -> Result<Rect> {
+fn detect_minimap(mat: &Mat, border_threshold: u8) -> Result<Rect> {
     static MINIMAP_MODEL: LazyLock<Session> = LazyLock::new(|| {
         Session::builder()
             .and_then(|b| b.commit_from_memory(include_bytes!(env!("MINIMAP_MODEL"))))
@@ -421,21 +507,21 @@ pub fn detect_minimap(mat: &Mat, confidence_threshold: f32, border_threshold: u8
     }
 
     let size = mat.size().unwrap();
-    let (mat_in, w_ratio, h_ratio) = preprocess_for_yolo(mat);
+    let (preprocessed, w_ratio, h_ratio) = preprocess_for_yolo(mat);
     let result = MINIMAP_MODEL
-        .run([norm_rgb_to_input_value(&mat_in)])
+        .run([norm_rgb_to_input_value(&preprocessed)])
         .unwrap();
-    let mat_out = from_output_value(&result);
-    let pred = (0..mat_out.rows())
-        // SAFETY: 0..outputs.rows() is within Mat bounds
-        .map(|i| unsafe { mat_out.at_row_unchecked::<f32>(i).unwrap() })
+    let result = from_output_value(&result);
+    let pred = (0..result.rows())
+        // SAFETY: 0..result.rows() is within Mat bounds
+        .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
         .max_by(|&a, &b| {
             // a and b have shapes [bbox(4) + class(1)]
             a[4].total_cmp(&b[4])
         });
     let bbox = pred.and_then(|pred| {
         debug!(target: "minimap", "yolo detection: {pred:?}");
-        if pred[4] < confidence_threshold {
+        if pred[4] < 0.5 {
             None
         } else {
             let tl_x = (pred[0] * w_ratio).max(0.0).min(size.width as f32);
@@ -528,11 +614,7 @@ pub fn detect_minimap(mat: &Mat, confidence_threshold: f32, border_threshold: u8
     .ok_or(anyhow!("minimap not found"))
 }
 
-/// Detects the minimap name from the given BGRA `Mat` image.
-///
-/// `minimap` provides the previously detected minimap region so it can be cropped into.
-/// `score_threshold` determines the threshold for selecting text from the minimap region.
-pub fn detect_minimap_name(mat: &Mat, minimap: &Rect) -> Result<String> {
+fn detect_minimap_name(mat: &Mat, minimap: Rect) -> Result<String> {
     const TEXT_SCORE_THRESHOLD: f64 = 0.7;
     const LINK_SCORE_THRESHOLD: f64 = 0.4;
     static TEXT_RECOGNITION_MODEL: LazyLock<Mutex<TextRecognitionModel>> = LazyLock::new(|| {
@@ -829,7 +911,7 @@ fn preprocess_for_yolo(mat: &Mat) -> (Mat, f32, f32) {
 ///
 /// Returns a `(Mat, width_ratio, height_ratio, x_offset, y_offset)`.
 #[inline(always)]
-fn preprocess_for_minimap_name(mat: &Mat, minimap: &Rect) -> (Mat, f32, f32, i32, i32) {
+fn preprocess_for_minimap_name(mat: &Mat, minimap: Rect) -> (Mat, f32, f32, i32, i32) {
     let x_offset = minimap.x;
     let y_offset = (minimap.y - minimap.height).max(0);
     let bbox = Rect::from_points(
@@ -877,6 +959,19 @@ fn preprocess_for_minimap_name(mat: &Mat, minimap: &Rect) -> (Mat, f32, f32, i32
 #[inline(always)]
 fn resize_w_h_ratio(from: Size, to_w: f32, to_h: f32) -> (f32, f32) {
     (from.width as f32 / to_w, from.height as f32 / to_h)
+}
+
+/// Converts an BGRA `Mat` image to BGR.
+#[inline(always)]
+fn to_bgr(mat: &impl MatTraitConst) -> Mat {
+    let mut mat = mat.try_clone().unwrap();
+    unsafe {
+        // SAFETY: can be modified inplace
+        mat.modify_inplace(|mat, mat_mut| {
+            cvt_color_def(mat, mat_mut, COLOR_BGRA2BGR).unwrap();
+        });
+    }
+    mat
 }
 
 /// Converts an BGRA `Mat` image to grayscale.
