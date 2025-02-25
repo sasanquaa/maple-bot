@@ -268,28 +268,32 @@ fn Minimap() -> Element {
                 }
             }
             div { class: "grid grid-flow-row auto-rows-max gap-[8px] w-[350px] place-items-center",
-                TextInput {
-                    label: "Preset name",
-                    on_input: move |value| {
-                        editing_preset.set(value);
-                    },
-                    value: editing_preset(),
-                }
-                OneButton {
-                    on_ok: move || {
-                        let name = editing_preset.peek().to_owned();
-                        if !name.is_empty() {
-                            let _ = minimap
-                                .write()
-                                .as_mut()
-                                .unwrap()
-                                .actions
-                                .try_insert(name.clone(), vec![]);
-                            preset.set(Some(name));
-                            editing.set(None);
-                        }
-                    },
-                    "Create preset"
+
+                if minimap().is_some() {
+
+                    TextInput {
+                        label: "Preset name",
+                        on_input: move |value| {
+                            editing_preset.set(value);
+                        },
+                        value: editing_preset(),
+                    }
+                    OneButton {
+                        on_ok: move || {
+                            let name = editing_preset.peek().to_owned();
+                            if !name.is_empty() {
+                                let _ = minimap
+                                    .write()
+                                    .as_mut()
+                                    .unwrap()
+                                    .actions
+                                    .try_insert(name.clone(), vec![]);
+                                preset.set(Some(name));
+                                editing.set(None);
+                            }
+                        },
+                        "Create preset"
+                    }
                 }
                 if preset().is_some() {
                     Divider {}

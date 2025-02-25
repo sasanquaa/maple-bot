@@ -1,4 +1,4 @@
-name: Build windows-x64-static
+name: Build windows-x64-static-release
 
 on:
   push:
@@ -12,6 +12,7 @@ env:
   VCPKG_ENABLE_METRICS: 0
   CARGO_TERM_COLOR: always
   OPENCV_MSVC_CRT: static
+  OPENCV_DISABLE_PROBES: environment,pkg_config,cmake,vcpkg_cmake
 
 jobs:
   build:
@@ -47,8 +48,6 @@ jobs:
 
       - name: Build
         shell: pwsh
-        env:
-          OpenCV_DIR: ${{ env.VCPKG_ROOT }}\installed\${{ env.VCPKG_DEFAULT_TRIPLET }}\share\opencv4
         run: |
           cargo binstall dioxus-cli --no-confirm
           cargo build --release

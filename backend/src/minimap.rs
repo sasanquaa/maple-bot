@@ -23,12 +23,14 @@ pub struct MinimapState {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(test, derive(Default))]
 struct Anchors {
     tl: (Point, Vec4b),
     br: (Point, Vec4b),
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(test, derive(Default))]
 pub struct MinimapIdle {
     anchors: Anchors,
     pub bbox: Rect,

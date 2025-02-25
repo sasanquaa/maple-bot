@@ -182,3 +182,186 @@ fn should_queue_fixed_action(
     }
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Position, minimap::MinimapIdle};
+    use std::time::{Duration, Instant};
+
+    const NORMAL_ACTION: Action = Action::Move(ActionMove {
+        position: Position {
+            x: 0,
+            y: 0,
+            allow_adjusting: false,
+        },
+        condition: ActionCondition::Any,
+        wait_after_move_ticks: 0,
+    });
+    const PRIORITY_ACTION: Action = Action::Move(ActionMove {
+        position: Position {
+            x: 0,
+            y: 0,
+            allow_adjusting: false,
+        },
+        condition: ActionCondition::ErdaShowerOffCooldown,
+        wait_after_move_ticks: 0,
+    });
+
+    #[test]
+    fn rotator_initialization() {
+        let rotator = Rotator::default();
+        assert!(rotator.normal_actions.is_empty());
+        assert_eq!(rotator.normal_index, 0);
+        assert!(!rotator.normal_action_backward);
+        assert!(rotator.priority_actions.is_empty());
+        assert!(rotator.priority_actions_queue.is_empty());
+    }
+
+    #[test]
+    fn rotator_at_least_millis_passed_since() {
+        let now = Instant::now();
+        assert!(at_least_millis_passed_since(None, 1000));
+        assert!(at_least_millis_passed_since(
+            Some(now - Duration::from_millis(2000)),
+            1000
+        ));
+        assert!(!at_least_millis_passed_since(
+            Some(now - Duration::from_millis(500)),
+            1000
+        ));
+    }
+
+    #[test]
+    fn rotator_should_queue_fixed_action_every_millis() {
+        let context = Context::default();
+        let now = Instant::now();
+
+        assert!(should_queue_fixed_action(
+            &context,
+            Some(now - Duration::from_millis(3000)),
+            ActionCondition::EveryMillis(2000)
+        ));
+        assert!(!should_queue_fixed_action(
+            &context,
+            Some(now - Duration::from_millis(1000)),
+            ActionCondition::EveryMillis(2000)
+        ));
+    }
+
+    #[test]
+    fn rotator_should_queue_fixed_action_erda_shower() {
+        let mut context = Context::default();
+        let now = Instant::now();
+
+        context.skills[ERDA_SHOWER_SKILL_POSITION] = Skill::Idle;
+        assert!(!should_queue_fixed_action(
+            &context,
+            Some(now - Duration::from_millis(COOLDOWN_BETWEEN_QUEUE_MILLIS as u64 - 1000)),
+            ActionCondition::ErdaShowerOffCooldown
+        ));
+        assert!(should_queue_fixed_action(
+            &context,
+            Some(now - Duration::from_millis(COOLDOWN_BETWEEN_QUEUE_MILLIS as u64)),
+            ActionCondition::ErdaShowerOffCooldown
+        ));
+
+        context.skills[ERDA_SHOWER_SKILL_POSITION] = Skill::Detecting;
+        assert!(!should_queue_fixed_action(
+            &context,
+            Some(now - Duration::from_millis(COOLDOWN_BETWEEN_QUEUE_MILLIS as u64)),
+            ActionCondition::ErdaShowerOffCooldown
+        ));
+    }
+
+    #[test]
+    fn rotator_build_actions() {
+        let mut rotator = Rotator::default();
+        let actions = vec![NORMAL_ACTION, NORMAL_ACTION, PRIORITY_ACTION];
+        let buffs = vec![(0, KeyBinding::default()); 4];
+
+        rotator.build_actions(&actions, &buffs);
+
+        assert_eq!(rotator.priority_actions.len(), 6);
+        assert_eq!(rotator.normal_actions.len(), 2);
+    }
+
+    #[test]
+    fn rotator_rotate_action_start_to_end_then_reverse() {
+        let mut rotator = Rotator::default();
+        let mut player = PlayerState::default();
+        let context = Context::default();
+
+        rotator.rotator_mode(RotatorMode::StartToEndThenReverse);
+
+        for _ in 0..2 {
+            rotator
+                .normal_actions
+                .push(PlayerAction::Fixed(NORMAL_ACTION));
+        }
+
+        rotator.rotate_action(&context, &mut player);
+        assert!(player.has_normal_action());
+        assert!(!rotator.normal_action_backward);
+        assert_eq!(rotator.normal_index, 1);
+
+        player.abort_actions();
+
+        rotator.rotate_action(&context, &mut player);
+        assert!(player.has_normal_action());
+        assert!(rotator.normal_action_backward);
+        assert_eq!(rotator.normal_index, 0);
+    }
+
+    #[test]
+    fn rotator_rotate_action_start_to_end() {
+        let mut rotator = Rotator::default();
+        let mut player = PlayerState::default();
+        let context = Context::default();
+
+        rotator.rotator_mode(RotatorMode::StartToEnd);
+
+        for _ in 0..2 {
+            rotator
+                .normal_actions
+                .push(PlayerAction::Fixed(NORMAL_ACTION));
+        }
+
+        rotator.rotate_action(&context, &mut player);
+        assert!(player.has_normal_action());
+        assert!(!rotator.normal_action_backward);
+        assert_eq!(rotator.normal_index, 1);
+
+        player.abort_actions();
+
+        rotator.rotate_action(&context, &mut player);
+        assert!(player.has_normal_action());
+        assert!(!rotator.normal_action_backward);
+        assert_eq!(rotator.normal_index, 0);
+    }
+
+    #[test]
+    fn rotator_priority_action_queue() {
+        let mut rotator = Rotator::default();
+        let mut player = PlayerState::default();
+        let mut context = Context {
+            minimap: Minimap::Idle(MinimapIdle::default()),
+            ..Context::default()
+        };
+        context.buffs[RUNE_BUFF_POSITION] = Buff::NoBuff;
+
+        rotator.priority_actions.push(PriorityAction {
+            condition: Box::new(|context, _| matches!(context.minimap, Minimap::Idle(_))),
+            action: PlayerAction::SolveRune,
+            last_queued_time: None,
+        });
+
+        rotator.rotate_action(&context, &mut player);
+        assert_eq!(rotator.priority_actions_queue.len(), 1);
+        assert!(!player.has_priority_action());
+
+        rotator.rotate_action(&context, &mut player);
+        assert_eq!(rotator.priority_actions_queue.len(), 0);
+        assert!(player.has_priority_action());
+    }
+}

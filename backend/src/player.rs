@@ -1053,7 +1053,7 @@ fn update_falling_context(
     moving: PlayerMoving,
 ) -> Player {
     const FALLING_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 2;
-    const TIMEOUT_EARLY_THRESHOLD: i32 = -4;
+    const TIMEOUT_EARLY_THRESHOLD: i32 = -2;
 
     let y_changed = cur_pos.y - moving.pos.y;
     if !moving.timeout.started {
@@ -1184,14 +1184,14 @@ fn update_solving_rune_context(
             }
         },
         |mut timeout| {
-            if matches!(context.buffs[RUNE_BUFF_POSITION], Buff::HasBuff) {
-                return Player::Idle;
-            }
             if solving_rune.failed_count >= MAX_FAILED_COUNT {
                 return Player::CashShopThenExit(Timeout::default(), false);
             }
             if solving_rune.validating {
                 return validate_rune_solved(context, solving_rune, timeout);
+            }
+            if matches!(context.buffs[RUNE_BUFF_POSITION], Buff::HasBuff) {
+                return Player::Idle;
             }
             if solving_rune.keys.is_none() {
                 let keys = if timeout.current % DETECT_RUNE_ARROWS_INTERVAL == 0 {
@@ -1377,7 +1377,7 @@ fn update_state(context: &Context, mat: &Mat, state: &mut PlayerState) -> Option
         STATIONARY_TIMEOUT,
         ChangeAxis::Both,
     );
-    state.is_stationary = state.is_stationary_timeout.current >= PLAYER_MOVE_TIMEOUT;
+    state.is_stationary = state.is_stationary_timeout.current > PLAYER_MOVE_TIMEOUT;
     state.last_known_pos = Some(pos);
     Some(pos)
 }

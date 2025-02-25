@@ -70,6 +70,19 @@ pub struct Context {
     pub buffs: [Buff; mem::variant_count::<BuffKind>()],
 }
 
+#[cfg(test)]
+impl Default for Context {
+    fn default() -> Self {
+        Self {
+            keys: Keys::new(Handle::new(Some("Class"), Some("Title")).unwrap()),
+            minimap: Minimap::Detecting,
+            player: Player::Detecting,
+            skills: [Skill::Detecting; mem::variant_count::<SkillKind>()],
+            buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
+        }
+    }
+}
+
 pub fn start_update_loop() {
     static LOOPING: AtomicBool = AtomicBool::new(false);
 
