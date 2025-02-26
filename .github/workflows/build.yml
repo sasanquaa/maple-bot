@@ -60,7 +60,10 @@ jobs:
           cd ui
           npm install
           cd ../
-          cargo binstall dioxus-cli --no-confirm
-          cargo build --release
+          cargo binstall dioxus-cli
+          dx build --release --package ui
 
-# dx build --verbose --release --package ui
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app
+          path: target/dx/ui/release/windows/app
