@@ -281,7 +281,6 @@ mod tests {
         let buffs = vec![(0, KeyBinding::default()); 4];
 
         rotator.build_actions(&actions, &buffs);
-
         assert_eq!(rotator.priority_actions.len(), 6);
         assert_eq!(rotator.normal_actions.len(), 2);
     }
@@ -291,9 +290,7 @@ mod tests {
         let mut rotator = Rotator::default();
         let mut player = PlayerState::default();
         let context = Context::default();
-
         rotator.rotator_mode(RotatorMode::StartToEndThenReverse);
-
         for _ in 0..2 {
             rotator
                 .normal_actions
@@ -318,9 +315,7 @@ mod tests {
         let mut rotator = Rotator::default();
         let mut player = PlayerState::default();
         let context = Context::default();
-
         rotator.rotator_mode(RotatorMode::StartToEnd);
-
         for _ in 0..2 {
             rotator
                 .normal_actions
@@ -349,7 +344,6 @@ mod tests {
             ..Context::default()
         };
         context.buffs[RUNE_BUFF_POSITION] = Buff::NoBuff;
-
         rotator.priority_actions.push(PriorityAction {
             condition: Box::new(|context, _| matches!(context.minimap, Minimap::Idle(_))),
             action: PlayerAction::SolveRune,

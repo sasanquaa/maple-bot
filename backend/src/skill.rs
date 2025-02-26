@@ -164,7 +164,6 @@ mod tests {
         detector.expect_mat().return_const(mat);
 
         let skill = update_context(Skill::Idle, &context, &mut detector, &mut state);
-
         assert!(matches!(skill, Skill::Cooldown(0)));
     }
     #[test]
@@ -178,7 +177,6 @@ mod tests {
 
         let skill = Skill::Cooldown(SKILL_OFF_COOLDOWN_MAX_TIMEOUT - 1);
         let skill = update_context(skill, &context, &mut detector, &mut state);
-
         assert!(matches!(skill, Skill::Detecting));
     }
 
@@ -198,7 +196,6 @@ mod tests {
 
         let skill = Skill::Cooldown(SKILL_OFF_COOLDOWN_DETECT_EVERY - 1);
         let skill = update_context(skill, &context, &mut detector, &mut state);
-
         assert!(matches!(skill, Skill::Idle));
         assert_eq!(state.anchor, ((rect.tl() + rect.br()) / 2, Vec4b::all(255)));
     }
@@ -217,7 +214,6 @@ mod tests {
 
         let skill = Skill::Cooldown(SKILL_OFF_COOLDOWN_DETECT_EVERY - 1);
         let skill = update_context(skill, &context, &mut detector, &mut state);
-
         assert!(matches!(
             skill,
             Skill::Cooldown(SKILL_OFF_COOLDOWN_DETECT_EVERY)
