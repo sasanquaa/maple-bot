@@ -41,7 +41,10 @@ use platforms::windows::keys::KeyKind;
 
 #[cfg(debug_assertions)]
 use crate::debug::debug_mat;
+#[cfg(test)]
+use mockall::automock;
 
+#[cfg_attr(test, automock)]
 pub trait Detector {
     fn mat(&self) -> &Mat;
 
@@ -185,6 +188,15 @@ impl Detector for CachedDetector<'_> {
     }
 }
 
+fn crop_to_buffs_region(mat: &Mat) -> BoxedRef<Mat> {
+    let size = mat.size().unwrap();
+    // crop to top right of the image for buffs region
+    let crop_x = size.width / 3;
+    let crop_y = size.height / 5;
+    let crop_bbox = Rect::new(size.width - crop_x, 0, crop_x, crop_y);
+    mat.roi(crop_bbox).unwrap()
+}
+
 fn detect_minimap_rune(minimap: &impl ToInputArray, offset: Point) -> Result<Rect> {
     /// TODO: Support default ratio
     static RUNE: LazyLock<Mat> = LazyLock::new(|| {
@@ -208,15 +220,6 @@ fn detect_cash_shop(mat: &impl ToInputArray) -> bool {
         Some("cash shop"),
     )
     .is_ok()
-}
-
-fn crop_to_buffs_region(mat: &Mat) -> BoxedRef<Mat> {
-    let size = mat.size().unwrap();
-    // crop to top right of the image for buffs region
-    let crop_x = size.width / 3;
-    let crop_y = size.height / 5;
-    let crop_bbox = Rect::new(size.width - crop_x, 0, crop_x, crop_y);
-    mat.roi(crop_bbox).unwrap()
 }
 
 fn detect_player_rune_buff(mat: &impl ToInputArray) -> bool {

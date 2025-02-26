@@ -28,7 +28,7 @@ impl SkillState {
 pub enum Skill {
     Detecting,
     Idle,
-    Cooldown(u32, bool),
+    Cooldown(u32),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -76,12 +76,12 @@ fn update_context(
             if *pixel != state.anchor.1 {
                 debug!(target: "skill", "assume skill to be on cooldown {:?} != {:?}, could be false positive", state.anchor, pixel);
                 // assume it is on cooldown
-                Skill::Cooldown(0, false)
+                Skill::Cooldown(0)
             } else {
                 Skill::Idle
             }
         }
-        Skill::Cooldown(timeout, delayed) => {
+        Skill::Cooldown(timeout) => {
             let timeout = timeout + 1;
             // rechecks after every amount of ticks
             // to see if it is still on cooldown
@@ -98,12 +98,13 @@ fn update_context(
             if timeout >= SKILL_OFF_COOLDOWN_MAX_TIMEOUT {
                 Skill::Detecting
             } else {
-                Skill::Cooldown(timeout, delayed)
+                Skill::Cooldown(timeout)
             }
         }
     }
 }
 
+#[inline(always)]
 fn get_anchor(mat: &Mat, bbox: Rect) -> (Point, Vec4b) {
     let point = (bbox.tl() + bbox.br()) / 2;
     let pixel = mat.at_pt::<Vec4b>(point).unwrap();
@@ -112,77 +113,114 @@ fn get_anchor(mat: &Mat, bbox: Rect) -> (Point, Vec4b) {
     anchor
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use crate::minimap::{Minimap, MinimapIdle};
+#[cfg(test)]
+mod tests {
+    use crate::{
+        detect::MockDetector,
+        minimap::{Minimap, MinimapIdle},
+    };
 
-//     use super::*;
-//     use opencv::core::{CV_8UC4, Mat, MatTrait, Scalar};
+    use super::*;
+    use anyhow::anyhow;
+    use opencv::core::{CV_8UC4, Mat, MatExprTraitConst, MatTrait};
 
-//     fn create_test_mat(color: Vec4b) -> Mat {
-//         let mut mat = Mat::new_rows_cols_with_default(100, 100, CV_8UC4, Scalar::all(0.0)).unwrap();
-//         let center = Point::new(50, 50);
-//         *mat.at_pt_mut::<Vec4b>(center).unwrap() = color;
-//         mat
-//     }
+    fn create_test_mat_bbox(center_pixel: u8) -> (Mat, Rect) {
+        let mut mat = Mat::zeros(100, 100, CV_8UC4).unwrap().to_mat().unwrap();
+        let rect = Rect::new(0, 0, 100, 100);
+        let center = (rect.tl() + rect.br()) / 2;
+        *mat.at_pt_mut::<Vec4b>(center).unwrap() = Vec4b::all(center_pixel);
+        (mat, rect)
+    }
 
-//     #[test]
-//     fn skill_detecting_to_idle() {
-//         let context = Context {
-//             minimap: Minimap::Idle(MinimapIdle::default()),
-//             ..Context::default()
-//         };
-//         let mut state = SkillState::new(SkillKind::ErdaShower);
-//         let mat = create_test_mat(Vec4b::from([255, 0, 0, 255]));
+    #[test]
+    fn skill_detecting_to_idle() {
+        let context = Context {
+            minimap: Minimap::Idle(MinimapIdle::default()),
+            ..Context::default()
+        };
+        let mut state = SkillState::new(SkillKind::ErdaShower);
+        let mut detector = MockDetector::new();
+        let (mat, rect) = create_test_mat_bbox(255);
+        detector.expect_mat().return_const(mat);
+        detector
+            .expect_detect_erda_shower()
+            .returning(move || Ok(rect));
 
-//         let skill = Skill::Detecting;
-//         let updated_skill = update_context(skill, &context, &mat, &mut state);
+        let skill = update_context(Skill::Detecting, &context, &mut detector, &mut state);
+        assert!(matches!(skill, Skill::Idle));
+        assert_eq!(state.anchor, ((rect.tl() + rect.br()) / 2, Vec4b::all(255)));
+    }
 
-//         assert!(matches!(updated_skill, Skill::Idle));
-//     }
+    #[test]
+    fn skill_idle_to_cooldown() {
+        let context = Context {
+            minimap: Minimap::Idle(MinimapIdle::default()),
+            ..Context::default()
+        };
+        let (mat, rect) = create_test_mat_bbox(254);
+        let mut state = SkillState::new(SkillKind::ErdaShower);
+        state.anchor = ((rect.tl() + rect.br()) / 2, Vec4b::all(255));
+        let mut detector = MockDetector::new();
+        detector.expect_mat().return_const(mat);
 
-//     #[test]
-//     fn test_skill_idle_to_cooldown() {
-//         let context = Context::default();
-//         let mut state = SkillState::new(SkillKind::ErdaShower);
-//         let mat = create_test_mat(Vec4b::from([255, 0, 0, 255]));
+        let skill = update_context(Skill::Idle, &context, &mut detector, &mut state);
 
-//         // First, transition to Idle state
-//         let skill = Skill::Detecting;
-//         let updated_skill = update_context(skill, &context, &mat, &mut state);
-//         assert!(matches!(updated_skill, Skill::Idle));
+        assert!(matches!(skill, Skill::Cooldown(0)));
+    }
+    #[test]
+    fn skill_cooldown_to_detecting() {
+        let context = Context {
+            minimap: Minimap::Idle(MinimapIdle::default()),
+            ..Context::default()
+        };
+        let mut state = SkillState::new(SkillKind::ErdaShower);
+        let mut detector = MockDetector::new();
 
-//         // Change the pixel to simulate cooldown
-//         let mut mat = create_test_mat(Vec4b::from([0, 255, 0, 255]));
-//         let updated_skill = update_context(updated_skill, &context, &mat, &mut state);
+        let skill = Skill::Cooldown(SKILL_OFF_COOLDOWN_MAX_TIMEOUT - 1);
+        let skill = update_context(skill, &context, &mut detector, &mut state);
 
-//         assert!(matches!(updated_skill, Skill::Cooldown(0, false)));
-//     }
+        assert!(matches!(skill, Skill::Detecting));
+    }
 
-//     #[test]
-//     fn test_skill_cooldown_to_detecting() {
-//         let context = Context::default();
-//         let mut state = SkillState::new(SkillKind::ErdaShower);
-//         let mat = create_test_mat(Vec4b::from([255, 0, 0, 255]));
+    #[test]
+    fn skill_cooldown_recheck_ok() {
+        let context = Context {
+            minimap: Minimap::Idle(MinimapIdle::default()),
+            ..Context::default()
+        };
+        let mut state = SkillState::new(SkillKind::ErdaShower);
+        let mut detector = MockDetector::new();
+        let (mat, rect) = create_test_mat_bbox(255);
+        detector.expect_mat().return_const(mat);
+        detector
+            .expect_detect_erda_shower()
+            .returning(move || Ok(rect));
 
-//         // Transition to Cooldown state
-//         let skill = Skill::Cooldown(SKILL_OFF_COOLDOWN_MAX_TIMEOUT - 1, false);
-//         let updated_skill = update_context(skill, &context, &mat, &mut state);
+        let skill = Skill::Cooldown(SKILL_OFF_COOLDOWN_DETECT_EVERY - 1);
+        let skill = update_context(skill, &context, &mut detector, &mut state);
 
-//         assert!(matches!(updated_skill, Skill::Detecting));
-//     }
+        assert!(matches!(skill, Skill::Idle));
+        assert_eq!(state.anchor, ((rect.tl() + rect.br()) / 2, Vec4b::all(255)));
+    }
 
-//     #[test]
-//     fn test_skill_cooldown_recheck() {
-//         let context = Context::default();
-//         let mut state = SkillState::new(SkillKind::ErdaShower);
-//         let mat = create_test_mat(Vec4b::from([255, 0, 0, 255]));
+    #[test]
+    fn skill_cooldown_recheck_err() {
+        let context = Context {
+            minimap: Minimap::Idle(MinimapIdle::default()),
+            ..Context::default()
+        };
+        let mut state = SkillState::new(SkillKind::ErdaShower);
+        let mut detector = MockDetector::new();
+        detector
+            .expect_detect_erda_shower()
+            .returning(move || Err(anyhow!("error")));
 
-//         // Transition to Cooldown state
-//         let skill = Skill::Cooldown(SKILL_OFF_COOLDOWN_DETECT_EVERY - 1, false);
-//         let updated_skill = update_context(skill, &context, &mat, &mut state);
+        let skill = Skill::Cooldown(SKILL_OFF_COOLDOWN_DETECT_EVERY - 1);
+        let skill = update_context(skill, &context, &mut detector, &mut state);
 
-//         // After recheck, it should transition back to Idle if the skill is detected
-//         assert!(matches!(updated_skill, Skill::Idle));
-//     }
-// }
+        assert!(matches!(
+            skill,
+            Skill::Cooldown(SKILL_OFF_COOLDOWN_DETECT_EVERY)
+        ));
+    }
+}

@@ -108,6 +108,7 @@ impl Capture {
         result
     }
 
+    #[inline(always)]
     fn grab_inner(&mut self) -> Result<Frame, Error> {
         let handle = self.handle.as_inner()?;
         let rect = get_rect(handle)?;

@@ -154,6 +154,7 @@ impl Keys {
         self.reset_handle_if_error(self.send_input(kind, false))
     }
 
+    #[inline(always)]
     fn reset_handle_if_error(&self, result: Result<(), Error>) -> Result<(), Error> {
         if result.as_ref().is_err_and(|err| err != &Error::NotSent) {
             self.handle.borrow_mut().reset_inner();
@@ -189,6 +190,7 @@ impl Keys {
     }
 }
 
+#[inline(always)]
 fn is_foreground(handle: HWND) -> bool {
     let handle_fg = unsafe { GetForegroundWindow() };
     !handle_fg.is_invalid() && handle_fg == handle

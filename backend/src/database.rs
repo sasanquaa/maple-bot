@@ -259,7 +259,6 @@ pub fn refresh_map(map: &mut Minimap) -> Result<()> {
     refresh_data_from_table("maps", map)
 }
 
-#[inline(always)]
 fn map_data<T>(mut stmt: Statement<'_>, params: impl Params) -> Result<Vec<T>>
 where
     T: DeserializeOwned + Identifiable,
@@ -276,7 +275,6 @@ where
         .collect::<Vec<_>>())
 }
 
-#[inline(always)]
 fn refresh_data_from_table<T>(table: &str, data: &mut T) -> Result<()>
 where
     T: DeserializeOwned + Identifiable,
@@ -294,7 +292,6 @@ where
     }
 }
 
-#[inline(always)]
 fn query_from_table<T>(table: &str) -> Result<Vec<T>>
 where
     T: DeserializeOwned + Identifiable,
@@ -305,7 +302,6 @@ where
     map_data(stmt, [])
 }
 
-#[inline(always)]
 fn upsert_to_table<T>(table: &str, data: &mut T) -> Result<()>
 where
     T: Serialize + Identifiable,
@@ -329,7 +325,6 @@ where
     }
 }
 
-#[inline(always)]
 fn delete_from_table<T: Identifiable>(table: &str, data: &T) -> Result<()> {
     fn inner(table: &str, id: Option<i64>) -> Result<()> {
         if id.is_some() {
