@@ -7,9 +7,11 @@ on:
     branches: ["master"]
 
 env:
+  VCPKG_ENABLE_METRICS: 0
+  VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg/installed
   VCPKG_DEFAULT_TRIPLET: x64-windows-static-release
   VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static-release
-  VCPKG_ENABLE_METRICS: 0
+  VCPKGRS_TRIPLET: x64-windows-static-release
   CARGO_TERM_COLOR: always
   OPENCV_MSVC_CRT: static
   OPENCV_DISABLE_PROBES: environment,pkg_config,cmake,vcpkg_cmake
@@ -21,6 +23,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: latest
+          cache: "npm"
+          cache-dependency-path: "./ui/package-lock.json"
 
       - name: Install toolchain
         run: |
@@ -49,6 +57,9 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
+          cd ui
+          npm install
+          cd ../
           cargo binstall dioxus-cli --no-confirm
           cargo build --release
 
