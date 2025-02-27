@@ -13,6 +13,7 @@ use crate::{
 };
 
 const COOLDOWN_BETWEEN_QUEUE_MILLIS: u128 = 20_000;
+const COOLDOWN_BETWEEN_POTION_QUEUE_MILLIS: u128 = 5_000;
 
 type Condition = Box<dyn Fn(&Context, Option<Instant>) -> bool>;
 
@@ -40,7 +41,12 @@ pub struct Rotator {
 }
 
 impl Rotator {
-    pub fn build_actions(&mut self, actions: &[Action], buffs: &[(usize, KeyBinding)]) {
+    pub fn build_actions(
+        &mut self,
+        actions: &[Action],
+        buffs: &[(usize, KeyBinding)],
+        potion_key: KeyBinding,
+    ) {
         debug!(target: "rotator", "preparing actions {actions:?} {buffs:?}");
         self.reset();
         self.normal_actions.clear();
@@ -63,6 +69,30 @@ impl Rotator {
                 },
             }
         }
+        self.priority_actions.push(PriorityAction {
+            condition: Box::new(|context, last_queued_time| {
+                if !at_least_millis_passed_since(
+                    last_queued_time,
+                    COOLDOWN_BETWEEN_POTION_QUEUE_MILLIS,
+                ) {
+                    return false;
+                }
+                if let Minimap::Idle(idle) = context.minimap {
+                    return idle.has_elite_boss;
+                }
+                false
+            }),
+            action: PlayerAction::Fixed(Action::Key(ActionKey {
+                key: potion_key,
+                position: None,
+                condition: ActionCondition::Any,
+                direction: ActionKeyDirection::Any,
+                with: ActionKeyWith::Any,
+                wait_before_use_ticks: 5,
+                wait_after_use_ticks: 0,
+            })),
+            last_queued_time: None,
+        });
         self.priority_actions.push(PriorityAction {
             condition: Box::new(|context, last_queued_time| {
                 if !at_least_millis_passed_since(last_queued_time, COOLDOWN_BETWEEN_QUEUE_MILLIS) {
@@ -274,8 +304,8 @@ mod tests {
         let actions = vec![NORMAL_ACTION, NORMAL_ACTION, PRIORITY_ACTION];
         let buffs = vec![(0, KeyBinding::default()); 4];
 
-        rotator.build_actions(&actions, &buffs);
-        assert_eq!(rotator.priority_actions.len(), 6);
+        rotator.build_actions(&actions, &buffs, KeyBinding::A);
+        assert_eq!(rotator.priority_actions.len(), 7);
         assert_eq!(rotator.normal_actions.len(), 2);
     }
 

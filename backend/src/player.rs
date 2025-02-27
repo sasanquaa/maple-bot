@@ -259,6 +259,7 @@ impl Contextual for Player {
     // 草草ｗｗ。。。
     // TODO: detect if a point is reachable after number of retries?
     // TODO: add unit tests
+    // TODO: support mages
     fn update(
         self,
         context: &Context,

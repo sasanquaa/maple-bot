@@ -173,6 +173,7 @@ pub fn start_update_loop() {
                                         .concat()
                                         .to_vec(),
                                     &buffs,
+                                    config.potion_key,
                                 );
                                 return Box::new(true);
                             }
@@ -208,6 +209,7 @@ pub fn start_update_loop() {
                                 .concat()
                                 .to_vec(),
                             &buffs,
+                            config.potion_key,
                         );
                         Box::new(())
                     }

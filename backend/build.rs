@@ -2,6 +2,7 @@ use std::env;
 
 fn main() {
     let dir = env::current_dir().unwrap().join("resources");
+    let elite_boss_bar = dir.join("elite_boss_bar_ideal_ratio.png");
     let player_ideal_ratio = dir.join("player_ideal_ratio.png");
     let player_default_ratio = dir.join("player_default_ratio.png");
     let erda_shower = dir.join("erda_shower_ideal_ratio.png");
@@ -20,6 +21,10 @@ fn main() {
     let text_detection_model = dir.join("text_detection.onnx");
     let text_recognition_model = dir.join("text_recognition.onnx");
     let text_alphabet_txt = dir.join("alphabet_94.txt");
+    println!(
+        "cargo:rustc-env=ELITE_BOSS_BAR_TEMPLATE={}",
+        elite_boss_bar.to_str().unwrap()
+    );
     println!(
         "cargo:rustc-env=PLAYER_DEFAULT_RATIO_TEMPLATE={}",
         player_default_ratio.to_str().unwrap()

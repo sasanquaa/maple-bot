@@ -16,6 +16,7 @@ use crate::{
 const MINIMAP_CHANGE_TIMEOUT: u32 = 200;
 const MINIMAP_BORDER_WHITENESS_THRESHOLD: u8 = 170;
 const MINIMAP_DETECT_RUNE_INTERVAL_TICKS: u32 = 305;
+const MINIMAP_DETECT_ELITE_BOSS_INTERVAL_TICKS: u32 = 305;
 
 #[derive(Debug, Default)]
 pub struct MinimapState {
@@ -38,7 +39,9 @@ pub struct MinimapIdle {
     pub scale_h: f32,
     pub partially_overlapping: bool,
     pub rune: Option<Point>,
-    rune_detect_interval: u32,
+    rune_interval: u32,
+    pub has_elite_boss: bool,
+    has_elite_boss_interval: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -107,7 +110,9 @@ fn update_detecting_context(detector: &mut impl Detector) -> Option<(Minimap, Mi
             scale_h,
             partially_overlapping: false,
             rune: None,
-            rune_detect_interval: 0,
+            rune_interval: 0,
+            has_elite_boss: false,
+            has_elite_boss_interval: 0,
         }),
         data,
     ))
@@ -135,7 +140,7 @@ fn update_idle_context(detector: &mut impl Detector, idle: MinimapIdle) -> Optio
         return Some(Minimap::Timeout(0));
     }
     let mut rune = idle.rune;
-    if idle.rune_detect_interval % MINIMAP_DETECT_RUNE_INTERVAL_TICKS == 0 {
+    if idle.rune_interval % MINIMAP_DETECT_RUNE_INTERVAL_TICKS == 0 {
         rune = detector.detect_minimap_rune(bbox).ok().map(|rune| {
             let tl = rune.tl() - bbox.tl();
             let br = rune.br() - bbox.tl();
@@ -146,10 +151,17 @@ fn update_idle_context(detector: &mut impl Detector, idle: MinimapIdle) -> Optio
             point
         });
     }
+    let mut has_elite_boss = idle.has_elite_boss;
+    if idle.has_elite_boss_interval % MINIMAP_DETECT_ELITE_BOSS_INTERVAL_TICKS == 0 {
+        has_elite_boss = detector.detect_elite_boss_bar();
+    }
     Some(Minimap::Idle(MinimapIdle {
         partially_overlapping: (tl_match && !br_match) || (!tl_match && br_match),
-        rune_detect_interval: (idle.rune_detect_interval + 1) % MINIMAP_DETECT_RUNE_INTERVAL_TICKS,
         rune,
+        rune_interval: (idle.rune_interval + 1) % MINIMAP_DETECT_RUNE_INTERVAL_TICKS,
+        has_elite_boss,
+        has_elite_boss_interval: (idle.has_elite_boss_interval + 1)
+            % MINIMAP_DETECT_ELITE_BOSS_INTERVAL_TICKS,
         ..idle
     }))
 }

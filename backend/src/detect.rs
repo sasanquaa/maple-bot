@@ -28,7 +28,7 @@ use opencv::{
         CHAIN_APPROX_SIMPLE, COLOR_BGRA2BGR, COLOR_BGRA2GRAY, COLOR_BGRA2RGB, INTER_AREA,
         INTER_CUBIC, MORPH_RECT, RETR_EXTERNAL, THRESH_BINARY, THRESH_OTSU, TM_CCOEFF_NORMED,
         bounding_rect, connected_components_with_stats, cvt_color_def, dilate_def,
-        find_contours_def, get_structuring_element_def, match_template_def, min_area_rect, resize,
+        find_contours_def, get_structuring_element_def, match_template, min_area_rect, resize,
         threshold,
     },
     traits::OpenCVIntoExternContainer,
@@ -47,6 +47,9 @@ use mockall::automock;
 #[cfg_attr(test, automock)]
 pub trait Detector {
     fn mat(&self) -> &Mat;
+
+    /// Detects whether there is a elite boss bar.
+    fn detect_elite_boss_bar(&mut self) -> bool;
 
     /// Detects the minimap.
     ///
@@ -123,6 +126,10 @@ impl<'a> CachedDetector<'a> {
 impl Detector for CachedDetector<'_> {
     fn mat(&self) -> &Mat {
         self.mat
+    }
+
+    fn detect_elite_boss_bar(&mut self) -> bool {
+        detect_elite_boss_bar(self.grayscale())
     }
 
     fn detect_minimap(&mut self, border_threshold: u8) -> Result<Rect> {
@@ -406,6 +413,32 @@ fn detect_player(mat: &impl ToInputArray, offset: Point) -> Result<Rect> {
     result
 }
 
+fn detect_elite_boss_bar(mat: &Mat) -> bool {
+    /// TODO: Support default ratio
+    static ELITE_BOSS_BAR: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("ELITE_BOSS_BAR_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+
+    let size = mat.size().unwrap();
+    // crop to top part of the image for boss bar
+    let crop_y = size.height / 5;
+    let crop_bbox = Rect::new(0, 0, size.width, crop_y);
+    let boss_bar = mat.roi(crop_bbox).unwrap();
+    let template = LazyLock::force(&ELITE_BOSS_BAR);
+    detect_template(
+        &boss_bar,
+        template,
+        Point::default(),
+        0.9,
+        Some("elite boss bar"),
+    )
+    .is_ok()
+}
+
 /// Detects the `template` from the given BGRA image `Mat`.
 #[inline]
 fn detect_template(
@@ -419,7 +452,7 @@ fn detect_template(
     let mut score = 0f64;
     let mut loc = Point::default();
 
-    match_template_def(mat, template, &mut result, TM_CCOEFF_NORMED).unwrap();
+    match_template(mat, template, &mut result, TM_CCOEFF_NORMED, &no_array()).unwrap();
     min_max_loc(
         &result,
         None,
