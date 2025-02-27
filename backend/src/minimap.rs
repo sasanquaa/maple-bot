@@ -253,3 +253,170 @@ fn anchor_at(mat: &Mat, offset: Point, size: usize, sign: i32) -> Option<(Point,
         }
     })
 }
+
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use crate::detect::MockDetector;
+//     use mockall::predicate::eq;
+//     use opencv::core::{Mat, MatExprTraitConst, MatTrait, Point, Rect, Vec4b};
+
+//     fn create_test_mat() -> (Mat, Point, Point) {
+//         let mut mat = Mat::zeros(100, 100, opencv::core::CV_8UC4)
+//             .unwrap()
+//             .to_mat()
+//             .unwrap();
+//         let tr = Point::new(10, 10);
+//         let bl = Point::new(90, 90);
+//         *mat.at_pt_mut::<Vec4b>(tr).unwrap() = Vec4b::all(255);
+//         *mat.at_pt_mut::<Vec4b>(bl).unwrap() = Vec4b::all(255);
+//         (mat, tr, bl)
+//     }
+
+//     #[test]
+//     fn minimap_detecting_to_idle() {
+//         let mut detector = MockDetector::new();
+//         let mut state = MinimapState::default();
+//         let bbox = Rect::new(0, 0, 100, 100);
+//         detector
+//             .expect_detect_minimap()
+//             .with(eq(MINIMAP_BORDER_WHITENESS_THRESHOLD))
+//             .returning(move |_| Ok(bbox));
+//         detector
+//             .expect_detect_minimap_name()
+//             .with(eq(bbox))
+//             .returning(|_| Ok("TestMap".to_string()));
+
+//         let (mat, tl, br) = create_test_mat();
+//         detector.expect_mat().return_const(mat);
+
+//         let minimap = update_context(Minimap::Detecting, &mut detector, &mut state);
+//         assert!(matches!(minimap, Minimap::Idle(_)));
+//         assert_eq!(minimap.)
+//     }
+
+// #[test]
+// fn test_minimap_idle_to_timeout() {
+//     let mut detector = MockDetector::new();
+//     let mut state = MinimapState::default();
+
+//     // Simulate anchor points mismatch
+//     let mat = create_test_mat();
+//     detector.expect_mat().return_const(mat);
+
+//     let idle = MinimapIdle {
+//         anchors: Anchors {
+//             tl: (Point::new(10, 10), Vec4b::all(255)),
+//             br: (Point::new(90, 90), Vec4b::all(0)), // Mismatch
+//         },
+//         bbox: Rect::new(0, 0, 100, 100),
+//         scale_w: 1.0,
+//         scale_h: 1.0,
+//         partially_overlapping: false,
+//         rune: None,
+//         rune_detect_interval: 0,
+//     };
+
+//     let minimap = update_context(Minimap::Idle(idle), &mut detector, &mut state);
+//     assert!(matches!(minimap, Minimap::Timeout(0)));
+// }
+
+// #[test]
+// fn test_minimap_timeout_to_detecting() {
+//     let mut detector = MockDetector::new();
+//     let mut state = MinimapState::default();
+
+//     // Simulate timeout reaching the limit
+//     let minimap = update_context(
+//         Minimap::Timeout(MINIMAP_CHANGE_TIMEOUT - 1),
+//         &mut detector,
+//         &mut state,
+//     );
+//     assert!(matches!(minimap, Minimap::Detecting));
+// }
+
+// #[test]
+// fn test_minimap_rune_detection() {
+//     let mut detector = MockDetector::new();
+//     let mut state = MinimapState::default();
+
+//     // Simulate rune detection
+//     let bbox = Rect::new(0, 0, 100, 100);
+//     let rune_bbox = Rect::new(40, 40, 20, 20);
+//     detector
+//         .expect_detect_minimap_rune()
+//         .withf(move |b| *b == bbox)
+//         .returning(move || Ok(rune_bbox));
+
+//     let mat = create_test_mat();
+//     detector.expect_mat().return_const(mat);
+
+//     let idle = MinimapIdle {
+//         anchors: Anchors {
+//             tl: (Point::new(10, 10), Vec4b::all(255)),
+//             br: (Point::new(90, 90), Vec4b::all(255)),
+//         },
+//         bbox,
+//         scale_w: 1.0,
+//         scale_h: 1.0,
+//         partially_overlapping: false,
+//         rune: None,
+//         rune_detect_interval: MINIMAP_DETECT_RUNE_INTERVAL_TICKS - 1,
+//     };
+
+//     let minimap = update_context(Minimap::Idle(idle), &mut detector, &mut state);
+//     if let Minimap::Idle(idle) = minimap {
+//         assert!(idle.rune.is_some());
+//     } else {
+//         panic!("Expected Minimap::Idle");
+//     }
+// }
+
+// #[test]
+// fn test_minimap_data_scaling() {
+//     let mut detector = MockDetector::new();
+//     let mut state = MinimapState::default();
+
+//     // Simulate detecting a minimap
+//     let bbox = Rect::new(0, 0, 100, 100);
+//     detector
+//         .expect_detect_minimap()
+//         .withf(move |threshold| *threshold == MINIMAP_BORDER_WHITENESS_THRESHOLD)
+//         .returning(move || Ok(bbox));
+
+//     // Simulate detecting a minimap name
+//     detector
+//         .expect_detect_minimap_name()
+//         .withf(move |b| *b == bbox)
+//         .returning(|_| Ok("TestMap".to_string()));
+
+//     // Simulate anchor points
+//     let mat = create_test_mat();
+//     detector.expect_mat().return_const(mat);
+
+//     // Simulate querying maps
+//     let mut map = MinimapData {
+//         id: None,
+//         name: "TestMap".to_string(),
+//         width: 200,
+//         height: 200,
+//         actions: HashMap::new(),
+//     };
+//     map.actions
+//         .insert("test".to_string(), vec![Action::Move(ActionMove {
+//             position: Point::new(100, 100),
+//             ..Default::default()
+//         })]);
+
+//     // Mock the database query
+//     let _ = query_maps().and_then(|maps| {
+//         maps.into_iter().find(|m| m.name == "TestMap").map(|m| {
+//             assert_eq!(m.width, 200);
+//             assert_eq!(m.height, 200);
+//         })
+//     });
+
+//     let minimap = update_context(Minimap::Detecting, &mut detector, &mut state);
+//     assert!(matches!(minimap, Minimap::Idle(_)));
+// }
+// }

@@ -15,6 +15,9 @@ use crate::{
 /// Maximum number of times adjusting or double jump states can be transitioned to without changing position
 const UNSTUCK_TRACKER_THRESHOLD: u32 = 10;
 
+/// Random threshold to choose unstucking direction
+const UNSTUCK_TO_RIGHT_X_THRESHOLD: i32 = 10;
+
 /// Minimium y distance required to perform a fall and double jump/adjusting
 const ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD: i32 = 8;
 
@@ -272,9 +275,9 @@ impl Contextual for Player {
                 return ControlFlow::Next(next);
             }
             let next = if let Minimap::Idle(idle) = context.minimap
-                && state.last_known_pos.is_some()
+                && let Some(pos) = state.last_known_pos
             {
-                if idle.partially_overlapping {
+                if idle.partially_overlapping || pos.x > UNSTUCK_TO_RIGHT_X_THRESHOLD {
                     Player::Detecting
                 } else {
                     Player::Unstucking(Timeout::default())
@@ -1114,7 +1117,7 @@ fn update_unstucking_context(context: &Context, cur_pos: Point, timeout: Timeout
                 return Player::Unstucking(timeout);
             }
             // random threshold for picking whether to go left or right
-            if cur_pos.x <= 10 {
+            if cur_pos.x <= UNSTUCK_TO_RIGHT_X_THRESHOLD {
                 let _ = context.keys.send_down(KeyKind::Right);
             } else {
                 let _ = context.keys.send_down(KeyKind::Left);
