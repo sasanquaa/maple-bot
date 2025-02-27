@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use log::debug;
 use opencv::core::Point;
-use platforms::windows::keys::KeyKind;
+use platforms::windows::KeyKind;
 
 use crate::{
     buff::Buff,
@@ -1057,7 +1057,6 @@ fn update_falling_context(
     cur_pos: Point,
     moving: PlayerMoving,
 ) -> Player {
-    const FALLING_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 2;
     const TIMEOUT_EARLY_THRESHOLD: i32 = -2;
 
     let y_changed = cur_pos.y - moving.pos.y;
@@ -1069,7 +1068,7 @@ fn update_falling_context(
     update_moving_axis_context(
         moving,
         cur_pos,
-        FALLING_TIMEOUT,
+        PLAYER_MOVE_TIMEOUT,
         |moving| {
             let _ = context.keys.send_down(KeyKind::Down);
             let _ = context.keys.send(KeyKind::Space);
@@ -1080,7 +1079,7 @@ fn update_falling_context(
         }),
         |mut moving| {
             if x_distance >= ADJUSTING_MEDIUM_THRESHOLD && y_changed <= TIMEOUT_EARLY_THRESHOLD {
-                moving = moving.timeout_current(FALLING_TIMEOUT);
+                moving = moving.timeout_current(PLAYER_MOVE_TIMEOUT);
             }
             Player::Falling(moving)
         },
@@ -1241,7 +1240,7 @@ fn update_solving_rune_context(
     )
 }
 
-#[inline(always)]
+#[inline]
 fn on_action(
     state: &mut PlayerState,
     on_action_context: impl FnOnce(PlayerAction) -> Option<(Player, bool)>,
@@ -1264,21 +1263,21 @@ fn on_action(
     }
 }
 
-#[inline(always)]
+#[inline]
 fn x_distance_direction(dest: &Point, cur_pos: &Point) -> (i32, i32) {
     let direction = dest.x - cur_pos.x;
     let distance = direction.abs();
     (distance, direction)
 }
 
-#[inline(always)]
+#[inline]
 fn y_distance_direction(dest: &Point, cur_pos: &Point) -> (i32, i32) {
     let direction = dest.y - cur_pos.y;
     let distance = direction.abs();
     (distance, direction)
 }
 
-#[inline(always)]
+#[inline]
 fn update_moving_axis_timeout(
     prev_pos: Point,
     cur_pos: Point,
@@ -1302,7 +1301,7 @@ fn update_moving_axis_timeout(
     }
 }
 
-#[inline(always)]
+#[inline]
 fn update_moving_axis_context(
     moving: PlayerMoving,
     cur_pos: Point,
@@ -1326,7 +1325,7 @@ fn update_moving_axis_context(
     )
 }
 
-#[inline(always)]
+#[inline]
 fn update_timeout(
     timeout: Timeout,
     max_timeout: u32,
@@ -1347,7 +1346,7 @@ fn update_timeout(
     }
 }
 
-#[inline(always)]
+#[inline]
 fn update_state(
     context: &Context,
     detector: &mut impl Detector,

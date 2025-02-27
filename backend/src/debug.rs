@@ -13,7 +13,7 @@ use opencv::{
     highgui::{imshow, wait_key},
     imgcodecs::imwrite_def,
 };
-use platforms::windows::keys::KeyKind;
+use platforms::windows::KeyKind;
 use std::env;
 use std::sync::LazyLock;
 use std::{fs, path::PathBuf};

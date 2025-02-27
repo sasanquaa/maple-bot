@@ -26,6 +26,7 @@ impl Handle {
         })
     }
 
+    #[inline]
     pub(crate) fn as_inner(&mut self) -> Result<HWND, Error> {
         if self.inner.is_invalid() {
             self.inner = self.query_handle()?;
@@ -33,6 +34,7 @@ impl Handle {
         Ok(self.inner)
     }
 
+    #[inline]
     pub(crate) fn reset_inner(&mut self) {
         self.inner = HWND::default();
     }

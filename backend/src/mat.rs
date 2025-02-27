@@ -7,7 +7,7 @@ use opencv::{
         ToInputOutputArray, ToOutputArray,
     },
 };
-use platforms::windows::capture::Frame;
+use platforms::windows::Frame;
 
 // A Mat that owns the external buffer.
 #[derive(Debug)]

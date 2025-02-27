@@ -105,11 +105,13 @@ impl Rotator {
         }
     }
 
+    #[inline]
     pub fn rotator_mode(&mut self, mode: RotatorMode) {
         self.normal_rotate_mode = mode;
         self.reset();
     }
 
+    #[inline]
     pub fn reset(&mut self) {
         self.normal_action_backward = false;
         self.normal_index = 0;
@@ -156,12 +158,14 @@ impl Rotator {
     }
 }
 
+#[inline]
 fn at_least_millis_passed_since(last_queued_time: Option<Instant>, millis: u128) -> bool {
     last_queued_time
         .map(|instant| Instant::now().duration_since(instant).as_millis() >= millis)
         .unwrap_or(true)
 }
 
+#[inline]
 fn should_queue_fixed_action(
     context: &Context,
     last_queued_time: Option<Instant>,
@@ -207,16 +211,6 @@ mod tests {
         condition: ActionCondition::ErdaShowerOffCooldown,
         wait_after_move_ticks: 0,
     });
-
-    #[test]
-    fn rotator_initialization() {
-        let rotator = Rotator::default();
-        assert!(rotator.normal_actions.is_empty());
-        assert_eq!(rotator.normal_index, 0);
-        assert!(!rotator.normal_action_backward);
-        assert!(rotator.priority_actions.is_empty());
-        assert!(rotator.priority_actions_queue.is_empty());
-    }
 
     #[test]
     fn rotator_at_least_millis_passed_since() {

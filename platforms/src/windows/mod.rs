@@ -1,12 +1,11 @@
 use windows::Win32::UI::HiDpi::{PROCESS_PER_MONITOR_DPI_AWARE, SetProcessDpiAwareness};
 
-pub mod capture;
+mod capture;
+mod error;
+mod handle;
+mod keys;
 
-pub mod handle;
-
-pub mod keys;
-
-pub mod error;
+pub use {capture::*, error::*, handle::*, keys::*};
 
 pub fn init() {
     unsafe {

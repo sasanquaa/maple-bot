@@ -1,8 +1,9 @@
 use std::ffi::c_void;
-use std::fmt;
 use std::ptr;
 use std::slice;
 
+use windows::Win32::Foundation::ERROR_INVALID_HANDLE;
+use windows::Win32::Foundation::ERROR_INVALID_WINDOW_HANDLE;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Gdi::BI_BITFIELDS;
@@ -26,53 +27,27 @@ pub struct Frame {
 }
 
 #[derive(Debug)]
-pub struct DynamicCapture {
-    capture: Capture,
+struct DeviceContext {
+    inner: HDC,
+    handle: Option<HWND>,
 }
 
-impl DynamicCapture {
-    pub fn new(handle: Handle) -> Result<Self, Error> {
-        Ok(Self {
-            capture: Capture::new(handle, 1024, 768)?,
-        })
-    }
-
-    pub fn grab(&mut self) -> Result<Frame, Error> {
-        let result = self.capture.grab();
-        match result {
-            Ok(_) => result,
-            Err(ref error) => {
-                if let Error::InvalidWindowSize(width, height) = error {
-                    self.capture = Capture::new_from(&self.capture, *width, *height)?;
-                    self.capture.grab()
-                } else {
-                    result
-                }
+impl Drop for DeviceContext {
+    fn drop(&mut self) {
+        unsafe {
+            if self.handle.is_some() {
+                let _ = ReleaseDC(self.handle, self.inner);
+            } else {
+                let _ = DeleteDC(self.inner);
             }
         }
-    }
-}
-
-struct Borrowed<T> {
-    value: T,
-    dropper: Box<dyn Fn()>,
-}
-
-impl<T: fmt::Debug> fmt::Debug for Borrowed<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.value.fmt(f)
-    }
-}
-
-impl<T> Drop for Borrowed<T> {
-    fn drop(&mut self) {
-        (self.dropper)()
     }
 }
 
 #[derive(Debug)]
 struct Bitmap {
     inner: Owned<HBITMAP>,
+    device_context: DeviceContext,
     width: i32,
     height: i32,
     size: usize,
@@ -82,33 +57,28 @@ struct Bitmap {
 #[derive(Debug)]
 pub struct Capture {
     handle: Handle,
-    dc: Borrowed<HDC>,
-    bm: Bitmap,
+    bitmap: Option<Bitmap>,
 }
 
 impl Capture {
-    pub fn new(handle: Handle, width: i32, height: i32) -> Result<Self, Error> {
-        let dc = create_dc()?;
-        let bm = create_bitmap(dc.value, width, height)?;
-        Ok(Self { handle, dc, bm })
+    pub fn new(handle: Handle) -> Result<Self, Error> {
+        Ok(Self {
+            handle,
+            bitmap: None,
+        })
     }
 
-    fn new_from(from: &Capture, width: i32, height: i32) -> Result<Self, Error> {
-        let handle = from.handle;
-        let dc = create_dc()?;
-        let bm = create_bitmap(dc.value, width, height)?;
-        Ok(Self { handle, dc, bm })
-    }
-
+    #[inline]
     pub fn grab(&mut self) -> Result<Frame, Error> {
         let result = self.grab_inner();
-        if result.is_err() {
-            self.handle.reset_inner();
+        if let Err(Error::Win32(code, _)) = result {
+            if code == ERROR_INVALID_HANDLE.0 || code == ERROR_INVALID_WINDOW_HANDLE.0 {
+                self.handle.reset_inner();
+            }
         }
         result
     }
 
-    #[inline(always)]
     fn grab_inner(&mut self) -> Result<Frame, Error> {
         let handle = self.handle.as_inner()?;
         let rect = get_rect(handle)?;
@@ -117,85 +87,72 @@ impl Capture {
         if width == 0 || height == 0 {
             return Err(Error::WindowNotFound);
         }
-        if width != self.bm.width || height != self.bm.height {
-            return Err(Error::InvalidWindowSize(width, height));
+        if self.bitmap.is_none() {
+            self.bitmap = Some(create_bitmap(width, height)?);
         }
-        let handle_dc = get_dc(handle)?;
-        let dc = self.dc.value;
-        let obj = unsafe { SelectObject(dc, (*self.bm.inner).into()) };
-        if obj.is_invalid() {
+        let bitmap = self.bitmap.as_ref().unwrap();
+        if width != bitmap.width || height != bitmap.height {
+            self.bitmap = None;
+            return Err(Error::InvalidWindowSize);
+        }
+        let bitmap_device_context = &bitmap.device_context;
+        let handle_device_context = get_device_context(handle)?;
+        let object = unsafe { SelectObject(bitmap_device_context.inner, (*bitmap.inner).into()) };
+        if object.is_invalid() {
             return Err(Error::from_last_win_error());
         }
-        #[allow(unused)]
-        let obj = Borrowed {
-            value: obj,
-            dropper: Box::new(move || {
-                let _ = unsafe { SelectObject(dc, obj) };
-            }),
-        };
-        unsafe {
+        let result = unsafe {
             BitBlt(
-                dc,
+                bitmap_device_context.inner,
                 0,
                 0,
-                self.bm.width,
-                self.bm.height,
-                handle_dc.value.into(),
+                bitmap.width,
+                bitmap.height,
+                Some(handle_device_context.inner),
                 0,
                 0,
                 SRCCOPY,
             )
+        };
+        let _ = unsafe { SelectObject(bitmap_device_context.inner, object) };
+        if let Err(error) = result {
+            return Err(Error::from(error));
         }
-        .map_err(Error::from)
-        .map(|_| {
-            let ptr = unsafe { slice::from_raw_parts(self.bm.buffer, self.bm.size) };
-            let vec = ptr.to_vec();
-            Frame {
-                width: self.bm.width,
-                height: self.bm.height,
-                data: vec,
-            }
+        let ptr = unsafe { slice::from_raw_parts(bitmap.buffer, bitmap.size) };
+        let data = ptr.to_vec();
+        Ok(Frame {
+            width: bitmap.width,
+            height: bitmap.height,
+            data,
         })
     }
 }
 
-#[inline(always)]
+#[inline]
 fn get_rect(handle: HWND) -> Result<RECT, Error> {
     let mut rect = RECT::default();
     unsafe { GetClientRect(handle, &raw mut rect) }?;
     Ok(rect)
 }
 
-#[inline(always)]
-fn get_dc(handle: HWND) -> Result<Borrowed<HDC>, Error> {
-    let dc = unsafe { GetDC(handle.into()) };
-    if dc.is_invalid() {
+#[inline]
+fn get_device_context(handle: HWND) -> Result<DeviceContext, Error> {
+    let device_context = unsafe { GetDC(handle.into()) };
+    if device_context.is_invalid() {
         return Err(Error::from_last_win_error());
     }
-    Ok(Borrowed {
-        value: dc,
-        dropper: Box::new(move || {
-            let _ = unsafe { ReleaseDC(handle.into(), dc) };
-        }),
+    Ok(DeviceContext {
+        inner: device_context,
+        handle: Some(handle),
     })
 }
 
-#[inline(always)]
-fn create_dc() -> Result<Borrowed<HDC>, Error> {
-    let dc = unsafe { CreateCompatibleDC(None) };
-    if dc.is_invalid() {
+#[inline]
+fn create_bitmap(width: i32, height: i32) -> Result<Bitmap, Error> {
+    let device_context = unsafe { CreateCompatibleDC(None) };
+    if device_context.is_invalid() {
         return Err(Error::from_last_win_error());
     }
-    Ok(Borrowed {
-        value: dc,
-        dropper: Box::new(move || {
-            let _ = unsafe { DeleteDC(dc) };
-        }),
-    })
-}
-
-#[inline(always)]
-fn create_bitmap(dc: HDC, width: i32, height: i32) -> Result<Bitmap, Error> {
     let size = width as usize * height as usize * 4;
     let buffer = ptr::null_mut::<c_void>();
     let info = BITMAPV4HEADER {
@@ -212,7 +169,7 @@ fn create_bitmap(dc: HDC, width: i32, height: i32) -> Result<Bitmap, Error> {
     };
     let dib = unsafe {
         CreateDIBSection(
-            dc.into(),
+            Some(device_context),
             (&raw const info).cast(),
             DIB_RGB_COLORS,
             (&raw const buffer).cast_mut(),
@@ -222,6 +179,10 @@ fn create_bitmap(dc: HDC, width: i32, height: i32) -> Result<Bitmap, Error> {
     };
     Ok(Bitmap {
         inner: unsafe { Owned::new(dib) },
+        device_context: DeviceContext {
+            inner: device_context,
+            handle: None,
+        },
         width,
         height,
         size,

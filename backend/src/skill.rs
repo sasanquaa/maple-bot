@@ -104,7 +104,7 @@ fn update_context(
     }
 }
 
-#[inline(always)]
+#[inline]
 fn get_anchor(mat: &Mat, bbox: Rect) -> (Point, Vec4b) {
     let point = (bbox.tl() + bbox.br()) / 2;
     let pixel = mat.at_pt::<Vec4b>(point).unwrap();

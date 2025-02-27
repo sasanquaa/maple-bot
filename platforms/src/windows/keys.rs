@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use bit_vec::BitVec;
 use windows::Win32::{
-    Foundation::{HWND, RECT},
+    Foundation::{ERROR_INVALID_HANDLE, ERROR_INVALID_WINDOW_HANDLE, HWND, RECT},
     UI::{
         Input::KeyboardAndMouse::{
             INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT,
@@ -154,15 +154,17 @@ impl Keys {
         self.reset_handle_if_error(self.send_input(kind, false))
     }
 
-    #[inline(always)]
+    #[inline]
     fn reset_handle_if_error(&self, result: Result<(), Error>) -> Result<(), Error> {
-        if result.as_ref().is_err_and(|err| err != &Error::NotSent) {
-            self.handle.borrow_mut().reset_inner();
+        if let Err(Error::Win32(code, _)) = result {
+            if code == ERROR_INVALID_HANDLE.0 || code == ERROR_INVALID_WINDOW_HANDLE.0 {
+                self.handle.borrow_mut().reset_inner();
+            }
         }
         result
     }
 
-    #[inline(always)]
+    #[inline]
     fn send_input(&self, kind: KeyKind, is_up: bool) -> Result<(), Error> {
         let handle = self.get_handle()?;
         if !is_foreground(handle) {
@@ -184,19 +186,19 @@ impl Keys {
         send_input(to_input(key, scan_code, is_extended, is_up))
     }
 
-    #[inline(always)]
+    #[inline]
     fn get_handle(&self) -> Result<HWND, Error> {
         self.handle.borrow_mut().as_inner()
     }
 }
 
-#[inline(always)]
+#[inline]
 fn is_foreground(handle: HWND) -> bool {
     let handle_fg = unsafe { GetForegroundWindow() };
     !handle_fg.is_invalid() && handle_fg == handle
 }
 
-#[inline(always)]
+#[inline]
 fn send_input(input: [INPUT; 1]) -> Result<(), Error> {
     let result = unsafe { SendInput(&input, size_of::<INPUT>() as i32) };
     // could be UIPI
@@ -207,7 +209,7 @@ fn send_input(input: [INPUT; 1]) -> Result<(), Error> {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn to_vkey(kind: KeyKind) -> VIRTUAL_KEY {
     match kind {
         KeyKind::A => VK_A,
@@ -278,7 +280,7 @@ fn to_vkey(kind: KeyKind) -> VIRTUAL_KEY {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn to_scan_code(key: VIRTUAL_KEY) -> (u16, bool) {
     let scan_code = unsafe { MapVirtualKeyW(key.0 as u32, MAPVK_VK_TO_VSC_EX) } as u16;
     let code = scan_code & 0xFF;
@@ -290,7 +292,7 @@ fn to_scan_code(key: VIRTUAL_KEY) -> (u16, bool) {
     (code, is_extended)
 }
 
-#[inline(always)]
+#[inline]
 fn to_input(key: VIRTUAL_KEY, scan_code: u16, is_extended: bool, is_up: bool) -> [INPUT; 1] {
     let is_extended = if is_extended {
         KEYEVENTF_EXTENDEDKEY

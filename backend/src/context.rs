@@ -10,12 +10,7 @@ use std::{
 
 use log::info;
 use opencv::core::{Mat, MatTraitConst, MatTraitConstManual, Vec4b};
-use platforms::windows::{
-    self,
-    capture::DynamicCapture,
-    handle::Handle,
-    keys::{KeyKind, Keys},
-};
+use platforms::windows::{self, Capture, Handle, KeyKind, Keys};
 
 use crate::{
     Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, Request, RotationMode,
@@ -106,7 +101,7 @@ pub fn start_update_loop() {
             let handle = Handle::new(Some("MapleStoryClass"), None).unwrap();
             let keys = Keys::new(handle);
             let mut halting = true;
-            let mut capture = DynamicCapture::new(handle).unwrap();
+            let mut capture = Capture::new(handle).unwrap();
             let mut player_state = PlayerState::default();
             let mut minimap_state = MinimapState::default();
             let mut skill_states = [SkillState::new(SkillKind::ErdaShower)];
@@ -222,6 +217,7 @@ pub fn start_update_loop() {
     }
 }
 
+#[inline]
 fn extract_minimap(context: &Context, mat: &Mat) -> Option<(Vec<u8>, usize, usize)> {
     if let Minimap::Idle(idle) = context.minimap {
         let minimap = mat
@@ -239,6 +235,7 @@ fn extract_minimap(context: &Context, mat: &Mat) -> Option<(Vec<u8>, usize, usiz
     None
 }
 
+#[inline]
 fn fold_context<C>(
     context: &Context,
     detector: &mut impl Detector,
@@ -259,6 +256,7 @@ where
     }
 }
 
+#[inline]
 fn loop_with_fps(fps: u32, mut on_tick: impl FnMut()) {
     let nanos_per_frame = (1_000_000_000 / fps) as u128;
     loop {
@@ -276,6 +274,7 @@ fn loop_with_fps(fps: u32, mut on_tick: impl FnMut()) {
     }
 }
 
+#[inline]
 fn map_rotate_mode(mode: RotationMode) -> RotatorMode {
     match mode {
         RotationMode::StartToEnd => RotatorMode::StartToEnd,
@@ -283,6 +282,7 @@ fn map_rotate_mode(mode: RotationMode) -> RotatorMode {
     }
 }
 
+#[inline]
 pub fn map_key(key: KeyBinding) -> KeyKind {
     match key {
         KeyBinding::A => KeyKind::A,

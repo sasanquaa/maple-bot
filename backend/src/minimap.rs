@@ -231,10 +231,12 @@ fn get_data_for_minimap(bbox: &Rect, name: &str) -> Option<(MinimapData, f32, f3
     }
 }
 
+#[inline]
 fn pixel_at(mat: &Mat, point: Point) -> Option<Vec4b> {
     mat.at_pt::<Vec4b>(point).ok().copied()
 }
 
+#[inline]
 fn anchor_at(mat: &Mat, offset: Point, size: usize, sign: i32) -> Option<(Point, Vec4b)> {
     (0..size).find_map(|i| {
         let value = sign * i as i32;

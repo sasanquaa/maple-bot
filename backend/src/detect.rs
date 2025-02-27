@@ -37,7 +37,7 @@ use ort::{
     session::{Session, SessionInputValue, SessionOutputs},
     value::Tensor,
 };
-use platforms::windows::keys::KeyKind;
+use platforms::windows::KeyKind;
 
 #[cfg(debug_assertions)]
 use crate::debug::debug_mat;
