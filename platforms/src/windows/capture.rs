@@ -61,11 +61,11 @@ pub struct Capture {
 }
 
 impl Capture {
-    pub fn new(handle: Handle) -> Result<Self, Error> {
-        Ok(Self {
+    pub fn new(handle: Handle) -> Self {
+        Self {
             handle,
             bitmap: None,
-        })
+        }
     }
 
     #[inline]

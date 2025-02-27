@@ -61,6 +61,7 @@ impl Contextual for Minimap {
     }
 }
 
+#[inline]
 fn update_context(
     contextual: Minimap,
     detector: &mut impl Detector,

@@ -50,6 +50,7 @@ impl Contextual for Buff {
     }
 }
 
+#[inline]
 fn update_context(contextual: Buff, detector: &mut impl Detector, state: &mut BuffState) -> Buff {
     let next = if state.interval % BUFF_CHECK_EVERY_TICKS == 0 {
         let has_buff = match state.kind {

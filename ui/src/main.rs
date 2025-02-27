@@ -1,6 +1,7 @@
 #![feature(variant_count)]
 #![feature(map_try_insert)]
 
+use std::ops::DerefMut;
 use std::str::FromStr;
 use std::string::ToString;
 
@@ -61,8 +62,7 @@ fn main() {
         .with_inner_size(Size::Physical(PhysicalSize::new(1200, 800)))
         .with_resizable(false)
         .with_maximizable(false)
-        .with_title("Maple Bot")
-        .with_always_on_top(cfg!(debug_assertions));
+        .with_title("Maple Bot");
     let cfg = dioxus::desktop::Config::default()
         .with_menu(None)
         .with_window(window);
@@ -264,13 +264,30 @@ fn Minimap() -> Element {
                         },
                         "Delete map (for redetecting)"
                     }
+                    OneButton {
+                        on_ok: move || {
+                            let position = *position.peek();
+                            if let Some((x, y)) = position {
+                                match editing_action.write().deref_mut() {
+                                    Action::Move(action_move) => {
+                                        action_move.position.x = x;
+                                        action_move.position.y = y;
+                                    }
+                                    Action::Key(action_key) => {
+                                        let position = action_key.position.get_or_insert(DEFAULT_POSITION);
+                                        position.x = x;
+                                        position.y = y;
+                                    }
+                                }
+                            }
+                        },
+                        "Copy position to action"
+                    }
                     Configuration {}
                 }
             }
             div { class: "grid grid-flow-row auto-rows-max gap-[8px] w-[350px] place-items-center",
-
                 if minimap().is_some() {
-
                     TextInput {
                         label: "Preset name",
                         on_input: move |value| {

@@ -101,7 +101,7 @@ pub fn start_update_loop() {
             let handle = Handle::new(Some("MapleStoryClass"), None).unwrap();
             let keys = Keys::new(handle);
             let mut halting = true;
-            let mut capture = Capture::new(handle).unwrap();
+            let mut capture = Capture::new(handle);
             let mut player_state = PlayerState::default();
             let mut minimap_state = MinimapState::default();
             let mut skill_states = [SkillState::new(SkillKind::ErdaShower)];

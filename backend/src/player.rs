@@ -82,24 +82,29 @@ pub enum PlayerAction {
 }
 
 impl PlayerState {
+    #[inline]
     pub fn has_normal_action(&self) -> bool {
         self.normal_action.is_some()
     }
 
+    #[inline]
     pub fn set_normal_action(&mut self, action: PlayerAction) {
         self.reset_to_idle_next_update = true;
         self.normal_action = Some(action);
     }
 
+    #[inline]
     pub fn has_priority_action(&self) -> bool {
         self.priority_action.is_some()
     }
 
+    #[inline]
     pub fn set_priority_action(&mut self, action: PlayerAction) {
         self.reset_to_idle_next_update = true;
         self.priority_action = Some(action);
     }
 
+    #[inline]
     pub fn abort_actions(&mut self) {
         self.reset_to_idle_next_update = true;
         self.priority_action = None;
@@ -146,6 +151,7 @@ pub struct PlayerMoving {
 
 /// Convenient implementations
 impl PlayerMoving {
+    #[inline]
     fn new(pos: Point, dest: Point, exact: bool) -> Self {
         Self {
             pos,
@@ -156,18 +162,22 @@ impl PlayerMoving {
         }
     }
 
+    #[inline]
     fn pos(self, pos: Point) -> PlayerMoving {
         PlayerMoving { pos, ..self }
     }
 
+    #[inline]
     fn completed(self, completed: bool) -> PlayerMoving {
         PlayerMoving { completed, ..self }
     }
 
+    #[inline]
     fn timeout(self, timeout: Timeout) -> PlayerMoving {
         PlayerMoving { timeout, ..self }
     }
 
+    #[inline]
     fn timeout_current(self, current: u32) -> PlayerMoving {
         PlayerMoving {
             timeout: Timeout {
@@ -190,6 +200,7 @@ pub struct PlayerUseKey {
 }
 
 impl PlayerUseKey {
+    #[inline]
     fn new_from_action(action: Action) -> Self {
         match action {
             Action::Key(ActionKey {

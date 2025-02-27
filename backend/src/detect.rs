@@ -111,6 +111,7 @@ impl<'a> CachedDetector<'a> {
         }
     }
 
+    #[inline]
     fn grayscale(&mut self) -> &Mat {
         if self.grayscale.is_none() {
             self.grayscale = Some(to_grayscale(self.mat, true));
@@ -406,7 +407,7 @@ fn detect_player(mat: &impl ToInputArray, offset: Point) -> Result<Rect> {
 }
 
 /// Detects the `template` from the given BGRA image `Mat`.
-#[inline(always)]
+#[inline]
 fn detect_template(
     mat: &impl ToInputArray,
     template: &Mat,
@@ -893,7 +894,7 @@ fn detect_minimap_name(mat: &Mat, minimap: Rect) -> Result<String> {
 ///
 /// Returns a triplet of `(Mat, width_ratio, height_ratio)` with the ratios calculed from
 /// `old_size / new_size`.
-#[inline(always)]
+#[inline]
 fn preprocess_for_yolo(mat: &Mat) -> (Mat, f32, f32) {
     let mut mat = mat.clone();
     let (w_ratio, h_ratio) = resize_w_h_ratio(mat.size().unwrap(), 640.0, 640.0);
@@ -913,7 +914,7 @@ fn preprocess_for_yolo(mat: &Mat) -> (Mat, f32, f32) {
 /// The preprocess is adapted from: https://github.com/clovaai/CRAFT-pytorch/blob/master/imgproc.py.
 ///
 /// Returns a `(Mat, width_ratio, height_ratio, x_offset, y_offset)`.
-#[inline(always)]
+#[inline]
 fn preprocess_for_minimap_name(mat: &Mat, minimap: Rect) -> (Mat, f32, f32, i32, i32) {
     let x_offset = minimap.x;
     let y_offset = (minimap.y - minimap.height).max(0);
@@ -959,13 +960,13 @@ fn preprocess_for_minimap_name(mat: &Mat, minimap: Rect) -> (Mat, f32, f32, i32,
 }
 
 /// Retrieves `(width, height)` ratios for resizing.
-#[inline(always)]
+#[inline]
 fn resize_w_h_ratio(from: Size, to_w: f32, to_h: f32) -> (f32, f32) {
     (from.width as f32 / to_w, from.height as f32 / to_h)
 }
 
 /// Converts an BGRA `Mat` image to BGR.
-#[inline(always)]
+#[inline]
 fn to_bgr(mat: &impl MatTraitConst) -> Mat {
     let mut mat = mat.try_clone().unwrap();
     unsafe {
@@ -981,7 +982,7 @@ fn to_bgr(mat: &impl MatTraitConst) -> Mat {
 ///
 /// `add_contrast` can be set to `true` in order to increase contrast by a fixed amount
 /// used for template matching.
-#[inline(always)]
+#[inline]
 fn to_grayscale(mat: &impl MatTraitConst, add_contrast: bool) -> Mat {
     let mut mat = mat.try_clone().unwrap();
     unsafe {
@@ -1000,7 +1001,7 @@ fn to_grayscale(mat: &impl MatTraitConst, add_contrast: bool) -> Mat {
 /// Extracts a borrowed `Mat` from `SessionOutputs`.
 ///
 /// The returned `BoxedRef<'_, Mat>` has shape `[..dims]` with batch size (1) removed.
-#[inline(always)]
+#[inline]
 fn from_output_value<'a>(result: &SessionOutputs) -> BoxedRef<'a, Mat> {
     let (dims, outputs) = result["output0"].try_extract_raw_tensor::<f32>().unwrap();
     let dims = dims.iter().map(|&dim| dim as i32).collect::<Vec<i32>>();
@@ -1014,7 +1015,7 @@ fn from_output_value<'a>(result: &SessionOutputs) -> BoxedRef<'a, Mat> {
 ///
 /// The input `Mat` is assumed to be continuous, normalized RGB `f32` data type and will panic if not.
 /// The `Mat` is reshaped to single channel, tranposed to `[1, 3, H, W]` and converted to `SessionInputValue`.
-#[inline(always)]
+#[inline]
 fn norm_rgb_to_input_value(mat: &Mat) -> SessionInputValue {
     let mat = mat.reshape_nd(1, &[1, mat.rows(), mat.cols(), 3]).unwrap();
     let mut mat_t = Mat::default();

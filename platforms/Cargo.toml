@@ -18,3 +18,10 @@ windows = { version = "0.59", features = [
 
 [target.'cfg(windows)'.build-dependencies]
 tauri-winres = "0.1"
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "capture"
+harness = false
