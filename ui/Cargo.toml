@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-dioxus = { version = "0.6.2", features = ["desktop"] }
+dioxus = { version = "0.6.3", features = ["desktop"] }
 backend = { workspace = true }
 tokio = { version = "1.43.0" }
 tracing-log = "0.2.0"

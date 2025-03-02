@@ -13,7 +13,8 @@ use opencv::core::{Mat, MatTraitConst, MatTraitConstManual, Vec4b};
 use platforms::windows::{self, Capture, Handle, KeyKind, Keys};
 
 use crate::{
-    Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, Request, RotationMode,
+    Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, KeyBindingConfiguration,
+    Request, RotationMode,
     buff::{Buff, BuffKind, BuffState},
     database::{Configuration, KeyBinding, delete_map, query_config, refresh_config, refresh_map},
     detect::{CachedDetector, Detector},
@@ -173,7 +174,7 @@ pub fn start_update_loop() {
                                         .concat()
                                         .to_vec(),
                                     &buffs,
-                                    config.potion_key,
+                                    config.potion_key.key,
                                 );
                                 return Box::new(true);
                             }
@@ -199,9 +200,10 @@ pub fn start_update_loop() {
                     }
                     Request::RefreshConfiguration => {
                         let _ = refresh_config(&mut config);
-                        player_state.interact_key = Some(map_key(config.interact_key));
-                        player_state.grappling_key = Some(map_key(config.ropelift_key));
-                        player_state.upjump_key = config.up_jump_key.map(map_key);
+                        player_state.interact_key = Some(map_key(config.interact_key.key));
+                        player_state.grappling_key = Some(map_key(config.ropelift_key.key));
+                        player_state.upjump_key =
+                            config.up_jump_key.map(|key| key.key).map(map_key);
                         buffs = default_buffs(&config);
                         rotator.rotator_mode(map_rotate_mode(config.rotation_mode));
                         rotator.build_actions(
@@ -209,7 +211,7 @@ pub fn start_update_loop() {
                                 .concat()
                                 .to_vec(),
                             &buffs,
-                            config.potion_key,
+                            config.potion_key.key,
                         );
                         Box::new(())
                     }
@@ -354,27 +356,27 @@ pub fn map_key(key: KeyBinding) -> KeyKind {
 
 fn default_buffs(config: &Configuration) -> Vec<(usize, KeyBinding)> {
     let mut buffs = Vec::<(usize, KeyBinding)>::new();
-    if let Some(key) = config.sayram_elixir_key {
-        buffs.push((SAYRAM_ELIXIR_BUFF_POSITION, key));
-    }
-    if let Some(key) = config.exp_x3_key {
-        buffs.push((EXP_X3_BUFF_POSITION, key));
-    }
-    if let Some(key) = config.bonus_exp_key {
-        buffs.push((BONUS_EXP_BUFF_POSITION, key));
-    }
-    if let Some(key) = config.legion_luck_key {
-        buffs.push((LEGION_LUCK_BUFF_POSITION, key));
-    }
-    if let Some(key) = config.legion_wealth_key {
-        buffs.push((LEGION_WEALTH_BUFF_POSITION, key));
-    }
+    // if let Some(key) = config.sayram_elixir_key {
+    //     buffs.push((SAYRAM_ELIXIR_BUFF_POSITION, key.key));
+    // }
+    // if let Some(key) = config.exp_x3_key {
+    //     buffs.push((EXP_X3_BUFF_POSITION, key.key));
+    // }
+    // if let Some(key) = config.bonus_exp_key {
+    //     buffs.push((BONUS_EXP_BUFF_POSITION, key.key));
+    // }
+    // if let Some(key) = config.legion_luck_key {
+    //     buffs.push((LEGION_LUCK_BUFF_POSITION, key.key));
+    // }
+    // if let Some(key) = config.legion_wealth_key {
+    //     buffs.push((LEGION_WEALTH_BUFF_POSITION, key.key));
+    // }
     buffs
 }
 
 fn default_actions(config: &Configuration) -> [Action; 4] {
     let feed_pet_action = ActionKey {
-        key: config.feed_pet_key,
+        key: config.feed_pet_key.key,
         position: None,
         condition: ActionCondition::EveryMillis(120000),
         direction: ActionKeyDirection::Any,
@@ -383,7 +385,7 @@ fn default_actions(config: &Configuration) -> [Action; 4] {
         wait_after_use_ticks: 10,
     };
     let potion_action = ActionKey {
-        key: config.potion_key,
+        key: config.potion_key.key,
         ..feed_pet_action
     };
     [

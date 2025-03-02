@@ -1,23 +1,29 @@
 use dioxus::prelude::*;
 
 #[derive(PartialEq, Props, Clone)]
-pub struct OptionsProps<T: 'static + Clone + PartialEq> {
+pub struct OptionProps<T: 'static + Clone + PartialEq> {
     label: String,
+    #[props(default = String::default())]
+    div_class: String,
+    #[props(default = String::default())]
+    label_class: String,
+    #[props(default = String::default())]
+    select_class: String,
     options: Vec<(T, String)>,
     on_select: EventHandler<T>,
     selected: T,
 }
 
 #[component]
-pub fn Options<T>(props: OptionsProps<T>) -> Element
+pub fn Option<T>(props: OptionProps<T>) -> Element
 where
     T: PartialEq + Clone + 'static,
 {
     rsx! {
-        div { class: "flex gap-[8px] justify-items-center",
-            p { class: "font-main", {props.label} }
+        div { class: props.div_class,
+            label { class: props.label_class, {props.label} }
             select {
-                class: "border border-black",
+                class: props.select_class,
                 onchange: move |e| {
                     let value = e
                         .value()
@@ -28,7 +34,6 @@ where
                 },
                 for (i , opt) in props.options.iter().enumerate() {
                     option {
-                        class: "font-main",
                         selected: opt.0 == props.selected,
                         value: i.to_string(),
                         label: opt.1.clone(),

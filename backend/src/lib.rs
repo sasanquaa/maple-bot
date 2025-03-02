@@ -35,8 +35,9 @@ pub use {
     database::{
         Action, ActionCondition, ActionConditionDiscriminants, ActionDiscriminants, ActionKey,
         ActionKeyDirection, ActionKeyDirectionDiscriminants, ActionKeyWith,
-        ActionKeyWithDiscriminants, ActionMove, KeyBinding, KeyBindingDiscriminants, Minimap,
-        Position, RotationMode, RotationModeDiscriminants, query_config, upsert_config, upsert_map,
+        ActionKeyWithDiscriminants, ActionMove, KeyBinding, KeyBindingConfiguration,
+        KeyBindingDiscriminants, Minimap, Position, RotationMode, RotationModeDiscriminants,
+        query_config, upsert_config, upsert_map,
     },
     rotator::RotatorMode,
     strum::IntoEnumIterator,

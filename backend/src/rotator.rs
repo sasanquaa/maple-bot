@@ -52,7 +52,7 @@ impl Rotator {
         self.normal_actions.clear();
         self.priority_actions.clear();
 
-        for action in actions.iter().cloned() {
+        for action in actions.iter().copied() {
             match action {
                 Action::Move(ActionMove { condition, .. })
                 | Action::Key(ActionKey { condition, .. }) => match condition {

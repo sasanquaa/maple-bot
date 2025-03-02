@@ -43,17 +43,33 @@ trait Identifiable {
 pub struct Configuration {
     #[serde(skip_serializing, default)]
     pub id: Option<i64>,
-    pub ropelift_key: KeyBinding,
-    pub up_jump_key: Option<KeyBinding>,
-    pub interact_key: KeyBinding,
-    pub feed_pet_key: KeyBinding,
-    pub potion_key: KeyBinding,
+    pub ropelift_key: KeyBindingConfiguration,
+    pub up_jump_key: Option<KeyBindingConfiguration>,
+    pub interact_key: KeyBindingConfiguration,
+    pub cash_shop_key: KeyBindingConfiguration,
+    pub feed_pet_key: KeyBindingConfiguration,
+    pub potion_key: KeyBindingConfiguration,
     pub rotation_mode: RotationMode,
-    pub sayram_elixir_key: Option<KeyBinding>,
-    pub exp_x3_key: Option<KeyBinding>,
-    pub bonus_exp_key: Option<KeyBinding>,
-    pub legion_wealth_key: Option<KeyBinding>,
-    pub legion_luck_key: Option<KeyBinding>,
+    pub sayram_elixir_key: KeyBindingConfiguration,
+    pub exp_x3_key: KeyBindingConfiguration,
+    pub bonus_exp_key: KeyBindingConfiguration,
+    pub legion_wealth_key: KeyBindingConfiguration,
+    pub legion_luck_key: KeyBindingConfiguration,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub struct KeyBindingConfiguration {
+    pub key: KeyBinding,
+    pub enabled: bool,
+}
+
+impl Default for KeyBindingConfiguration {
+    fn default() -> Self {
+        Self {
+            key: KeyBinding::default(),
+            enabled: true,
+        }
+    }
 }
 
 #[derive(
