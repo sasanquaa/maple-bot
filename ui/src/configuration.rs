@@ -1,13 +1,16 @@
 use std::str::FromStr;
 
-use crate::option::Option;
 use backend::{
-    IntoEnumIterator, KeyBinding, KeyBindingConfiguration, RotationMode, RotationModeDiscriminants,
-    query_config, refresh_configuration, upsert_config,
+    Configuration as ConfigurationData, IntoEnumIterator, KeyBinding, KeyBindingConfiguration,
+    RotationMode, query_configs, update_configuration, upsert_config,
 };
 use dioxus::prelude::*;
+use tokio::task::spawn_blocking;
 
-use crate::key::KeyInput;
+use crate::{
+    key::KeyInput,
+    select::{Select, TextSelect},
+};
 
 const ROPE_LIFT: &str = "Rope Lift";
 const UP_JUMP: &str = "Up Jump";
@@ -23,22 +26,78 @@ const LEGION_LUCK: &str = "Legion's Luck";
 
 #[component]
 pub fn Configuration() -> Element {
-    let mut config = use_signal(|| query_config().unwrap());
+    let mut configs = use_signal_sync(Vec::<ConfigurationData>::new);
+    let config_names =
+        use_memo(move || configs().iter().map(|config| config.name.clone()).collect());
+    let mut config = use_signal_sync(|| None);
+    let config_view = use_memo(move || config().unwrap_or_default());
     let mut active = use_signal(|| None);
+    let on_config = use_callback(move |new_config: ConfigurationData| {
+        if config.peek().is_some() {
+            let id = new_config.id;
+            if id.is_none() {
+                config.set(None);
+            } else {
+                config.set(Some(new_config.clone()));
+                *configs
+                    .write()
+                    .iter_mut()
+                    .find(|config| config.id == id)
+                    .unwrap() = new_config.clone();
+            }
+            spawn(async move {
+                let new_config = spawn_blocking(move || {
+                    let mut new_config = new_config;
+                    upsert_config(&mut new_config).unwrap();
+                    if id.is_none() {
+                        config.set(Some(new_config.clone()));
+                        configs.write().push(new_config.clone());
+                    }
+                    new_config
+                })
+                .await
+                .unwrap();
+                update_configuration(new_config).await;
+            });
+        }
+    });
+    let disabled = use_memo(move || config().is_none());
+    let data_disabled = disabled.peek().then_some(true);
 
-    use_effect(move || {
-        upsert_config(&mut config()).unwrap();
-        spawn(async move {
-            refresh_configuration().await;
-        });
+    use_future(move || async move {
+        let result = spawn_blocking(|| query_configs().unwrap()).await.unwrap();
+        config.set(result.first().cloned());
+        configs.set(result);
     });
 
     rsx! {
         div { class: "flex flex-col",
-            h2 { class: "text-sm font-medium text-gray-700 mb-2", "Key Bindings" }
+            div { class: "mb-4 h-7 w-44 align-self-start",
+                TextSelect {
+                    on_create: move |created: String| {
+                        on_config(ConfigurationData {
+                            name: created,
+                            ..ConfigurationData::default()
+                        });
+                    },
+                    disabled: disabled(),
+                    on_select: move |selected| {
+                        config
+                            .set(configs.peek().iter().find(|config| config.name == selected).cloned());
+                    },
+                    options: config_names(),
+                    selected: config_view().name,
+                }
+            }
+            h2 {
+                class: "text-sm font-medium text-gray-700 mb-2 data-[disabled]:text-gray-400",
+                "data-disabled": data_disabled,
+                "Key Bindings"
+            }
             div { class: "space-y-1",
                 KeyBindingConfigurationInput {
                     label: ROPE_LIFT,
+                    input_disabled: disabled(),
                     is_optional: false,
                     is_active: matches!(active(), Some(ROPE_LIFT)),
                     on_active: move |value: bool| {
@@ -46,12 +105,16 @@ pub fn Configuration() -> Element {
                     },
                     can_disable: false,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
-                        config.write().ropelift_key = key.unwrap();
+                        on_config(ConfigurationData {
+                            ropelift_key: key.unwrap(),
+                            ..config_view.peek().clone()
+                        });
                     },
-                    value: Some(config().ropelift_key),
+                    value: Some(config_view().ropelift_key),
                 }
                 KeyBindingConfigurationInput {
                     label: UP_JUMP,
+                    input_disabled: disabled(),
                     is_optional: true,
                     is_active: matches!(active(), Some(UP_JUMP)),
                     on_active: move |value: bool| {
@@ -59,12 +122,16 @@ pub fn Configuration() -> Element {
                     },
                     can_disable: false,
                     on_input: move |key| {
-                        config.write().up_jump_key = key;
+                        on_config(ConfigurationData {
+                            up_jump_key: key,
+                            ..config_view.peek().clone()
+                        });
                     },
-                    value: config().up_jump_key,
+                    value: config_view().up_jump_key,
                 }
                 KeyBindingConfigurationInput {
                     label: INTERACT,
+                    input_disabled: disabled(),
                     is_optional: false,
                     is_active: matches!(active(), Some(INTERACT)),
                     on_active: move |value: bool| {
@@ -72,12 +139,16 @@ pub fn Configuration() -> Element {
                     },
                     can_disable: false,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
-                        config.write().interact_key = key.unwrap();
+                        on_config(ConfigurationData {
+                            interact_key: key.unwrap(),
+                            ..config_view.peek().clone()
+                        });
                     },
-                    value: Some(config().interact_key),
+                    value: Some(config_view().interact_key),
                 }
                 KeyBindingConfigurationInput {
                     label: CASH_SHOP,
+                    input_disabled: disabled(),
                     is_optional: false,
                     is_active: matches!(active(), Some(CASH_SHOP)),
                     on_active: move |value: bool| {
@@ -85,12 +156,16 @@ pub fn Configuration() -> Element {
                     },
                     can_disable: false,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
-                        config.write().cash_shop_key = key.unwrap();
+                        on_config(ConfigurationData {
+                            cash_shop_key: key.unwrap(),
+                            ..config_view.peek().clone()
+                        });
                     },
-                    value: Some(config().cash_shop_key),
+                    value: Some(config_view().cash_shop_key),
                 }
                 KeyBindingConfigurationInput {
                     label: FEED_PET,
+                    input_disabled: disabled(),
                     is_optional: false,
                     is_active: matches!(active(), Some(FEED_PET)),
                     on_active: move |value: bool| {
@@ -98,12 +173,16 @@ pub fn Configuration() -> Element {
                     },
                     can_disable: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
-                        config.write().feed_pet_key = key.unwrap();
+                        on_config(ConfigurationData {
+                            feed_pet_key: key.unwrap(),
+                            ..config_view.peek().clone()
+                        });
                     },
-                    value: Some(config().feed_pet_key),
+                    value: Some(config_view().feed_pet_key),
                 }
                 KeyBindingConfigurationInput {
                     label: POTION,
+                    input_disabled: disabled(),
                     is_optional: false,
                     is_active: matches!(active(), Some(POTION)),
                     on_active: move |value: bool| {
@@ -111,12 +190,16 @@ pub fn Configuration() -> Element {
                     },
                     can_disable: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
-                        config.write().potion_key = key.unwrap();
+                        on_config(ConfigurationData {
+                            potion_key: key.unwrap(),
+                            ..config_view.peek().clone()
+                        });
                     },
-                    value: Some(config().potion_key),
+                    value: Some(config_view().potion_key),
                 }
                 KeyBindingConfigurationInput {
                     label: SAYRAM_ELIXIR,
+                    input_disabled: disabled(),
                     is_optional: false,
                     is_active: matches!(active(), Some(SAYRAM_ELIXIR)),
                     on_active: move |value: bool| {
@@ -124,12 +207,16 @@ pub fn Configuration() -> Element {
                     },
                     can_disable: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
-                        config.write().sayram_elixir_key = key.unwrap();
+                        on_config(ConfigurationData {
+                            sayram_elixir_key: key.unwrap(),
+                            ..config_view.peek().clone()
+                        });
                     },
-                    value: Some(config().sayram_elixir_key),
+                    value: Some(config_view().sayram_elixir_key),
                 }
                 KeyBindingConfigurationInput {
                     label: EXP_X3,
+                    input_disabled: disabled(),
                     is_optional: false,
                     is_active: matches!(active(), Some(EXP_X3)),
                     on_active: move |value: bool| {
@@ -137,12 +224,16 @@ pub fn Configuration() -> Element {
                     },
                     can_disable: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
-                        config.write().exp_x3_key = key.unwrap();
+                        on_config(ConfigurationData {
+                            exp_x3_key: key.unwrap(),
+                            ..config_view.peek().clone()
+                        });
                     },
-                    value: Some(config().exp_x3_key),
+                    value: Some(config_view().exp_x3_key),
                 }
                 KeyBindingConfigurationInput {
                     label: BONUS_EXP,
+                    input_disabled: disabled(),
                     is_optional: false,
                     is_active: matches!(active(), Some(BONUS_EXP)),
                     on_active: move |value: bool| {
@@ -150,12 +241,16 @@ pub fn Configuration() -> Element {
                     },
                     can_disable: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
-                        config.write().bonus_exp_key = key.unwrap();
+                        on_config(ConfigurationData {
+                            bonus_exp_key: key.unwrap(),
+                            ..config_view.peek().clone()
+                        });
                     },
-                    value: Some(config().bonus_exp_key),
+                    value: Some(config_view().bonus_exp_key),
                 }
                 KeyBindingConfigurationInput {
                     label: LEGION_WEALTH,
+                    input_disabled: disabled(),
                     is_optional: false,
                     is_active: matches!(active(), Some(LEGION_WEALTH)),
                     on_active: move |value: bool| {
@@ -163,12 +258,16 @@ pub fn Configuration() -> Element {
                     },
                     can_disable: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
-                        config.write().legion_wealth_key = key.unwrap();
+                        on_config(ConfigurationData {
+                            legion_wealth_key: key.unwrap(),
+                            ..config_view.peek().clone()
+                        });
                     },
-                    value: Some(config().legion_wealth_key),
+                    value: Some(config_view().legion_wealth_key),
                 }
                 KeyBindingConfigurationInput {
                     label: LEGION_LUCK,
+                    input_disabled: disabled(),
                     is_optional: false,
                     is_active: matches!(active(), Some(LEGION_LUCK)),
                     on_active: move |value: bool| {
@@ -176,38 +275,54 @@ pub fn Configuration() -> Element {
                     },
                     can_disable: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
-                        config.write().legion_luck_key = key.unwrap();
+                        on_config(ConfigurationData {
+                            legion_luck_key: key.unwrap(),
+                            ..config_view.peek().clone()
+                        });
                     },
-                    value: Some(config().legion_luck_key),
+                    value: Some(config_view().legion_luck_key),
                 }
             }
-            h2 { class: "text-sm font-medium text-gray-700 mt-4 mb-2", "Other" }
+            h2 {
+                class: "text-sm font-medium text-gray-700 mt-4 mb-2 data-[disabled]:text-gray-400",
+                "data-disabled": data_disabled,
+                "Other"
+            }
             RotationModeInput {
                 on_input: move |mode| {
-                    config.write().rotation_mode = mode;
+                    on_config(ConfigurationData {
+                        rotation_mode: mode,
+                        ..config_view.peek().clone()
+                    });
                 },
-                value: config().rotation_mode,
+                disabled: disabled(),
+                value: config_view().rotation_mode,
             }
         }
     }
 }
 
 #[component]
-fn RotationModeInput(on_input: EventHandler<RotationMode>, value: RotationMode) -> Element {
-    let options = RotationModeDiscriminants::iter()
-        .map(|disc| (disc, disc.to_string()))
+fn RotationModeInput(
+    on_input: EventHandler<RotationMode>,
+    disabled: bool,
+    value: RotationMode,
+) -> Element {
+    let options = RotationMode::iter()
+        .map(|variant| (variant.to_string(), variant.to_string()))
         .collect::<Vec<_>>();
-    let selected = RotationModeDiscriminants::from(value);
+    let selected = value.to_string();
 
     rsx! {
-        Option {
+        Select {
             label: "Rotation Mode",
+            disabled,
             div_class: "flex items-center space-x-4",
-            label_class: "text-xs text-gray-700 flex-1 inline-block",
-            select_class: "w-44 text-xs text-gray-700 text-ellipsis rounded outline-none",
+            label_class: "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400",
+            select_class: "w-44 text-xs text-gray-700 text-ellipsis rounded outline-none disabled:cursor-not-allowed disabled:text-gray-400",
             options,
-            on_select: move |disc: RotationModeDiscriminants| {
-                on_input(RotationMode::from_str(&disc.to_string()).unwrap());
+            on_select: move |variant: String| {
+                on_input(RotationMode::from_str(variant.as_str()).unwrap());
             },
             selected,
         }
@@ -217,6 +332,7 @@ fn RotationModeInput(on_input: EventHandler<RotationMode>, value: RotationMode) 
 #[derive(PartialEq, Props, Clone)]
 struct KeyBindingConfigurationInputProps {
     label: String,
+    input_disabled: bool,
     is_optional: bool,
     is_active: bool,
     on_active: EventHandler<bool>,
@@ -245,11 +361,14 @@ fn KeyBindingConfigurationInput(props: KeyBindingConfigurationInputProps) -> Ele
                 .map(|config| KeyBindingConfiguration { key, ..config }),
         );
     });
+    let input_width = if props.can_disable { "w-24" } else { "w-44" };
 
     rsx! {
         div { class: "flex items-center space-x-4 py-2 border-b border-gray-100",
             div { class: "flex-1",
-                span { class: "text-xs text-gray-700",
+                span {
+                    class: "text-xs text-gray-700 data-[disabled]:text-gray-400",
+                    "data-disabled": props.input_disabled.then_some(true),
                     {props.label}
                     if props.is_optional {
                         span { class: "text-xs text-gray-400 ml-1", "(Optional)" }
@@ -257,29 +376,33 @@ fn KeyBindingConfigurationInput(props: KeyBindingConfigurationInputProps) -> Ele
                 }
             }
             div { class: "flex items-center space-x-2",
-                KeyInput {
-                    class: format!(
-                        "border rounded border-gray-300 h-7 {}",
-                        if props.can_disable { "w-24" } else { "w-44" },
-                    ),
-                    is_active: props.is_active,
-                    on_active: props.on_active,
-                    on_input: move |key| {
-                        if let Some(key) = key {
-                            on_key_input(key);
-                        }
-                    },
-                    value: props.value.map(|key| key.key),
+                div {
+                    class: "relative",
+                    KeyInput {
+                        class: "border rounded border-gray-300 h-7 {input_width} disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400",
+                        disabled: props.input_disabled,
+                        is_active: props.is_active,
+                        on_active: props.on_active,
+                        on_input: move |key| {
+                            if let Some(key) = key {
+                                on_key_input(key);
+                            }
+                        },
+                        value: props.value.map(|key| key.key),
+                    }
+                    div {
+                        class: "absolute flex w-24 h-24 items-center justify-center x-mark h-full right-2 top-0",
+                    }
                 }
                 if props.can_disable {
                     button {
                         r#type: "button",
-                        disabled: props.value.is_none(),
+                        disabled: props.input_disabled || props.value.is_none(),
                         class: {
                             let color = if is_enabled {
-                                "enabled:bg-blue-100 enabled:text-blue-700 enabled:hover:bg-blue-200"
+                                "bg-blue-100 text-blue-700 enabled:hover:bg-blue-200"
                             } else {
-                                "enabled:bg-red-100 enabled:text-red-500 enabled:hover:bg-red-200"
+                                "bg-red-100 text-red-500 enabled:hover:bg-red-200"
                             };
                             let disabled = "disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed";
                             let class = "px-3 py-1.5 rounded w-18 text-xs font-medium";

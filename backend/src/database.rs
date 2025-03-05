@@ -4,10 +4,10 @@ use std::{
     sync::{LazyLock, Mutex},
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use rusqlite::{Connection, Params, Statement, types::Null};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use strum::{EnumDiscriminants, EnumIter, EnumString};
+use strum::{Display, EnumIter, EnumString};
 
 static CONNECTION: LazyLock<Mutex<Connection>> = LazyLock::new(|| {
     let path = env::current_exe()
@@ -39,10 +39,11 @@ trait Identifiable {
     fn set_id(&mut self, id: i64);
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct Configuration {
     #[serde(skip_serializing, default)]
     pub id: Option<i64>,
+    pub name: String,
     pub ropelift_key: KeyBindingConfiguration,
     pub up_jump_key: Option<KeyBindingConfiguration>,
     pub interact_key: KeyBindingConfiguration,
@@ -73,9 +74,8 @@ impl Default for KeyBindingConfiguration {
 }
 
 #[derive(
-    Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumString, EnumDiscriminants,
+    Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumIter, Display, EnumString,
 )]
-#[strum_discriminants(derive(EnumIter, strum::Display))]
 pub enum RotationMode {
     StartToEnd,
     #[default]
@@ -112,21 +112,21 @@ impl Identifiable for Minimap {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Position {
     pub x: i32,
     pub y: i32,
     pub allow_adjusting: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize)]
 pub struct ActionMove {
     pub position: Position,
     pub condition: ActionCondition,
     pub wait_after_move_ticks: u32,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize)]
 pub struct ActionKey {
     pub key: KeyBinding,
     pub position: Option<Position>,
@@ -137,33 +137,35 @@ pub struct ActionKey {
     pub wait_after_use_ticks: u32,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, EnumDiscriminants)]
-#[strum_discriminants(derive(EnumIter, strum::Display))]
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, EnumIter, Display, EnumString)]
 pub enum Action {
     Move(ActionMove),
     Key(ActionKey),
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, EnumDiscriminants)]
-#[strum_discriminants(derive(EnumIter, strum::Display))]
+#[derive(
+    Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize, EnumIter, Display, EnumString,
+)]
 pub enum ActionCondition {
+    #[default]
     Any,
     EveryMillis(u64),
     ErdaShowerOffCooldown,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, EnumString, EnumDiscriminants)]
-#[strum_discriminants(derive(EnumIter, strum::Display))]
+#[derive(
+    Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize, EnumIter, Display, EnumString,
+)]
 pub enum ActionKeyWith {
+    #[default]
     Any,
     Stationary,
     DoubleJump,
 }
 
 #[derive(
-    Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumString, EnumDiscriminants,
+    Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumIter, Display, EnumString,
 )]
-#[strum_discriminants(derive(EnumIter, strum::Display))]
 pub enum ActionKeyDirection {
     #[default]
     Any,
@@ -172,9 +174,8 @@ pub enum ActionKeyDirection {
 }
 
 #[derive(
-    Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumString, EnumDiscriminants,
+    Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumIter, Display, EnumString,
 )]
-#[strum_discriminants(derive(EnumIter, strum::Display))]
 pub enum KeyBinding {
     #[default]
     A,
@@ -241,22 +242,23 @@ pub enum KeyBinding {
     Alt,
 }
 
-pub fn query_config() -> Result<Configuration> {
-    query_from_table("configurations").map(|vec| {
-        vec.into_iter().next().unwrap_or_else(|| {
-            let mut config = Configuration::default();
+pub fn query_configs() -> Result<Vec<Configuration>> {
+    let mut result = query_from_table("configurations");
+    if let Ok(vec) = result.as_mut() {
+        if vec.is_empty() {
+            let mut config = Configuration {
+                name: "default".to_string(),
+                ..Configuration::default()
+            };
             upsert_config(&mut config).unwrap();
-            config
-        })
-    })
+            vec.push(config);
+        }
+    }
+    result
 }
 
 pub fn upsert_config(config: &mut Configuration) -> Result<()> {
     upsert_to_table("configurations", config)
-}
-
-pub fn refresh_config(config: &mut Configuration) -> Result<()> {
-    refresh_data_from_table("configurations", config)
 }
 
 pub fn query_maps() -> Result<Vec<Minimap>> {
@@ -269,10 +271,6 @@ pub fn upsert_map(map: &mut Minimap) -> Result<()> {
 
 pub fn delete_map(map: &Minimap) -> Result<()> {
     delete_from_table("maps", map)
-}
-
-pub fn refresh_map(map: &mut Minimap) -> Result<()> {
-    refresh_data_from_table("maps", map)
 }
 
 fn map_data<T>(mut stmt: Statement<'_>, params: impl Params) -> Result<Vec<T>>
@@ -289,23 +287,6 @@ where
         })?
         .filter_map(|c| c.ok())
         .collect::<Vec<_>>())
-}
-
-fn refresh_data_from_table<T>(table: &str, data: &mut T) -> Result<()>
-where
-    T: DeserializeOwned + Identifiable,
-{
-    let id = data.id().ok_or(anyhow!("data does not have id"))?;
-    let conn = CONNECTION.lock().unwrap();
-    let stmt = format!("SELECT id, data FROM {} WHERE id = ?1;", table);
-    let stmt = conn.prepare(&stmt).unwrap();
-    let latest_data = map_data(stmt, [id])?.into_iter().next();
-    if let Some(latest_data) = latest_data {
-        *data = latest_data;
-        Ok(())
-    } else {
-        Err(anyhow!("data not found"))
-    }
 }
 
 fn query_from_table<T>(table: &str) -> Result<Vec<T>>

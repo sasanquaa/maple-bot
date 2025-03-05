@@ -13,10 +13,9 @@ use opencv::core::{Mat, MatTraitConst, MatTraitConstManual, Vec4b};
 use platforms::windows::{self, Capture, Handle, KeyKind, Keys};
 
 use crate::{
-    Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, KeyBindingConfiguration,
-    Request, RotationMode,
+    Action, ActionCondition, ActionKey, KeyBindingConfiguration, Request, RotationMode,
     buff::{Buff, BuffKind, BuffState},
-    database::{Configuration, KeyBinding, delete_map, query_config, refresh_config, refresh_map},
+    database::{Configuration, KeyBinding, query_configs},
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
@@ -116,8 +115,8 @@ pub fn start_update_loop() {
             ];
             let mut rotator = Rotator::default();
             let mut actions = Vec::<Action>::new();
-            let mut config = query_config().unwrap();
-            let mut buffs = default_buffs(&config);
+            let mut config = query_configs().unwrap().into_iter().next().unwrap();
+            let mut buffs = config_buffs(&config);
             let mut context = Context {
                 keys,
                 minimap: Minimap::Detecting,
@@ -125,8 +124,52 @@ pub fn start_update_loop() {
                 skills: [Skill::Detecting],
                 buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
             };
-
-            rotator.rotator_mode(map_rotate_mode(config.rotation_mode));
+            let update_minimap = |updated_minimap: crate::database::Minimap,
+                                  preset: String,
+                                  context: &Context,
+                                  config: &Configuration,
+                                  buffs: &Vec<(usize, KeyBinding)>,
+                                  minimap_state: &mut MinimapState,
+                                  actions: &mut Vec<Action>,
+                                  rotator: &mut Rotator| {
+                minimap_state.data = updated_minimap;
+                if matches!(context.minimap, Minimap::Idle(_)) {
+                    if let Some(preset_actions) = minimap_state.data.actions.get(&preset) {
+                        *actions = preset_actions.clone();
+                        rotator.build_actions(
+                            config_actions(config)
+                                .into_iter()
+                                .chain(actions.iter().copied())
+                                .collect::<Vec<_>>()
+                                .as_slice(),
+                            buffs,
+                            config.potion_key.key,
+                        );
+                    }
+                }
+            };
+            let update_config = |updated_config: Configuration,
+                                 config: &mut Configuration,
+                                 buffs: &mut Vec<(usize, KeyBinding)>,
+                                 actions: &Vec<Action>,
+                                 player_state: &mut PlayerState,
+                                 rotator: &mut Rotator| {
+                *config = updated_config;
+                *buffs = config_buffs(config);
+                player_state.interact_key = Some(map_key(config.interact_key.key));
+                player_state.grappling_key = Some(map_key(config.ropelift_key.key));
+                player_state.upjump_key = config.up_jump_key.map(|key| key.key).map(map_key);
+                rotator.rotator_mode(map_rotate_mode(config.rotation_mode));
+                rotator.build_actions(
+                    config_actions(config)
+                        .into_iter()
+                        .chain(actions.iter().copied())
+                        .collect::<Vec<_>>()
+                        .as_slice(),
+                    buffs,
+                    config.potion_key.key,
+                );
+            };
 
             loop_with_fps(30, || {
                 let Ok(mat) = capture.grab().map(OwnedMat::new) else {
@@ -160,33 +203,14 @@ pub fn start_update_loop() {
                     Request::RotateActions(halted) => {
                         halting = halted;
                         if halted {
-                            rotator.reset();
+                            rotator.reset_queue();
                             player_state.abort_actions();
                         }
                         Box::new(())
                     }
-                    Request::PrepareActions(preset) => {
-                        if let Some(preset_actions) = minimap_state.data.actions.get(&preset) {
-                            if matches!(context.minimap, Minimap::Idle(_)) {
-                                actions = preset_actions.clone();
-                                rotator.build_actions(
-                                    &[&default_actions(&config), actions.as_slice()]
-                                        .concat()
-                                        .to_vec(),
-                                    &buffs,
-                                    config.potion_key.key,
-                                );
-                                return Box::new(true);
-                            }
-                        }
-                        Box::new(false)
-                    }
                     Request::MinimapFrame => Box::new(extract_minimap(&context, &mat)),
-                    Request::RedetectMinimap(delete) => {
+                    Request::RedetectMinimap => {
                         context.minimap = Minimap::Detecting;
-                        if delete {
-                            let _ = delete_map(&minimap_state.data);
-                        }
                         Box::new(())
                     }
                     Request::MinimapData => Box::new(
@@ -194,24 +218,27 @@ pub fn start_update_loop() {
                             .then_some(minimap_state.data.clone()),
                     ),
                     Request::PlayerPosition => Box::new(player_state.last_known_pos),
-                    Request::RefreshMinimapData => {
-                        let _ = refresh_map(&mut minimap_state.data);
+                    Request::UpdateMinimap(preset, updated_minimap) => {
+                        update_minimap(
+                            updated_minimap,
+                            preset,
+                            &context,
+                            &config,
+                            &buffs,
+                            &mut minimap_state,
+                            &mut actions,
+                            &mut rotator,
+                        );
                         Box::new(())
                     }
-                    Request::RefreshConfiguration => {
-                        let _ = refresh_config(&mut config);
-                        player_state.interact_key = Some(map_key(config.interact_key.key));
-                        player_state.grappling_key = Some(map_key(config.ropelift_key.key));
-                        player_state.upjump_key =
-                            config.up_jump_key.map(|key| key.key).map(map_key);
-                        buffs = default_buffs(&config);
-                        rotator.rotator_mode(map_rotate_mode(config.rotation_mode));
-                        rotator.build_actions(
-                            &[&default_actions(&config), actions.as_slice()]
-                                .concat()
-                                .to_vec(),
-                            &buffs,
-                            config.potion_key.key,
+                    Request::UpdateConfiguration(updated_config) => {
+                        update_config(
+                            updated_config,
+                            &mut config,
+                            &mut buffs,
+                            &mut actions,
+                            &mut player_state,
+                            &mut rotator,
                         );
                         Box::new(())
                     }
@@ -354,44 +381,53 @@ pub fn map_key(key: KeyBinding) -> KeyKind {
     }
 }
 
-fn default_buffs(config: &Configuration) -> Vec<(usize, KeyBinding)> {
+fn config_buffs(config: &Configuration) -> Vec<(usize, KeyBinding)> {
     let mut buffs = Vec::<(usize, KeyBinding)>::new();
-    // if let Some(key) = config.sayram_elixir_key {
-    //     buffs.push((SAYRAM_ELIXIR_BUFF_POSITION, key.key));
-    // }
-    // if let Some(key) = config.exp_x3_key {
-    //     buffs.push((EXP_X3_BUFF_POSITION, key.key));
-    // }
-    // if let Some(key) = config.bonus_exp_key {
-    //     buffs.push((BONUS_EXP_BUFF_POSITION, key.key));
-    // }
-    // if let Some(key) = config.legion_luck_key {
-    //     buffs.push((LEGION_LUCK_BUFF_POSITION, key.key));
-    // }
-    // if let Some(key) = config.legion_wealth_key {
-    //     buffs.push((LEGION_WEALTH_BUFF_POSITION, key.key));
-    // }
+    let KeyBindingConfiguration { key, enabled } = config.sayram_elixir_key;
+    if enabled {
+        buffs.push((SAYRAM_ELIXIR_BUFF_POSITION, key));
+    }
+    let KeyBindingConfiguration { key, enabled } = config.exp_x3_key;
+    if enabled {
+        buffs.push((EXP_X3_BUFF_POSITION, key));
+    }
+    let KeyBindingConfiguration { key, enabled } = config.bonus_exp_key;
+    if enabled {
+        buffs.push((BONUS_EXP_BUFF_POSITION, key));
+    }
+    let KeyBindingConfiguration { key, enabled } = config.legion_luck_key;
+    if enabled {
+        buffs.push((LEGION_LUCK_BUFF_POSITION, key));
+    }
+    let KeyBindingConfiguration { key, enabled } = config.legion_wealth_key;
+    if enabled {
+        buffs.push((LEGION_WEALTH_BUFF_POSITION, key));
+    }
     buffs
 }
 
-fn default_actions(config: &Configuration) -> [Action; 4] {
-    let feed_pet_action = ActionKey {
-        key: config.feed_pet_key.key,
-        position: None,
-        condition: ActionCondition::EveryMillis(120000),
-        direction: ActionKeyDirection::Any,
-        with: ActionKeyWith::Any,
-        wait_before_use_ticks: 10,
-        wait_after_use_ticks: 10,
-    };
-    let potion_action = ActionKey {
-        key: config.potion_key.key,
-        ..feed_pet_action
-    };
-    [
-        Action::Key(feed_pet_action),
-        Action::Key(feed_pet_action),
-        Action::Key(feed_pet_action),
-        Action::Key(potion_action),
-    ]
+fn config_actions(config: &Configuration) -> Vec<Action> {
+    let mut vec = Vec::new();
+    if config.feed_pet_key.enabled {
+        let feed_pet_action = Action::Key(ActionKey {
+            key: config.feed_pet_key.key,
+            condition: ActionCondition::EveryMillis(120000),
+            wait_before_use_ticks: 10,
+            wait_after_use_ticks: 10,
+            ..ActionKey::default()
+        });
+        vec.push(feed_pet_action);
+        vec.push(feed_pet_action);
+        vec.push(feed_pet_action);
+    }
+    if config.potion_key.enabled {
+        vec.push(Action::Key(ActionKey {
+            key: config.potion_key.key,
+            condition: ActionCondition::EveryMillis(120000),
+            wait_before_use_ticks: 10,
+            wait_after_use_ticks: 10,
+            ..ActionKey::default()
+        }));
+    }
+    vec
 }

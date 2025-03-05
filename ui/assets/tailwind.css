@@ -9,6 +9,10 @@ body {
     background-image: url('data:image/svg+xml,<svg viewBox="0 0 16 16" fill="white" xmlns="http://www.w3.org/2000/svg"><path d="M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z"/></svg>');
 }
 
+@utility button-base {
+    @apply rounded text-xs font-medium py-1.5 px-2 disabled:cursor-not-allowed;
+}
+
 @layer base {
     input[type="number"]::-webkit-inner-spin-button,
     input[type="number"]::-webkit-outer-spin-button {
@@ -18,6 +22,26 @@ body {
 }
 
 @layer utilities {
+    .x-mark {
+        background-image: url('data:image/smg+xml,<svg xmlns="http://www.w3.org/2000/svg" fill="red" width="24" height="24" viewBox="0 0 24 24"><path d="M24 20.188l-8.315-8.209 8.2-8.282-3.697-3.697-8.212 8.318-8.31-8.203-3.666 3.666 8.321 8.24-8.206 8.313 3.666 3.666 8.237-8.318 8.285 8.203z"/></svg>');
+    }
+
+    .button-primary {
+        @apply button-base text-blue-700 bg-blue-100 enabled:hover:bg-blue-200 disabled:bg-gray-100 disabled:text-gray-500;
+    }
+
+    .button-secondary {
+        @apply button-base text-gray-700 enabled:hover:bg-gray-100 disabled:text-gray-500;
+    }
+
+    .button-tertiary {
+        @apply button-base text-gray-500 bg-gray-100 enabled:hover:bg-gray-200 disabled:text-gray-300;
+    }
+
+    .button-danger {
+        @apply button-base text-red-500 bg-red-100 enabled:hover:bg-red-200 disabled:text-red-300;
+    }
+
     .scrollbar::-webkit-scrollbar {
         width: 2px;
         height: 2px;
@@ -26,8 +50,4 @@ body {
     .scrollbar::-webkit-scrollbar-thumb {
         background: var(--color-gray-500);
     }
-}
-
-@theme {
-    --font-main: Meiryo, sans-serif;
 }

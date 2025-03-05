@@ -33,14 +33,12 @@ mod skill;
 pub use {
     context::start_update_loop,
     database::{
-        Action, ActionCondition, ActionConditionDiscriminants, ActionDiscriminants, ActionKey,
-        ActionKeyDirection, ActionKeyDirectionDiscriminants, ActionKeyWith,
-        ActionKeyWithDiscriminants, ActionMove, KeyBinding, KeyBindingConfiguration,
-        KeyBindingDiscriminants, Minimap, Position, RotationMode, RotationModeDiscriminants,
-        query_config, upsert_config, upsert_map,
+        Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
+        Configuration, KeyBinding, KeyBindingConfiguration, Minimap, Position, RotationMode,
+        delete_map, query_configs, upsert_config, upsert_map,
     },
     rotator::RotatorMode,
-    strum::IntoEnumIterator,
+    strum::{IntoEnumIterator, ParseError},
 };
 
 type Response = (Sender<Box<dyn Any + Send>>, Request);
@@ -53,34 +51,29 @@ static REQUESTS: LazyLock<(mpsc::Sender<Response>, Mutex<mpsc::Receiver<Response
 
 #[derive(Debug)]
 enum Request {
-    PrepareActions(String),
     RotateActions(bool),
-    RedetectMinimap(bool),
-    RefreshMinimapData,
-    RefreshConfiguration,
+    UpdateMinimap(String, Minimap),
+    UpdateConfiguration(Configuration),
+    RedetectMinimap,
     PlayerPosition,
     MinimapFrame,
     MinimapData,
-}
-
-pub async fn prepare_actions(preset: String) {
-    request::<()>(Request::PrepareActions(preset)).await
 }
 
 pub async fn rotate_actions(halting: bool) {
     request::<()>(Request::RotateActions(halting)).await
 }
 
-pub async fn redetect_minimap(delete: bool) {
-    request::<()>(Request::RedetectMinimap(delete)).await
+pub async fn update_minimap(preset: String, minimap: Minimap) {
+    request::<()>(Request::UpdateMinimap(preset, minimap)).await
 }
 
-pub async fn refresh_minimap_data() {
-    request::<()>(Request::RefreshMinimapData).await
+pub async fn update_configuration(config: Configuration) {
+    request::<()>(Request::UpdateConfiguration(config)).await
 }
 
-pub async fn refresh_configuration() {
-    request::<()>(Request::RefreshConfiguration).await
+pub async fn redetect_minimap() {
+    request::<()>(Request::RedetectMinimap).await
 }
 
 pub async fn player_position() -> Result<(i32, i32)> {

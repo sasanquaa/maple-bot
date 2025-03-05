@@ -1,20 +1,17 @@
 #![feature(variant_count)]
 #![feature(map_try_insert)]
 
+use std::fmt::Display;
 use std::ops::DerefMut;
 use std::str::FromStr;
 use std::string::ToString;
 
 use backend::{
-    Action, ActionCondition, ActionConditionDiscriminants, ActionDiscriminants, ActionKey,
-    ActionKeyDirection, ActionKeyDirectionDiscriminants, ActionKeyWith, ActionKeyWithDiscriminants,
-    ActionMove, IntoEnumIterator, KeyBinding, KeyBindingConfiguration, KeyBindingDiscriminants,
-    Minimap as MinimapData, Position, RotationMode, RotationModeDiscriminants, minimap_data,
-    minimap_frame, player_position, prepare_actions, query_config, redetect_minimap,
-    refresh_configuration, refresh_minimap_data, rotate_actions, start_update_loop, upsert_config,
-    upsert_map,
+    Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
+    IntoEnumIterator, KeyBinding, Minimap as MinimapData, ParseError, Position, delete_map,
+    minimap_data, minimap_frame, player_position, redetect_minimap, rotate_actions,
+    start_update_loop, update_minimap, upsert_map,
 };
-use checkbox::Checkbox;
 use configuration::Configuration;
 use dioxus::{
     desktop::{
@@ -25,41 +22,20 @@ use dioxus::{
     document::EvalError,
     prelude::*,
 };
-use key::{KeyBindingInput, KeyInput};
-use option::Option;
-use tab::Tab;
+use input::{Checkbox, KeyBindingInput, NumberInputI32, NumberInputU32, NumberInputU64};
+use select::{Select, TextSelect};
+use tokio::task::spawn_blocking;
 use tracing_log::LogTracer;
 
-mod checkbox;
 mod configuration;
+mod input;
 mod key;
-mod option;
-mod tab;
+mod select;
 
 const DIV_CLASS: &str = "flex h-6 items-center space-x-2";
-const LABEL_CLASS: &str = "w-20 text-xs text-gray-700 inline-block";
-const INPUT_CLASS: &str =
-    "w-22 h-full border border-gray-300 rounded text-xs text-ellipsis outline-none";
+const LABEL_CLASS: &str = "flex-1 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400";
+const INPUT_CLASS: &str = "w-22 h-full border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
 const TAILWIND_CSS: Asset = asset!("public/tailwind.css");
-const DEFAULT_POSITION: Position = Position {
-    x: 0,
-    y: 0,
-    allow_adjusting: true,
-};
-const DEFAULT_MOVE_ACTION: Action = Action::Move(ActionMove {
-    position: DEFAULT_POSITION,
-    condition: ActionCondition::Any,
-    wait_after_move_ticks: 0,
-});
-const DEFAULT_KEY_ACTION: Action = Action::Key(ActionKey {
-    key: KeyBinding::A,
-    position: Some(DEFAULT_POSITION),
-    condition: ActionCondition::ErdaShowerOffCooldown,
-    direction: ActionKeyDirection::Any,
-    with: ActionKeyWith::Any,
-    wait_before_use_ticks: 0,
-    wait_after_use_ticks: 0,
-});
 
 fn main() {
     LogTracer::init().unwrap();
@@ -81,13 +57,31 @@ fn App() -> Element {
     const TAB_CONFIGURATION: &str = "Configuration";
     const TAB_ACTIONS: &str = "Actions";
 
-    let mut action_key = use_signal(|| DEFAULT_KEY_ACTION);
+    let minimap = use_signal::<Option<MinimapData>>(|| None);
+    let mut preset = use_signal::<Option<String>>(move || None);
     let mut active_tab = use_signal(|| TAB_CONFIGURATION.to_string());
+
+    use_effect(move || {
+        if let Some((minimap, preset)) = minimap().zip(preset()) {
+            spawn(async move {
+                update_minimap(preset, minimap).await;
+            });
+        }
+    });
+    use_effect(move || {
+        if let Some(minimap) = minimap() {
+            if preset.peek().is_none() {
+                preset.set(minimap.actions.keys().next().cloned());
+            }
+        } else {
+            preset.set(None);
+        }
+    });
 
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
-        div { class: "flex flex-col w-md h-screen space-y-4",
-            Minimap {}
+        div { class: "flex flex-col w-md h-screen space-y-2",
+            Minimap { minimap }
             Tab {
                 tabs: vec![TAB_CONFIGURATION.to_string(), TAB_ACTIONS.to_string()],
                 on_tab: move |tab| {
@@ -95,55 +89,85 @@ fn App() -> Element {
                 },
                 tab: active_tab(),
             }
-            match active_tab().as_str() {
-                TAB_CONFIGURATION => rsx! {
-                    div { class: "p-4 overflow-y-auto scrollbar", Configuration {} }
-                },
-                TAB_ACTIONS => rsx! {
-                    div { class: "p-4 flex space-x-4 overflow-y-auto",
-                        div { class: "w-1/2 flex flex-col space-y-3",
-                            ActionInput {
-                                on_input: move |action| {
-                                    action_key.set(action);
-                                },
-                                value: action_key(),
-                            }
-                            ActionKeyInput {
-                                on_input: move |action| {
-                                    action_key.set(action);
-                                },
-                                value: action_key(),
-                            }
-                        }
-                        ActionItemList { actions: vec![DEFAULT_KEY_ACTION; 2], on_swap: move |(a, b)| {} }
-                    }
-                },
-                _ => unreachable!(),
+            div { class: "p-4 overflow-y-auto scrollbar h-full",
+                match active_tab().as_str() {
+                    TAB_CONFIGURATION => rsx! {
+                        Configuration {}
+                    },
+                    TAB_ACTIONS => rsx! {
+                        ActionInput { minimap, preset }
+                    },
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+}
+
+#[derive(PartialEq, Props, Clone)]
+struct TabProps {
+    tabs: Vec<String>,
+    on_tab: EventHandler<String>,
+    tab: String,
+}
+
+#[component]
+fn Tab(TabProps { tabs, on_tab, tab }: TabProps) -> Element {
+    rsx! {
+        div { class: "flex",
+            for t in tabs {
+                button {
+                    class: {
+                        let class = if t == tab {
+                            "bg-white text-gray-800"
+                        } else {
+                            "hover:text-gray-700 text-gray-400 bg-gray-100"
+                        };
+                        format!("{class} py-2 px-4 font-medium text-sm focus:outline-none")
+                    },
+                    onclick: move |_| {
+                        on_tab(t.clone());
+                    },
+                    {t.clone()}
+                }
             }
         }
     }
 }
 
 #[component]
-fn ActionItemList(actions: Vec<Action>, on_swap: EventHandler<(usize, usize)>) -> Element {
+fn ActionItemList(
+    actions: Vec<Action>,
+    on_click: EventHandler<(Action, usize)>,
+    on_swap: EventHandler<(usize, usize)>,
+) -> Element {
     let mut drag_index = use_signal(|| None);
 
     rsx! {
-        div { class: "flex-1 flex flex-col space-y-2 overflow-y-auto scrollbar",
-            for (i , action) in actions.into_iter().enumerate() {
-                ActionItem {
-                    index: i,
-                    action,
-                    on_drag: move |i| {
-                        drag_index.set(Some(i));
-                    },
-                    on_drop: move |i| {
-                        if let Some(drag_i) = drag_index.take() {
-                            if drag_i != i {
-                                on_swap((drag_i, i));
+        div { class: "flex-1 flex flex-col space-y-1 pl-1 overflow-y-auto scrollbar rounded border-l border-gray-300",
+            if actions.is_empty() {
+                div { class: "flex items-center justify-center text-sm text-gray-500 h-full",
+                    "No actions"
+                }
+            } else {
+                for (i , action) in actions.into_iter().enumerate() {
+                    ActionItem {
+                        index: i,
+                        action,
+                        on_click: move |_| {
+                            on_click((action, i));
+                        },
+                        on_drag: move |i| {
+                            drag_index.set(Some(i));
+                        },
+                        on_drop: move |i| {
+                            if let Some(drag_i) = drag_index.take() {
+                                if drag_i != i {
+                                    on_swap((drag_i, i));
+                                }
                             }
-                        }
-                    },
+                        },
+                    }
                 }
             }
         }
@@ -154,6 +178,7 @@ fn ActionItemList(actions: Vec<Action>, on_swap: EventHandler<(usize, usize)>) -
 fn ActionItem(
     index: usize,
     action: Action,
+    on_click: EventHandler<()>,
     on_drag: EventHandler<usize>,
     on_drop: EventHandler<usize>,
 ) -> Element {
@@ -162,8 +187,8 @@ fn ActionItem(
     const DIV: &str = "flex items-center space-x-1";
 
     let border_color = match action {
-        Action::Move(_) => "border-gray-500",
-        Action::Key(_) => "border-gray-800",
+        Action::Move(_) => "border-blue-300",
+        Action::Key(_) => "border-gray-300",
     };
 
     rsx! {
@@ -182,11 +207,47 @@ fn ActionItem(
             ondrop: move |_| {
                 on_drop(index);
             },
-            match action {
-                Action::Move(action_move) => todo!(),
-                Action::Key(action) => rsx! {
-                    div { class: "text-xs text-gray-700 space-y-2",
-                        if let Some(Position { x, y, allow_adjusting }) = action.position {
+            onclick: move |_| {
+                on_click(());
+            },
+            div { class: "text-xs text-gray-700 space-y-2",
+                match action {
+                    Action::Move(
+                        ActionMove {
+                            position: Position { x, y, allow_adjusting },
+                            condition,
+                            wait_after_move_ticks,
+                        },
+                    ) => rsx! {
+                        div { class: DIV,
+                            span { class: KEY, "Position" }
+                            span { class: VALUE, "{x}, {y}" }
+                        }
+                        div { class: DIV,
+                            span { class: KEY, "Adjust" }
+                            span { class: VALUE, "{allow_adjusting}" }
+                        }
+                        div { class: DIV,
+                            span { class: KEY, "Condition" }
+                            span { class: VALUE, {condition.to_string()} }
+                        }
+                        div { class: DIV,
+                            span { class: KEY, "Wait after" }
+                            span { class: VALUE, {wait_after_move_ticks.to_string()} }
+                        }
+                    },
+                    Action::Key(
+                        ActionKey {
+                            key,
+                            position,
+                            condition,
+                            direction,
+                            with,
+                            wait_before_use_ticks,
+                            wait_after_use_ticks,
+                        },
+                    ) => rsx! {
+                        if let Some(Position { x, y, allow_adjusting }) = position {
                             div { class: DIV,
                                 span { class: KEY, "Position" }
                                 span { class: VALUE, "{x}, {y}" }
@@ -198,44 +259,71 @@ fn ActionItem(
                         }
                         div { class: DIV,
                             span { class: KEY, "Key" }
-                            span { class: VALUE, {KeyBindingDiscriminants::from(action.key).to_string()} }
+                            span { class: VALUE, {key.to_string()} }
                         }
                         div { class: DIV,
                             span { class: KEY, "Condition" }
-                            span { class: VALUE, {ActionConditionDiscriminants::from(action.condition).to_string()} }
+                            span { class: VALUE, {condition.to_string()} }
                         }
                         div { class: DIV,
                             span { class: KEY, "Direction" }
-                            span { class: VALUE, {ActionKeyDirectionDiscriminants::from(action.direction).to_string()} }
+                            span { class: VALUE, {direction.to_string()} }
                         }
                         div { class: DIV,
                             span { class: KEY, "With" }
-                            span { class: VALUE, {ActionKeyWithDiscriminants::from(action.with).to_string()} }
+                            span { class: VALUE, {with.to_string()} }
                         }
-                    }
-                },
+                        div { class: DIV,
+                            span { class: KEY, "Wait before" }
+                            span { class: VALUE, {wait_before_use_ticks.to_string()} }
+                        }
+                        div { class: DIV,
+                            span { class: KEY, "Wait after" }
+                            span { class: VALUE, {wait_after_use_ticks.to_string()} }
+                        }
+                    },
+                }
             }
         }
     }
 }
 
 #[component]
-fn Minimap() -> Element {
-    let mut position = use_signal::<Option<(i32, i32)>>(|| None);
-    let mut minimap = use_signal::<Option<MinimapData>>(|| None);
-    let mut preset = use_signal::<Option<String>>(move || {
-        if let Some(minimap) = &minimap() {
-            minimap.actions.keys().next().cloned()
-        } else {
-            None
+fn Minimap(minimap: Signal<Option<MinimapData>>) -> Element {
+    const MINIMAP_JS: &str = r#"
+        let minimap = document.getElementById("canvas-minimap");
+        let minimapCtx = minimap.getContext("2d");
+        let lastWidth = minimap.width;
+        let lastHeight = minimap.height;
+
+        while (true) {
+            let [buffer, width, height] = await dioxus.recv();
+            let data = new ImageData(new Uint8ClampedArray(buffer), width, height);
+            let bitmap = await createImageBitmap(data);
+            minimapCtx.drawImage(bitmap, 0, 0);
+            if (lastWidth != width || lastHeight != height) {
+                lastWidth = width;
+                lastHeight = height;
+                minimap.width = width;
+                minimap.height = height;
+            }
         }
+    "#;
+    let mut halting = use_signal(|| true);
+    let mut position = use_signal::<Option<(i32, i32)>>(|| None);
+    let reset = use_callback(move |_| {
+        minimap.set(None);
+        position.set(None);
     });
 
     use_future(move || async move {
-        let mut canvas = document::eval(include_str!("js/minimap.js"));
+        let mut canvas = document::eval(MINIMAP_JS);
         loop {
             let result = minimap_frame().await;
             let Ok(frame) = result else {
+                if minimap.peek().is_some() {
+                    reset(());
+                }
                 continue;
             };
             if minimap.peek().is_none() {
@@ -247,426 +335,335 @@ fn Minimap() -> Element {
             };
             if matches!(error, EvalError::Finished) {
                 // probably: https://github.com/DioxusLabs/dioxus/issues/2979
-                canvas = document::eval(include_str!("js/minimap.js"));
+                canvas = document::eval(MINIMAP_JS);
             }
         }
     });
+
     rsx! {
-        div { class: "flex flex-col items-center justify-center",
+        div { class: "flex flex-col items-center justify-center space-y-6 mb-8",
             canvas {
                 class: "h-36 p-3 border border-gray-300 rounded-md",
                 id: "canvas-minimap",
+            }
+            div { class: "flex w-full space-x-6 items-center justify-center",
+                button {
+                    class: "button-tertiary w-24",
+                    disabled: minimap().is_none(),
+                    onclick: move |_| async move {
+                        let value = *halting.peek();
+                        halting.set(!value);
+                        rotate_actions(!value).await;
+                    },
+                    if halting() {
+                        "Start actions"
+                    } else {
+                        "Stop actions"
+                    }
+                }
+                button {
+                    class: "button-secondary",
+                    disabled: minimap().is_none(),
+                    onclick: move |_| async move {
+                        redetect_minimap().await;
+                        reset(());
+                    },
+                    "Re-detect map"
+                }
+                button {
+                    class: "button-danger",
+                    disabled: minimap().is_none(),
+                    onclick: move |_| async move {
+                        if let Some(minimap) = minimap.peek().clone() {
+                            spawn_blocking(move || {
+                                    delete_map(&minimap).unwrap();
+                                })
+                                .await
+                                .unwrap();
+                        }
+                        redetect_minimap().await;
+                        reset(());
+                    },
+                    "Delete map"
+                }
             }
         }
     }
 }
 
-// #[component]
-// fn Minimap() -> Element {
-//     let mut halted = use_signal(|| true);
-//     let mut position = use_signal::<Option<(i32, i32)>>(|| None);
-//     let mut minimap = use_signal::<Option<MinimapData>>(|| None);
-//     let mut preset = use_signal::<Option<String>>(move || {
-//         if let Some(minimap) = &minimap() {
-//             minimap.actions.keys().next().cloned()
-//         } else {
-//             None
-//         }
-//     });
-//     let preset_insert_positions = use_memo::<Vec<(usize, String)>>(move || {
-//         if let Some(minimap) = &minimap() {
-//             if let Some(preset) = &preset() {
-//                 let mut vec = minimap
-//                     .actions
-//                     .get(preset)
-//                     .unwrap_or(&Vec::new())
-//                     .iter()
-//                     .enumerate()
-//                     .map(|(i, _)| (i, i.to_string()))
-//                     .collect::<Vec<(usize, String)>>();
-//                 vec.push((vec.len(), vec.len().to_string()));
-//                 return vec;
-//             }
-//         }
-//         vec![]
-//     });
-//     let presets = use_memo::<Option<Vec<(String, String)>>>(move || {
-//         minimap().map(|minimap| {
-//             minimap
-//                 .actions
-//                 .keys()
-//                 .cloned()
-//                 .map(|key| (key.clone(), key))
-//                 .collect()
-//         })
-//     });
+#[component]
+fn ActionInput(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<String>>) -> Element {
+    let mut editing_action = use_signal::<Option<(Action, usize)>>(|| None);
+    let mut value_action = use_signal(|| Action::Move(ActionMove::default()));
 
-//     let mut editing = use_signal::<Option<usize>>(|| None);
-//     let mut editing_preset = use_signal::<String>(String::new);
-//     let mut editing_action = use_signal::<Action>(|| DEFAULT_MOVE_ACTION);
-//     let mut editing_insert_position = use_signal::<usize>(|| 0);
-//     let mut editing_action_last = use_signal::<ActionDiscriminants>(|| ActionDiscriminants::Move);
-//     let editing_action_set = use_callback(move |action: Action| {
-//         let action_disc = ActionDiscriminants::from(action);
-//         if let Some(i) = *editing.peek() {
-//             let minimap = minimap.peek();
-//             let minimap = minimap.as_ref().unwrap();
-//             let existing_action = minimap
-//                 .actions
-//                 .get(preset.peek().as_ref().unwrap())
-//                 .unwrap()
-//                 .get(i)
-//                 .unwrap();
-//             if action_disc != *editing_action_last.peek()
-//                 && action_disc == ActionDiscriminants::from(existing_action)
-//             {
-//                 let is_default = match action {
-//                     Action::Move(_) => action == DEFAULT_MOVE_ACTION,
-//                     Action::Key(_) => action == DEFAULT_KEY_ACTION,
-//                 };
-//                 if is_default {
-//                     editing_action_last.set(action_disc);
-//                     editing_action.set(*existing_action);
-//                     return;
-//                 }
-//             }
-//         }
-//         editing_action_last.set(action_disc);
-//         editing_action.set(action);
-//     });
+    let save_minimap = move |mut minimap: MinimapData| {
+        spawn(async move {
+            spawn_blocking(move || {
+                upsert_map(&mut minimap).unwrap();
+            })
+            .await
+            .unwrap();
+        });
+    };
+    let presets = use_memo::<Vec<String>>(move || {
+        minimap()
+            .map(|minimap| minimap.actions.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default()
+    });
+    let actions = use_memo::<Vec<Action>>(move || {
+        minimap()
+            .zip(preset())
+            .and_then(|(minimap, preset)| minimap.actions.get(&preset).cloned())
+            .unwrap_or_default()
+    });
+    let on_edit = use_callback(move |action| {
+        value_action.set(action);
+    });
+    let on_save = use_callback(move |index| {
+        if let Some((minimap, preset)) = minimap.write().as_mut().zip(preset.peek().clone()) {
+            let actions = minimap.actions.get_mut(&preset).unwrap();
+            if let Some(index) = index {
+                *actions.get_mut(index).unwrap() = *value_action.peek();
+            } else {
+                actions.push(*value_action.peek());
+            }
+            save_minimap(minimap.clone());
+        }
+    });
+    let on_swap = use_callback(move |(a, b)| {
+        if let Some((minimap, preset)) = minimap.write().as_mut().zip(preset.peek().clone()) {
+            minimap.actions.get_mut(&preset).unwrap().swap(a, b);
+            save_minimap(minimap.clone());
+        }
+    });
 
-//     let reset = use_callback(move |()| {
-//         if position.peek().is_some() {
-//             position.set(None);
-//         }
-//         if minimap.peek().is_some() {
-//             minimap.set(None);
-//         }
-//         if preset.peek().is_some() {
-//             preset.set(None);
-//         }
-//         if editing.peek().is_some() {
-//             editing.set(None);
-//         }
-//     });
+    use_effect(move || {
+        if preset().is_none() {
+            editing_action.set(None);
+        }
+    });
 
-//     use_effect(move || {
-//         let i = preset_insert_positions()
-//             .last()
-//             .map(|(i, _)| *i)
-//             .unwrap_or(0);
-//         editing_insert_position.set(i);
-//     });
-//     use_effect(move || {
-//         if let Some(preset) = preset() {
-//             spawn(async move {
-//                 prepare_actions(preset).await;
-//             });
-//         }
-//     });
-//     use_effect(move || {
-//         if let Some(minimap) = &mut minimap() {
-//             upsert_map(minimap).unwrap();
-//             if preset.peek().is_none() {
-//                 preset.set(minimap.actions.keys().next().cloned());
-//             }
-//             spawn(async move {
-//                 refresh_minimap_data().await;
-//                 if let Some(preset) = preset.peek().clone() {
-//                     prepare_actions(preset).await;
-//                 }
-//             });
-//         }
-//     });
-//     use_future(move || async move {
-//         let mut canvas = document::eval(include_str!("js/minimap.js"));
-//         loop {
-//             let result = minimap_frame().await;
-//             let Ok(frame) = result else {
-//                 reset(());
-//                 continue;
-//             };
-//             if minimap.peek().is_none() {
-//                 minimap.set(minimap_data().await.ok());
-//             }
-//             position.set(player_position().await.ok());
-//             let Err(error) = canvas.send(frame) else {
-//                 continue;
-//             };
-//             if matches!(error, EvalError::Finished) {
-//                 // probably: https://github.com/DioxusLabs/dioxus/issues/2979
-//                 canvas = document::eval(include_str!("js/minimap.js"));
-//             }
-//         }
-//     });
-
-//     rsx! {
-//         div { class: "grid grid-cols-3 gap-x-[32px] p-[16px]",
-//             div { class: "grid grid-flow-row auto-rows-max gap-[8px] w-[350px] place-items-center",
-//                 p { class: "font-main",
-//                     if let Some(minimap) = &minimap() {
-//                         "{minimap.name}"
-//                     } else {
-//                         "Detecting..."
-//                     }
-//                 }
-//                 if let Some((x, y)) = position() {
-//                     p { class: "font-main", "{x}, {y}" }
-//                 }
-//                 div { class: "flex w-[280px] relative",
-//                     canvas { class: "w-full", id: "canvas-minimap" }
-//                     canvas {
-//                         id: "canvas-minimap-magnifier",
-//                         class: "absolute hidden",
-//                     }
-//                 }
-//                 if minimap().is_some() {
-//                     OneButton {
-//                         on_ok: move || async move {
-//                             reset(());
-//                             redetect_minimap(false).await;
-//                         },
-//                         "Redetect"
-//                     }
-//                     {
-//                         let value = halted();
-//                         let name = if value { "Start actions" } else { "Stop actions" };
-//                         rsx! {
-//                             OneButton {
-//                                 on_ok: move || async move {
-//                                     halted.set(!value);
-//                                     rotate_actions(!value).await;
-//                                 },
-//                                 {name}
-//                             }
-//                         }
-//                     }
-//                     OneButton {
-//                         on_ok: move || async move {
-//                             reset(());
-//                             redetect_minimap(true).await;
-//                         },
-//                         "Delete map (for redetecting)"
-//                     }
-//                     OneButton {
-//                         on_ok: move || {
-//                             let position = *position.peek();
-//                             if let Some((x, y)) = position {
-//                                 match editing_action.write().deref_mut() {
-//                                     Action::Move(action_move) => {
-//                                         action_move.position.x = x;
-//                                         action_move.position.y = y;
-//                                     }
-//                                     Action::Key(action_key) => {
-//                                         let position = action_key.position.get_or_insert(DEFAULT_POSITION);
-//                                         position.x = x;
-//                                         position.y = y;
-//                                     }
-//                                 }
-//                             }
-//                         },
-//                         "Copy position to action"
-//                     }
-//                     Configuration {}
-//                 }
-//             }
-//             div { class: "grid grid-flow-row auto-rows-max gap-[8px] w-[350px] place-items-center",
-//                 if minimap().is_some() {
-//                     TextInput {
-//                         label: "Preset name",
-//                         on_input: move |value| {
-//                             editing_preset.set(value);
-//                         },
-//                         value: editing_preset(),
-//                     }
-//                     OneButton {
-//                         on_ok: move || {
-//                             let name = editing_preset.peek().to_owned();
-//                             if !name.is_empty() {
-//                                 let _ = minimap
-//                                     .write()
-//                                     .as_mut()
-//                                     .unwrap()
-//                                     .actions
-//                                     .try_insert(name.clone(), vec![]);
-//                                 preset.set(Some(name));
-//                                 editing.set(None);
-//                             }
-//                         },
-//                         "Create preset"
-//                     }
-//                 }
-//                 if preset().is_some() {
-//                     Divider {}
-//                     if let Some(presets) = presets() {
-//                         Options {
-//                             label: "Presets",
-//                             options: presets,
-//                             on_select: move |v| {
-//                                 preset.set(Some(v));
-//                                 editing.set(None);
-//                             },
-//                             selected: preset.peek().clone().unwrap(),
-//                         }
-//                     }
-//                     if let Some(index) = editing() {
-//                         p { class: "font-main", "Editing {index}" }
-//                     }
-//                     Actions {
-//                         label: "Action",
-//                         on_option: move |action| {
-//                             editing_action_set(action);
-//                         },
-//                         selected: editing_action(),
-//                     }
-//                     match editing_action() {
-//                         Action::Move { .. } => {
-//                             rsx! {
-//                                 ActionMoveEdit {
-//                                     on_submit: move |action| {
-//                                         editing_action_set(action);
-//                                     },
-//                                     value: editing_action(),
-//                                 }
-//                             }
-//                         }
-//                         Action::Key { .. } => {
-//                             rsx! {
-//                                 ActionKeyEdit {
-//                                     on_submit: move |action| {
-//                                         editing_action_set(action);
-//                                     },
-//                                     value: editing_action(),
-//                                 }
-//                             }
-//                         }
-//                     }
-//                     if let Some(i) = editing() {
-//                         OneButton {
-//                             on_ok: move || {
-//                                 editing.set(None);
-//                                 minimap
-//                                     .write()
-//                                     .as_mut()
-//                                     .unwrap()
-//                                     .actions
-//                                     .get_mut(preset.peek().as_ref().unwrap())
-//                                     .unwrap()
-//                                     .remove(i);
-//                             },
-//                             "Delete"
-//                         }
-//                         TwoButtons {
-//                             on_ok: move || {
-//                                 editing.set(None);
-//                                 *minimap
-//                                     .write()
-//                                     .as_mut()
-//                                     .unwrap()
-//                                     .actions
-//                                     .get_mut(preset.peek().as_ref().unwrap())
-//                                     .unwrap()
-//                                     .get_mut(i)
-//                                     .unwrap() = *editing_action.peek();
-//                             },
-//                             ok_body: rsx! { "Save" },
-//                             on_cancel: move || {
-//                                 editing.set(None);
-//                             },
-//                             cancel_body: rsx! { "Cancel" },
-//                         }
-//                     } else {
-//                         Options {
-//                             label: "Insert position",
-//                             options: preset_insert_positions(),
-//                             on_select: move |pos| {
-//                                 editing_insert_position.set(pos);
-//                             },
-//                             selected: editing_insert_position(),
-//                         }
-//                         OneButton {
-//                             on_ok: move || {
-//                                 minimap
-//                                     .write()
-//                                     .as_mut()
-//                                     .unwrap()
-//                                     .actions
-//                                     .get_mut(preset.peek().as_ref().unwrap())
-//                                     .unwrap()
-//                                     .insert(*editing_insert_position.peek(), *editing_action.peek());
-//                             },
-//                             "Add action"
-//                         }
-//                     }
-//                 }
-//             }
-//             if let Some(preset) = preset() {
-//                 if let Some(minimap) = minimap().as_ref() {
-//                     div { class: "grid grid-flow-row auto-rows-max gap-[8px] w-[350px] h-[780px] place-items-center overflow-y-scroll",
-//                         {
-//                             let actions = minimap.actions.get(&preset).unwrap().clone();
-//                             rsx! {
-//                                 if !actions.is_empty() {
-//                                     p { class: "font-main", "Click action to edit" }
-//                                 }
-//                                 for (i , action) in actions.into_iter().enumerate() {
-//                                     div {
-//                                         class: "w-fit h-fit border border-black font-main",
-//                                         onclick: move |_| {
-//                                             editing.set(Some(i));
-//                                             editing_action.set(action);
-//                                         },
-//                                         "{i} - {action:?}"
-//                                     }
-//                                 }
-//                             }
-//                         }
-//                     }
-//                 }
-//             }
-//         }
-//     }
-// }
-
-// #[derive(PartialEq, Props, Clone)]
-// struct ActionEditProps<T: 'static + PartialEq + Clone> {
-//     on_submit: EventHandler<T>,
-//     value: T,
-// }
-
-// #[component]
-// fn ActionMoveEdit(props: ActionEditProps<Action>) -> Element {
-//     const LABEL_CLASS: &str = "w-16 text-xs text-gray-700 inline-block";
-//     const INPUT_CLASS: &str = "h-6 p-1 border border-gray-300 rounded text-xs";
-
-//     let Action::Move(value) = props.value else {
-//         unreachable!()
-//     };
-//     let ActionMove {
-//         position,
-//         condition,
-//         wait_after_move_ticks,
-//     } = value;
-//     let submit =
-//         use_callback(move |action_move: ActionMove| (props.on_submit)(Action::Move(action_move)));
-//     let set_position = use_callback(move |position| submit(ActionMove { position, ..value }));
-//     let set_condition = use_callback(move |condition| submit(ActionMove { condition, ..value }));
-//     let set_wait_after_move_ticks = use_callback(move |wait_after_move_ticks| {
-//         submit(ActionMove {
-//             wait_after_move_ticks,
-//             ..value
-//         })
-//     });
-
-//     rsx! {
-//         div { class: "p-2 border rounded mt-2 flex flex-col space-y-2" }
-//     }
-// }
+    rsx! {
+        div { class: "flex flex-col h-full",
+            div { class: "w-fit mb-2",
+                TextSelect {
+                    on_create: move |created: String| {
+                        if let Some(minimap) = minimap.write().deref_mut() {
+                            let actions_inserted = minimap
+                                .actions
+                                .try_insert(created.clone(), vec![])
+                                .is_ok();
+                            if actions_inserted {
+                                save_minimap(minimap.clone());
+                            }
+                            preset.set(Some(created));
+                        }
+                    },
+                    disabled: minimap().is_none(),
+                    on_select: move |selected| {
+                        preset.set(Some(selected));
+                    },
+                    options: presets(),
+                    selected: preset(),
+                }
+            }
+            div { class: "flex space-x-4 h-full",
+                div { class: "w-1/2 flex flex-col space-y-3",
+                    ActionTypeInput {
+                        on_input: move |action: Action| {
+                            if let Some((editing_action, _)) = *editing_action.peek() {
+                                if editing_action.to_string() == action.to_string() {
+                                    on_edit(editing_action);
+                                    return;
+                                }
+                            }
+                            on_edit(action);
+                        },
+                        disabled: preset().is_none(),
+                        value: value_action(),
+                    }
+                    match value_action() {
+                        Action::Move(_) => rsx! {
+                            ActionMoveInput {
+                                on_input: move |action| {
+                                    on_edit(action);
+                                },
+                                disabled: preset().is_none(),
+                                value: value_action(),
+                            }
+                        },
+                        Action::Key(_) => rsx! {
+                            ActionKeyInput {
+                                on_input: move |action| {
+                                    on_edit(action);
+                                },
+                                disabled: preset().is_none(),
+                                value: value_action(),
+                            }
+                        },
+                    }
+                    if editing_action().is_none() {
+                        button {
+                            class: "rounded w-full bg-blue-100 enabled:hover:bg-blue-200 py-1.5 px-2 text-xs font-medium text-blue-700 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed",
+                            disabled: preset().is_none(),
+                            onclick: move |_| {
+                                on_save(None);
+                            },
+                            "Add action"
+                        }
+                    } else {
+                        div { class: "grid grid-cols-2 gap-x-2",
+                            button {
+                                class: "rounded bg-blue-100 hover:bg-blue-200 py-1.5 px-2 text-xs font-medium text-blue-700",
+                                onclick: move |_| {
+                                    on_save(editing_action.replace(None).map(|tuple| tuple.1));
+                                },
+                                "Save"
+                            }
+                            button {
+                                class: "rounded bg-gray-100 hover:bg-gray-200 py-1.5 px-2 text-xs font-medium text-gray-500",
+                                onclick: move |_| {
+                                    editing_action.set(None);
+                                },
+                                "Cancel"
+                            }
+                        }
+                    }
+                }
+                ActionItemList {
+                    actions: actions(),
+                    on_click: move |(action, index)| {
+                        editing_action.set(Some((action, index)));
+                        on_edit(action);
+                    },
+                    on_swap: move |(a, b)| {
+                        let editing = *editing_action.peek();
+                        if let Some((action, index)) = editing {
+                            if index == a {
+                                editing_action.set(Some((action, b)));
+                            } else if index == b {
+                                editing_action.set(Some((action, a)));
+                            }
+                        }
+                        on_swap((a, b));
+                    },
+                }
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, Props, PartialEq)]
 struct InputConfigProps<T: 'static + Clone + PartialEq> {
     on_input: EventHandler<T>,
+    disabled: bool,
     value: T,
+}
+
+#[component]
+fn PositionInput(props: InputConfigProps<Position>) -> Element {
+    let Position {
+        x,
+        y,
+        allow_adjusting,
+    } = props.value;
+    let submit = use_callback(move |position: Position| (props.on_input)(position));
+    let set_x = use_callback(move |x| submit(Position { x, ..props.value }));
+    let set_y = use_callback(move |y| submit(Position { y, ..props.value }));
+    let set_allow_adjusting = use_callback(move |allow_adjusting| {
+        submit(Position {
+            allow_adjusting,
+            ..props.value
+        })
+    });
+
+    rsx! {
+        NumberInputI32 {
+            label: "X",
+            div_class: DIV_CLASS,
+            label_class: LABEL_CLASS,
+            input_class: "{INPUT_CLASS} p-1",
+            disabled: props.disabled,
+            on_input: move |value| {
+                set_x(value);
+            },
+            value: x,
+        }
+        NumberInputI32 {
+            label: "Y",
+            div_class: DIV_CLASS,
+            label_class: LABEL_CLASS,
+            input_class: "{INPUT_CLASS} p-1",
+            disabled: props.disabled,
+            on_input: move |value| {
+                set_y(value);
+            },
+            value: y,
+        }
+        Checkbox {
+            label: "Adjust position",
+            div_class: DIV_CLASS,
+            label_class: LABEL_CLASS,
+            input_class: "appearance-none h-4 w-4 border border-gray-300 rounded checked:bg-gray-400",
+            disabled: props.disabled,
+            on_input: move |checked| {
+                set_allow_adjusting(checked);
+            },
+            value: allow_adjusting,
+        }
+    }
+}
+
+#[component]
+fn ActionMoveInput(props: InputConfigProps<Action>) -> Element {
+    let Action::Move(value) = props.value else {
+        unreachable!()
+    };
+    let ActionMove {
+        position,
+        condition,
+        wait_after_move_ticks,
+    } = value;
+    let submit =
+        use_callback(move |action_move: ActionMove| (props.on_input)(Action::Move(action_move)));
+    let set_position = use_callback(move |position| submit(ActionMove { position, ..value }));
+    let set_condition = use_callback(move |condition| submit(ActionMove { condition, ..value }));
+    let set_wait_after_move_ticks = use_callback(move |wait_after_move_ticks| {
+        submit(ActionMove {
+            wait_after_move_ticks,
+            ..value
+        })
+    });
+
+    rsx! {
+        div { class: "flex flex-col space-y-3",
+            PositionInput {
+                on_input: move |position| {
+                    set_position(position);
+                },
+                disabled: props.disabled,
+                value: position,
+            }
+            ActionConditionInput {
+                on_input: move |condition| {
+                    set_condition(condition);
+                },
+                disabled: props.disabled,
+                value: condition,
+            }
+            NumberInputU32 {
+                label: "Wait after action",
+                label_class: LABEL_CLASS,
+                div_class: DIV_CLASS,
+                input_class: "{INPUT_CLASS} p-1",
+                disabled: props.disabled,
+                on_input: move |value| {
+                    set_wait_after_move_ticks(value);
+                },
+                value: wait_after_move_ticks,
+            }
+        }
+    }
 }
 
 #[component]
@@ -702,232 +699,197 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
             ..value
         })
     });
-    let mut is_active = use_signal(|| false);
 
     rsx! {
         div { class: "flex flex-col space-y-3",
             Checkbox {
                 label: "Position",
-                div_class: DIV_CLASS,
                 label_class: LABEL_CLASS,
+                div_class: DIV_CLASS,
                 input_class: "appearance-none h-4 w-4 border border-gray-300 rounded checked:bg-gray-400",
-                on_checked: move |checked: bool| {
-                    set_position(checked.then_some(DEFAULT_POSITION));
+                disabled: props.disabled,
+                on_input: move |checked: bool| {
+                    set_position(checked.then_some(Position::default()));
                 },
-                checked: position.is_some(),
+                value: position.is_some(),
             }
             if let Some(pos) = position {
                 PositionInput {
                     on_input: move |position| {
                         set_position(Some(position));
                     },
+                    disabled: props.disabled,
                     value: pos,
                 }
             }
             KeyBindingInput {
-                div_class: DIV_CLASS,
+                label: "Key",
                 label_class: LABEL_CLASS,
+                div_class: DIV_CLASS,
                 input_class: INPUT_CLASS,
-                is_active: is_active(),
-                on_active: move |active| {
-                    is_active.set(active);
-                },
+                disabled: props.disabled,
                 on_input: move |key: Option<KeyBinding>| {
                     set_key(key.unwrap());
                 },
-                value: key,
+                value: Some(key),
             }
             ActionConditionInput {
                 on_input: move |condition| {
                     set_condition(condition);
                 },
+                disabled: props.disabled,
                 value: condition,
             }
             ActionKeyDirectionInput {
                 on_input: move |direction| {
                     set_direction(direction);
                 },
+                disabled: props.disabled,
                 value: direction,
             }
             ActionKeyWithInput {
                 on_input: move |with| {
                     set_with(with);
                 },
+                disabled: props.disabled,
                 value: with,
             }
+            NumberInputU32 {
+                label: "Wait before action",
+                label_class: LABEL_CLASS,
+                div_class: DIV_CLASS,
+                input_class: "{INPUT_CLASS} p-1",
+                on_input: move |value| {
+                    set_wait_before_use_ticks(value);
+                },
+                disabled: props.disabled,
+                value: wait_before_use_ticks,
+            }
+            NumberInputU32 {
+                label: "Wait after action",
+                label_class: LABEL_CLASS,
+                div_class: DIV_CLASS,
+                input_class: "{INPUT_CLASS} p-1",
+                on_input: move |value| {
+                    set_wait_after_use_ticks(value);
+                },
+                disabled: props.disabled,
+                value: wait_after_use_ticks,
+            }
         }
     }
 }
 
 #[component]
-fn ActionInput(props: InputConfigProps<Action>) -> Element {
-    let map_default = |action| match action {
-        ActionDiscriminants::Move => DEFAULT_MOVE_ACTION,
-        ActionDiscriminants::Key => DEFAULT_KEY_ACTION,
-    };
-    let options = ActionDiscriminants::iter()
-        .map(|condition| (condition, condition.to_string()))
-        .collect::<Vec<_>>();
-    let selected = ActionDiscriminants::from(props.value);
+fn ActionTypeInput(
+    InputConfigProps {
+        on_input,
+        disabled,
+        value,
+    }: InputConfigProps<Action>,
+) -> Element {
     rsx! {
-        Option {
+        ActionEnumInput {
             label: "Type",
-            div_class: DIV_CLASS,
-            label_class: LABEL_CLASS,
-            select_class: INPUT_CLASS,
-            options,
-            on_select: move |action| {
-                (props.on_input)(map_default(action));
-            },
-            selected,
+            on_input,
+            disabled,
+            value,
         }
     }
 }
 
 #[component]
-fn PositionInput(props: InputConfigProps<Position>) -> Element {
-    let Position {
-        x,
-        y,
-        allow_adjusting,
-    } = props.value;
-    let submit = use_callback(move |position: Position| (props.on_input)(position));
-    let set_x = use_callback(move |x| submit(Position { x, ..props.value }));
-    let set_y = use_callback(move |y| submit(Position { y, ..props.value }));
-    let set_allow_adjusting = use_callback(move |allow_adjusting| {
-        submit(Position {
-            allow_adjusting,
-            ..props.value
-        })
-    });
-    let x_or_y_component = |is_x: bool| {
-        rsx! {
-            div { class: DIV_CLASS,
-                label { class: LABEL_CLASS,
-                    if is_x {
-                        "X"
-                    } else {
-                        "Y"
-                    }
-                }
-                input {
-                    r#type: "number",
-                    class: "{INPUT_CLASS} p-1",
-                    min: "0",
-                    onchange: move |e| {
-                        let prev_value = if is_x { x } else { y };
-                        let new_value = e.parsed::<i32>().unwrap_or(prev_value);
-                        if is_x {
-                            set_x(new_value);
-                        } else {
-                            set_y(new_value);
-                        }
-                    },
-                    value: if is_x { x } else { y },
-                }
-            }
-        }
-    };
+fn ActionKeyDirectionInput(
+    InputConfigProps {
+        on_input,
+        disabled,
+        value,
+    }: InputConfigProps<ActionKeyDirection>,
+) -> Element {
     rsx! {
-        {x_or_y_component(true)}
-        {x_or_y_component(false)}
-        Checkbox {
-            label: "Adjust position",
-            div_class: DIV_CLASS,
-            label_class: LABEL_CLASS,
-            input_class: "appearance-none h-4 w-4 border border-gray-300 rounded checked:bg-gray-400",
-            on_checked: move |checked| {
-                set_allow_adjusting(checked);
-            },
-            checked: allow_adjusting,
-        }
-    }
-}
-
-#[component]
-fn ActionKeyDirectionInput(props: InputConfigProps<ActionKeyDirection>) -> Element {
-    let options = ActionKeyDirectionDiscriminants::iter()
-        .map(|disc| (disc, disc.to_string()))
-        .collect::<Vec<_>>();
-    let selected = ActionKeyDirectionDiscriminants::from(props.value);
-
-    rsx! {
-        Option {
+        ActionEnumInput {
             label: "Direction",
-            div_class: DIV_CLASS,
-            label_class: LABEL_CLASS,
-            select_class: INPUT_CLASS,
-            options,
-            on_select: move |disc: ActionKeyDirectionDiscriminants| {
-                (props.on_input)(ActionKeyDirection::from_str(&disc.to_string()).unwrap());
-            },
-            selected,
+            on_input,
+            disabled,
+            value,
         }
     }
 }
 
 #[component]
-fn ActionKeyWithInput(props: InputConfigProps<ActionKeyWith>) -> Element {
-    let options = ActionKeyWithDiscriminants::iter()
-        .map(|disc| (disc, disc.to_string()))
-        .collect::<Vec<_>>();
-    let selected = ActionKeyWithDiscriminants::from(props.value);
-
+fn ActionKeyWithInput(
+    InputConfigProps {
+        on_input,
+        disabled,
+        value,
+    }: InputConfigProps<ActionKeyWith>,
+) -> Element {
     rsx! {
-        Option {
+        ActionEnumInput {
             label: "With",
-            div_class: DIV_CLASS,
-            label_class: LABEL_CLASS,
-            select_class: INPUT_CLASS,
-            options,
-            on_select: move |disc: ActionKeyWithDiscriminants| {
-                (props.on_input)(ActionKeyWith::from_str(&disc.to_string()).unwrap());
-            },
-            selected,
+            on_input,
+            disabled,
+            value,
         }
     }
 }
 
 #[component]
-fn ActionConditionInput(props: InputConfigProps<ActionCondition>) -> Element {
-    let map_default = |condition| match condition {
-        ActionConditionDiscriminants::Any => ActionCondition::Any,
-        ActionConditionDiscriminants::EveryMillis => ActionCondition::EveryMillis(0),
-        ActionConditionDiscriminants::ErdaShowerOffCooldown => {
-            ActionCondition::ErdaShowerOffCooldown
+fn ActionConditionInput(
+    InputConfigProps {
+        on_input,
+        disabled,
+        value,
+    }: InputConfigProps<ActionCondition>,
+) -> Element {
+    rsx! {
+        ActionEnumInput {
+            label: "Condition",
+            on_input,
+            disabled,
+            value,
         }
-    };
-    let options = ActionConditionDiscriminants::iter()
-        .map(|condition| (condition, condition.to_string()))
+        if let ActionCondition::EveryMillis(millis) = value {
+            NumberInputU64 {
+                label: "Milliseconds",
+                label_class: LABEL_CLASS,
+                div_class: DIV_CLASS,
+                input_class: "{INPUT_CLASS} p-1",
+                on_input: move |millis| {
+                    on_input(ActionCondition::EveryMillis(millis));
+                },
+                value: millis,
+            }
+        }
+    }
+}
+
+#[component]
+fn ActionEnumInput<
+    T: 'static + Clone + Copy + PartialEq + Display + FromStr<Err = ParseError> + IntoEnumIterator,
+>(
+    label: String,
+    disabled: bool,
+    on_input: EventHandler<T>,
+    value: T,
+) -> Element {
+    let options = T::iter()
+        .map(|variant| (variant.to_string(), variant.to_string()))
         .collect::<Vec<_>>();
-    let selected = ActionConditionDiscriminants::from(props.value);
+    let selected = value.to_string();
 
     rsx! {
-        Option {
-            label: "Condition",
+        Select {
+            label,
             div_class: DIV_CLASS,
             label_class: LABEL_CLASS,
             select_class: INPUT_CLASS,
+            disabled,
             options,
-            on_select: move |condition| {
-                (props.on_input)(map_default(condition));
+            on_select: move |selected: String| {
+                on_input(T::from_str(selected.as_str()).unwrap());
             },
             selected,
-        }
-        if let ActionCondition::EveryMillis(millis) = props.value {
-            div { class: DIV_CLASS,
-                label { class: LABEL_CLASS, "Milliseconds" }
-                input {
-                    r#type: "number",
-                    class: "{INPUT_CLASS} p-1",
-                    min: "0",
-                    onchange: move |e| {
-                        let millis = e.parsed::<u64>().unwrap_or(millis);
-                        (props.on_input)(ActionCondition::EveryMillis(millis));
-                    },
-                    value: millis,
-                }
-            }
         }
     }
 }

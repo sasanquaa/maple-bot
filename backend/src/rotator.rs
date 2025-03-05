@@ -13,13 +13,14 @@ use crate::{
 };
 
 const COOLDOWN_BETWEEN_QUEUE_MILLIS: u128 = 20_000;
-const COOLDOWN_BETWEEN_POTION_QUEUE_MILLIS: u128 = 5_000;
+const COOLDOWN_BETWEEN_POTION_QUEUE_MILLIS: u128 = 2_000;
 
 type Condition = Box<dyn Fn(&Context, Option<Instant>) -> bool>;
 
 struct PriorityAction {
     condition: Condition,
     action: PlayerAction,
+    push_front: bool,
     last_queued_time: Option<Instant>,
 }
 
@@ -48,7 +49,7 @@ impl Rotator {
         potion_key: KeyBinding,
     ) {
         debug!(target: "rotator", "preparing actions {actions:?} {buffs:?}");
-        self.reset();
+        self.reset_queue();
         self.normal_actions.clear();
         self.priority_actions.clear();
 
@@ -61,6 +62,7 @@ impl Rotator {
                             condition: Box::new(move |context, last_queued_time| {
                                 should_queue_fixed_action(context, last_queued_time, condition)
                             }),
+                            push_front: false,
                             action: PlayerAction::Fixed(action),
                             last_queued_time: None,
                         })
@@ -91,6 +93,7 @@ impl Rotator {
                 wait_before_use_ticks: 5,
                 wait_after_use_ticks: 0,
             })),
+            push_front: true,
             last_queued_time: None,
         });
         self.priority_actions.push(PriorityAction {
@@ -105,6 +108,7 @@ impl Rotator {
                 false
             }),
             action: PlayerAction::SolveRune,
+            push_front: false,
             last_queued_time: None,
         });
         for (i, key) in buffs.iter().copied() {
@@ -130,6 +134,7 @@ impl Rotator {
                     wait_before_use_ticks: 10,
                     wait_after_use_ticks: 10,
                 })),
+                push_front: false,
                 last_queued_time: None,
             });
         }
@@ -138,11 +143,11 @@ impl Rotator {
     #[inline]
     pub fn rotator_mode(&mut self, mode: RotatorMode) {
         self.normal_rotate_mode = mode;
-        self.reset();
+        self.reset_queue();
     }
 
     #[inline]
-    pub fn reset(&mut self) {
+    pub fn reset_queue(&mut self) {
         self.normal_action_backward = false;
         self.normal_index = 0;
         self.priority_actions_queue.clear();
@@ -159,7 +164,11 @@ impl Rotator {
             for action in self.priority_actions.iter_mut() {
                 if (action.condition)(context, action.last_queued_time) {
                     action.last_queued_time = Some(Instant::now());
-                    self.priority_actions_queue.push_back(action.action);
+                    if action.push_front {
+                        self.priority_actions_queue.push_front(action.action);
+                    } else {
+                        self.priority_actions_queue.push_back(action.action);
+                    }
                 }
             }
         }
@@ -371,6 +380,7 @@ mod tests {
         rotator.priority_actions.push(PriorityAction {
             condition: Box::new(|context, _| matches!(context.minimap, Minimap::Idle(_))),
             action: PlayerAction::SolveRune,
+            push_front: false,
             last_queued_time: None,
         });
 
