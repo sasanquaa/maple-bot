@@ -30,8 +30,9 @@ pub struct Keys {
     key_down: RefCell<BitVec>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub enum KeyKind {
+    #[default]
     A,
     B,
     C,

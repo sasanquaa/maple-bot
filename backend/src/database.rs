@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::Result;
+use rand::distr::{Alphanumeric, SampleString};
 use rusqlite::{Connection, Params, Statement, types::Null};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use strum::{Display, EnumIter, EnumString};
@@ -252,6 +253,13 @@ pub fn query_configs() -> Result<Vec<Configuration>> {
             };
             upsert_config(&mut config).unwrap();
             vec.push(config);
+        } else {
+            vec.iter_mut().for_each(|config| {
+                if config.name.is_empty() {
+                    config.name = Alphanumeric.sample_string(&mut rand::rng(), 8);
+                    upsert_config(config).unwrap();
+                }
+            });
         }
     }
     result
@@ -275,13 +283,13 @@ pub fn delete_map(map: &Minimap) -> Result<()> {
 
 fn map_data<T>(mut stmt: Statement<'_>, params: impl Params) -> Result<Vec<T>>
 where
-    T: DeserializeOwned + Identifiable,
+    T: DeserializeOwned + Identifiable + Default,
 {
     Ok(stmt
         .query_map::<T, _, _>(params, |row| {
             let id = row.get::<_, i64>(0).unwrap();
             let data = row.get::<_, String>(1).unwrap();
-            let mut value = serde_json::from_str::<'_, T>(data.as_str()).unwrap();
+            let mut value = serde_json::from_str::<'_, T>(data.as_str()).unwrap_or_default();
             value.set_id(id);
             Ok(value)
         })?
@@ -291,7 +299,7 @@ where
 
 fn query_from_table<T>(table: &str) -> Result<Vec<T>>
 where
-    T: DeserializeOwned + Identifiable,
+    T: DeserializeOwned + Identifiable + Default,
 {
     let conn = CONNECTION.lock().unwrap();
     let stmt = format!("SELECT id, data FROM {}", table);

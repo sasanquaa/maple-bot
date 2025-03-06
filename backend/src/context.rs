@@ -126,26 +126,23 @@ pub fn start_update_loop() {
             };
             let update_minimap = |updated_minimap: crate::database::Minimap,
                                   preset: String,
-                                  context: &Context,
                                   config: &Configuration,
                                   buffs: &Vec<(usize, KeyBinding)>,
                                   minimap_state: &mut MinimapState,
                                   actions: &mut Vec<Action>,
                                   rotator: &mut Rotator| {
                 minimap_state.data = updated_minimap;
-                if matches!(context.minimap, Minimap::Idle(_)) {
-                    if let Some(preset_actions) = minimap_state.data.actions.get(&preset) {
-                        *actions = preset_actions.clone();
-                        rotator.build_actions(
-                            config_actions(config)
-                                .into_iter()
-                                .chain(actions.iter().copied())
-                                .collect::<Vec<_>>()
-                                .as_slice(),
-                            buffs,
-                            config.potion_key.key,
-                        );
-                    }
+                if let Some(preset_actions) = minimap_state.data.actions.get(&preset) {
+                    *actions = preset_actions.clone();
+                    rotator.build_actions(
+                        config_actions(config)
+                            .into_iter()
+                            .chain(actions.iter().copied())
+                            .collect::<Vec<_>>()
+                            .as_slice(),
+                        buffs,
+                        config.potion_key.key,
+                    );
                 }
             };
             let update_config = |updated_config: Configuration,
@@ -156,9 +153,10 @@ pub fn start_update_loop() {
                                  rotator: &mut Rotator| {
                 *config = updated_config;
                 *buffs = config_buffs(config);
-                player_state.interact_key = Some(map_key(config.interact_key.key));
-                player_state.grappling_key = Some(map_key(config.ropelift_key.key));
+                player_state.interact_key = map_key(config.interact_key.key);
+                player_state.grappling_key = map_key(config.ropelift_key.key);
                 player_state.upjump_key = config.up_jump_key.map(|key| key.key).map(map_key);
+                player_state.cash_shop_key = map_key(config.cash_shop_key.key);
                 rotator.rotator_mode(map_rotate_mode(config.rotation_mode));
                 rotator.build_actions(
                     config_actions(config)
@@ -222,7 +220,6 @@ pub fn start_update_loop() {
                         update_minimap(
                             updated_minimap,
                             preset,
-                            &context,
                             &config,
                             &buffs,
                             &mut minimap_state,

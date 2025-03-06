@@ -40,12 +40,14 @@ pub struct PlayerState {
     /// A priority action requested by the `Rotator`, this action will override
     /// the normal action if it is in the middle of executing.
     priority_action: Option<PlayerAction>,
-    /// The interact key, must be set first before use
-    pub interact_key: Option<KeyKind>,
-    /// The RopeLift key, must be set first before use
-    pub grappling_key: Option<KeyKind>,
+    /// The interact key
+    pub interact_key: KeyKind,
+    /// The RopeLift key
+    pub grappling_key: KeyKind,
     /// The up jump key with `None` indicating composite jump (Up arrow + Double Space)
     pub upjump_key: Option<KeyKind>,
+    /// The cash shop key
+    pub cash_shop_key: KeyKind,
     /// Tracks if the player moved within a specified ticks to determine if the player is stationary
     is_stationary_timeout: Timeout,
     /// Whether the player is stationary
@@ -346,7 +348,7 @@ fn update_non_positional_context(
         Player::CashShopThenExit(timeout, in_cash_shop, exitting) => {
             let next = match (in_cash_shop, exitting) {
                 (false, _) => {
-                    let _ = context.keys.send(KeyKind::Tilde);
+                    let _ = context.keys.send(state.cash_shop_key);
                     Player::CashShopThenExit(
                         timeout,
                         detector.detect_player_in_cash_shop(),
@@ -993,12 +995,7 @@ fn update_grappling_context(
     const GRAPPLING_STOPPING_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 3;
     const GRAPPLING_STOPPING_THRESHOLD: i32 = 2;
 
-    if state.grappling_key.is_none() {
-        debug!(target: "player", "failed to use grappling as key is not set");
-        return Player::Idle;
-    }
-
-    let key = state.grappling_key.unwrap();
+    let key = state.grappling_key;
     let x_changed = cur_pos.x != moving.pos.x;
     update_moving_axis_context(
         moving,
@@ -1188,15 +1185,11 @@ fn update_solving_rune_context(
         }
     }
 
-    let Some(key) = state.interact_key else {
-        debug!(target: "player", "failed to interact as key is not set");
-        return Player::Idle;
-    };
     let next = update_timeout(
         solving_rune.timeout,
         SOLVE_RUNE_TIMEOUT,
         |timeout| {
-            let _ = context.keys.send(key);
+            let _ = context.keys.send(state.interact_key);
             Player::SolvingRune(PlayerSolvingRune {
                 timeout,
                 ..solving_rune

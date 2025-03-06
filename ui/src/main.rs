@@ -370,7 +370,7 @@ fn ActionInput(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<Strin
                 selected: preset(),
             }
             div { class: "flex space-x-4 overflow-y-auto flex-1",
-                div { class: "w-1/2 flex flex-col space-y-3",
+                div { class: "w-1/2 flex flex-col space-y-2.5",
                     ActionTypeInput {
                         on_input: move |action: Action| {
                             if let Some((editing_action, _)) = *editing_action.peek() {

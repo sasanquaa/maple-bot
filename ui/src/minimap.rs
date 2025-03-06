@@ -75,7 +75,10 @@ pub fn Minimap(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<Strin
     });
 
     rsx! {
-        div { class: "flex flex-col items-center justify-center space-y-6 mb-8",
+        div { class: "flex flex-col items-center justify-center space-y-4 mb-8",
+            p { class: "text-gray-700 text-sm",
+                {minimap().map(|minimap| minimap.name).unwrap_or("Detecting...".to_string())}
+            }
             canvas {
                 class: "h-36 p-3 border border-gray-300 rounded-md",
                 id: "canvas-minimap",
