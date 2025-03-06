@@ -125,9 +125,9 @@ impl Keys {
         let y_metric = unsafe { GetSystemMetrics(SM_CYSCREEN) };
         let mut rect = RECT::default();
         unsafe { GetWindowRect(handle, &raw mut rect)? };
-        let dx = rect.left + (rect.right - rect.left) / 2;
+        let dx = rect.left + 70;
         let dx = (dx * 65536) / x_metric;
-        let dy = rect.top + (rect.bottom - rect.top) / 2;
+        let dy = rect.top + 50;
         let dy = (dy * 65536) / y_metric;
         let input = [INPUT {
             r#type: INPUT_MOUSE,

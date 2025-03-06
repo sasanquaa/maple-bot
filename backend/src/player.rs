@@ -250,7 +250,7 @@ pub enum Player {
     Unstucking(Timeout),
     Stalling(Timeout, u32),
     SolvingRune(PlayerSolvingRune),
-    CashShopThenExit(Timeout, bool),
+    CashShopThenExit(Timeout, bool, bool),
 }
 
 impl Contextual for Player {
@@ -343,25 +343,35 @@ fn update_non_positional_context(
             state,
             solving_rune,
         )),
-        Player::CashShopThenExit(timeout, in_cash_shop) => {
-            let next = if !in_cash_shop {
-                let _ = context.keys.send(KeyKind::Tilde);
-                Player::CashShopThenExit(timeout, detector.detect_player_in_cash_shop())
-            } else if detector.detect_player_in_cash_shop() {
-                update_timeout(
-                    timeout,
-                    305, // exits after 10 secs
-                    |timeout| Player::CashShopThenExit(timeout, in_cash_shop),
-                    || {
+        Player::CashShopThenExit(timeout, in_cash_shop, exitting) => {
+            let next = match (in_cash_shop, exitting) {
+                (false, _) => {
+                    let _ = context.keys.send(KeyKind::Tilde);
+                    Player::CashShopThenExit(
+                        timeout,
+                        detector.detect_player_in_cash_shop(),
+                        exitting,
+                    )
+                }
+                (true, false) => {
+                    update_timeout(
+                        timeout,
+                        305, // exits after 10 secs
+                        |timeout| Player::CashShopThenExit(timeout, in_cash_shop, exitting),
+                        || Player::CashShopThenExit(timeout, in_cash_shop, true),
+                        |timeout| Player::CashShopThenExit(timeout, in_cash_shop, exitting),
+                    )
+                }
+                (true, true) => {
+                    if detector.detect_player_in_cash_shop() {
                         let _ = context.keys.send_click_to_focus();
                         let _ = context.keys.send(KeyKind::Esc);
                         let _ = context.keys.send(KeyKind::Enter);
+                        Player::CashShopThenExit(timeout, in_cash_shop, exitting)
+                    } else {
                         Player::Idle
-                    },
-                    |timeout| Player::CashShopThenExit(timeout, in_cash_shop),
-                )
-            } else {
-                Player::Idle
+                    }
+                }
             };
             Some(on_action(
                 state,
@@ -422,7 +432,7 @@ fn update_positional_context(
         | Player::Unstucking(_)
         | Player::Stalling(_, _)
         | Player::SolvingRune(_)
-        | Player::CashShopThenExit(_, _) => unreachable!(),
+        | Player::CashShopThenExit(_, _, _) => unreachable!(),
     }
 }
 
@@ -1205,7 +1215,7 @@ fn update_solving_rune_context(
         },
         |mut timeout| {
             if solving_rune.failed_count >= MAX_FAILED_COUNT {
-                return Player::CashShopThenExit(Timeout::default(), false);
+                return Player::CashShopThenExit(Timeout::default(), false, false);
             }
             if solving_rune.validating {
                 return validate_rune_solved(context, solving_rune, timeout);
