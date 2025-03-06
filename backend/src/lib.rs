@@ -52,7 +52,7 @@ static REQUESTS: LazyLock<(mpsc::Sender<Response>, Mutex<mpsc::Receiver<Response
 #[derive(Debug)]
 enum Request {
     RotateActions(bool),
-    UpdateMinimap(String, Minimap),
+    UpdateMinimap(Option<String>, Minimap),
     UpdateConfiguration(Configuration),
     RedetectMinimap,
     PlayerPosition,
@@ -64,7 +64,7 @@ pub async fn rotate_actions(halting: bool) {
     request::<()>(Request::RotateActions(halting)).await
 }
 
-pub async fn update_minimap(preset: String, minimap: Minimap) {
+pub async fn update_minimap(preset: Option<String>, minimap: Minimap) {
     request::<()>(Request::UpdateMinimap(preset, minimap)).await
 }
 

@@ -68,7 +68,7 @@ fn App() -> Element {
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         div { class: "flex flex-col w-md h-screen space-y-2",
-            Minimap { minimap, preset }
+            Minimap { minimap, preset, config }
             Tab {
                 tabs: vec![TAB_CONFIGURATION.to_string(), TAB_ACTIONS.to_string()],
                 on_tab: move |tab| {

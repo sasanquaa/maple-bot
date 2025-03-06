@@ -125,25 +125,25 @@ pub fn start_update_loop() {
                 buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
             };
             let update_minimap = |updated_minimap: crate::database::Minimap,
-                                  preset: String,
+                                  preset: Option<String>,
                                   config: &Configuration,
                                   buffs: &Vec<(usize, KeyBinding)>,
                                   minimap_state: &mut MinimapState,
                                   actions: &mut Vec<Action>,
                                   rotator: &mut Rotator| {
                 minimap_state.data = updated_minimap;
-                if let Some(preset_actions) = minimap_state.data.actions.get(&preset) {
-                    *actions = preset_actions.clone();
-                    rotator.build_actions(
-                        config_actions(config)
-                            .into_iter()
-                            .chain(actions.iter().copied())
-                            .collect::<Vec<_>>()
-                            .as_slice(),
-                        buffs,
-                        config.potion_key.key,
-                    );
-                }
+                *actions = preset
+                    .and_then(|preset| minimap_state.data.actions.get(&preset).cloned())
+                    .unwrap_or_default();
+                rotator.build_actions(
+                    config_actions(config)
+                        .into_iter()
+                        .chain(actions.iter().copied())
+                        .collect::<Vec<_>>()
+                        .as_slice(),
+                    buffs,
+                    config.potion_key.key,
+                );
             };
             let update_config = |updated_config: Configuration,
                                  config: &mut Configuration,

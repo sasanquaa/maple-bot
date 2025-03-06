@@ -1,13 +1,17 @@
 use dioxus::{document::EvalError, prelude::*};
 
 use backend::{
-    Minimap as MinimapData, delete_map, minimap_data, minimap_frame, player_position,
-    redetect_minimap, rotate_actions, update_minimap,
+    Configuration, Minimap as MinimapData, delete_map, minimap_data, minimap_frame,
+    player_position, redetect_minimap, rotate_actions, update_configuration, update_minimap,
 };
 use tokio::task::spawn_blocking;
 
 #[component]
-pub fn Minimap(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<String>>) -> Element {
+pub fn Minimap(
+    minimap: Signal<Option<MinimapData>>,
+    preset: Signal<Option<String>>,
+    config: ReadOnlySignal<Option<Configuration>, SyncStorage>,
+) -> Element {
     const MINIMAP_JS: &str = r#"
         let minimap = document.getElementById("canvas-minimap");
         let minimapCtx = minimap.getContext("2d");
@@ -35,9 +39,14 @@ pub fn Minimap(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<Strin
     });
 
     use_effect(move || {
-        if let Some((minimap, preset)) = minimap().zip(preset()) {
+        if let Some(minimap) = minimap() {
             spawn(async move {
-                update_minimap(preset, minimap).await;
+                update_minimap(preset(), minimap).await;
+            });
+        }
+        if let Some(config) = config() {
+            spawn(async move {
+                update_configuration(config).await;
             });
         }
     });

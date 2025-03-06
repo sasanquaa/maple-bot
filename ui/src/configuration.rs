@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use backend::{
     Configuration as ConfigurationData, IntoEnumIterator, KeyBinding, KeyBindingConfiguration,
-    RotationMode, query_configs, update_configuration, upsert_config,
+    RotationMode, query_configs, upsert_config,
 };
 use dioxus::prelude::*;
 use tokio::task::spawn_blocking;
@@ -48,18 +48,16 @@ pub fn Configuration(
                     .unwrap() = new_config.clone();
             }
             spawn(async move {
-                let new_config = spawn_blocking(move || {
+                spawn_blocking(move || {
                     let mut new_config = new_config;
                     upsert_config(&mut new_config).unwrap();
                     if id.is_none() {
                         config.set(Some(new_config.clone()));
                         configs.write().push(new_config.clone());
                     }
-                    new_config
                 })
                 .await
                 .unwrap();
-                update_configuration(new_config).await;
             });
         }
     });
