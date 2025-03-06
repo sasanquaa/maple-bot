@@ -31,11 +31,11 @@ pub fn TextSelect(
 
     let mut is_creating = use_signal(|| false);
     let mut creating_text = use_signal(String::default);
-    let mut creating_error = use_signal(|| None);
+    let mut creating_error = use_signal(|| false);
     let reset_creating = use_callback(move |()| {
         is_creating.set(false);
         creating_text.set("".to_string());
-        creating_error.set(None);
+        creating_error.set(false);
     });
 
     use_effect(use_reactive!(|selected| {
@@ -43,9 +43,14 @@ pub fn TextSelect(
             reset_creating(());
         }
     }));
+    use_effect(use_reactive!(|disabled| {
+        if disabled {
+            reset_creating(());
+        }
+    }));
 
     rsx! {
-        div { class: "flex flex-col space-y-2",
+        div { class: "flex w-fit h-7 items-stretch mb-5",
             if options.is_empty() && !is_creating() {
                 button {
                     class: "button-secondary border border-gray-300",
@@ -59,7 +64,7 @@ pub fn TextSelect(
                 Select {
                     label: "",
                     label_class: "collapse",
-                    select_class: "rounded border border-gray-300 text-xs text-gray-800 outline-none",
+                    select_class: "rounded h-full border border-gray-300 text-xs text-gray-800 outline-none",
                     options: options
                         .into_iter()
                         .chain([CREATE.to_string()].into_iter())
@@ -77,7 +82,12 @@ pub fn TextSelect(
             } else {
                 div { class: "flex space-x-1",
                     input {
-                        class: "rounded flex-1 w-40 border border-gray-300 text-xs text-gray-800 outline-none",
+                        class: {
+                            let border = if creating_error() { "border-red-500" } else { "border-gray-300" };
+                            format!(
+                                "rounded flex-1 w-40 border {border} px-2 text-xs text-gray-800 outline-none",
+                            )
+                        },
                         placeholder: "New preset name",
                         onchange: move |e| {
                             creating_text.set(e.value());
@@ -89,7 +99,7 @@ pub fn TextSelect(
                         onclick: move |_| {
                             let text = creating_text.peek().clone();
                             if text.is_empty() {
-                                creating_error.set(Some("Preset name cannot be empty".to_string()));
+                                creating_error.set(true);
                                 return;
                             }
                             reset_creating(());
@@ -105,13 +115,6 @@ pub fn TextSelect(
                         "Cancel"
                     }
                 }
-            }
-            p {
-                class: format!(
-                    "text-red-500 text-xs h-4 {}",
-                    creating_error().is_none().then_some("invisible").unwrap_or_default(),
-                ),
-                {creating_error()}
             }
         }
     }

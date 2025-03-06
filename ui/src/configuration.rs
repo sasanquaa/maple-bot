@@ -8,6 +8,7 @@ use dioxus::prelude::*;
 use tokio::task::spawn_blocking;
 
 use crate::{
+    icons::XMark,
     key::KeyInput,
     select::{Select, TextSelect},
 };
@@ -25,11 +26,12 @@ const LEGION_WEALTH: &str = "Legion's Wealth";
 const LEGION_LUCK: &str = "Legion's Luck";
 
 #[component]
-pub fn Configuration() -> Element {
-    let mut configs = use_signal_sync(Vec::<ConfigurationData>::new);
+pub fn Configuration(
+    configs: SyncSignal<Vec<ConfigurationData>>,
+    config: SyncSignal<Option<ConfigurationData>>,
+) -> Element {
     let config_names =
         use_memo(move || configs().iter().map(|config| config.name.clone()).collect());
-    let mut config = use_signal_sync(|| None);
     let config_view = use_memo(move || config().unwrap_or_default());
     let mut active = use_signal(|| None);
     let on_config = use_callback(move |new_config: ConfigurationData| {
@@ -65,29 +67,29 @@ pub fn Configuration() -> Element {
     let data_disabled = disabled.peek().then_some(true);
 
     use_future(move || async move {
-        let result = spawn_blocking(|| query_configs().unwrap()).await.unwrap();
-        config.set(result.first().cloned());
-        configs.set(result);
+        if config.peek().is_none() {
+            let result = spawn_blocking(|| query_configs().unwrap()).await.unwrap();
+            config.set(result.first().cloned());
+            configs.set(result);
+        }
     });
 
     rsx! {
         div { class: "flex flex-col",
-            div { class: "mb-4 h-7 w-44 align-self-start",
-                TextSelect {
-                    on_create: move |created: String| {
-                        on_config(ConfigurationData {
-                            name: created,
-                            ..ConfigurationData::default()
-                        });
-                    },
-                    disabled: disabled(),
-                    on_select: move |selected| {
-                        config
-                            .set(configs.peek().iter().find(|config| config.name == selected).cloned());
-                    },
-                    options: config_names(),
-                    selected: config_view().name,
-                }
+            TextSelect {
+                on_create: move |created: String| {
+                    on_config(ConfigurationData {
+                        name: created,
+                        ..ConfigurationData::default()
+                    });
+                },
+                disabled: disabled(),
+                on_select: move |selected| {
+                    config
+                        .set(configs.peek().iter().find(|config| config.name == selected).cloned());
+                },
+                options: config_names(),
+                selected: config_view().name,
             }
             h2 {
                 class: "text-sm font-medium text-gray-700 mb-2 data-[disabled]:text-gray-400",
@@ -353,13 +355,11 @@ fn KeyBindingConfigurationInput(props: KeyBindingConfigurationInputProps) -> Ele
                 .map(|config| KeyBindingConfiguration { enabled, ..config }),
         );
     });
-    let on_key_input = use_callback(move |key: KeyBinding| {
-        (props.on_input)(
-            props
-                .value
-                .or(Some(KeyBindingConfiguration::default()))
-                .map(|config| KeyBindingConfiguration { key, ..config }),
-        );
+    let on_key_input = use_callback(move |key: Option<KeyBinding>| {
+        (props.on_input)(key.map(|key| KeyBindingConfiguration {
+            key,
+            ..props.value.unwrap_or_default()
+        }));
     });
     let input_width = if props.can_disable { "w-24" } else { "w-44" };
 
@@ -376,22 +376,25 @@ fn KeyBindingConfigurationInput(props: KeyBindingConfigurationInputProps) -> Ele
                 }
             }
             div { class: "flex items-center space-x-2",
-                div {
-                    class: "relative",
+                div { class: "relative",
                     KeyInput {
                         class: "border rounded border-gray-300 h-7 {input_width} disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400",
                         disabled: props.input_disabled,
                         is_active: props.is_active,
                         on_active: props.on_active,
                         on_input: move |key| {
-                            if let Some(key) = key {
-                                on_key_input(key);
-                            }
+                            on_key_input(Some(key));
                         },
                         value: props.value.map(|key| key.key),
                     }
-                    div {
-                        class: "absolute flex w-24 h-24 items-center justify-center x-mark h-full right-2 top-0",
+                    if props.is_optional && !props.is_active && props.value.is_some() {
+                        button {
+                            class: "absolute right-0 top-0 flex items-center h-full w-4",
+                            onclick: move |_| {
+                                on_key_input(None);
+                            },
+                            XMark { class: "w-2 h-2 text-red-400 fill-current" }
+                        }
                     }
                 }
                 if props.can_disable {

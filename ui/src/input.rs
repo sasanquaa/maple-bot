@@ -51,7 +51,7 @@ pub fn KeyBindingInput(
         disabled,
         on_input,
         value,
-    }: GenericInputProps<Option<KeyBinding>>,
+    }: GenericInputProps<KeyBinding>,
 ) -> Element {
     let mut is_active = use_signal(|| false);
 

@@ -8,9 +8,8 @@ use std::string::ToString;
 
 use backend::{
     Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
-    IntoEnumIterator, KeyBinding, Minimap as MinimapData, ParseError, Position, delete_map,
-    minimap_data, minimap_frame, player_position, redetect_minimap, rotate_actions,
-    start_update_loop, update_minimap, upsert_map,
+    Configuration as ConfigurationData, IntoEnumIterator, Minimap as MinimapData, ParseError,
+    Position, start_update_loop, upsert_map,
 };
 use configuration::Configuration;
 use dioxus::{
@@ -19,17 +18,20 @@ use dioxus::{
         tao::platform::windows::WindowBuilderExtWindows,
         wry::dpi::{PhysicalSize, Size},
     },
-    document::EvalError,
     prelude::*,
 };
+use icons::XMark;
 use input::{Checkbox, KeyBindingInput, NumberInputI32, NumberInputU32, NumberInputU64};
+use minimap::Minimap;
 use select::{Select, TextSelect};
 use tokio::task::spawn_blocking;
 use tracing_log::LogTracer;
 
 mod configuration;
+mod icons;
 mod input;
 mod key;
+mod minimap;
 mod select;
 
 const DIV_CLASS: &str = "flex h-6 items-center space-x-2";
@@ -41,7 +43,7 @@ fn main() {
     LogTracer::init().unwrap();
     start_update_loop();
     let window = WindowBuilder::new()
-        .with_inner_size(Size::Physical(PhysicalSize::new(448, 800)))
+        .with_inner_size(Size::Physical(PhysicalSize::new(448, 820)))
         .with_resizable(false)
         .with_drag_and_drop(false)
         .with_maximizable(false)
@@ -58,30 +60,15 @@ fn App() -> Element {
     const TAB_ACTIONS: &str = "Actions";
 
     let minimap = use_signal::<Option<MinimapData>>(|| None);
-    let mut preset = use_signal::<Option<String>>(move || None);
+    let preset = use_signal::<Option<String>>(|| None);
+    let configs = use_signal_sync(Vec::<ConfigurationData>::new);
+    let config = use_signal_sync::<Option<ConfigurationData>>(|| None);
     let mut active_tab = use_signal(|| TAB_CONFIGURATION.to_string());
-
-    use_effect(move || {
-        if let Some((minimap, preset)) = minimap().zip(preset()) {
-            spawn(async move {
-                update_minimap(preset, minimap).await;
-            });
-        }
-    });
-    use_effect(move || {
-        if let Some(minimap) = minimap() {
-            if preset.peek().is_none() {
-                preset.set(minimap.actions.keys().next().cloned());
-            }
-        } else {
-            preset.set(None);
-        }
-    });
 
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         div { class: "flex flex-col w-md h-screen space-y-2",
-            Minimap { minimap }
+            Minimap { minimap, preset }
             Tab {
                 tabs: vec![TAB_CONFIGURATION.to_string(), TAB_ACTIONS.to_string()],
                 on_tab: move |tab| {
@@ -89,10 +76,10 @@ fn App() -> Element {
                 },
                 tab: active_tab(),
             }
-            div { class: "p-4 overflow-y-auto scrollbar h-full",
+            div { class: "px-4 pb-4 pt-2 overflow-y-auto scrollbar h-full",
                 match active_tab().as_str() {
                     TAB_CONFIGURATION => rsx! {
-                        Configuration {}
+                        Configuration { configs, config }
                     },
                     TAB_ACTIONS => rsx! {
                         ActionInput { minimap, preset }
@@ -139,6 +126,7 @@ fn Tab(TabProps { tabs, on_tab, tab }: TabProps) -> Element {
 fn ActionItemList(
     actions: Vec<Action>,
     on_click: EventHandler<(Action, usize)>,
+    on_remove: EventHandler<usize>,
     on_swap: EventHandler<(usize, usize)>,
 ) -> Element {
     let mut drag_index = use_signal(|| None);
@@ -156,6 +144,9 @@ fn ActionItemList(
                         action,
                         on_click: move |_| {
                             on_click((action, i));
+                        },
+                        on_remove: move |_| {
+                            on_remove(i);
                         },
                         on_drag: move |i| {
                             drag_index.set(Some(i));
@@ -179,6 +170,7 @@ fn ActionItem(
     index: usize,
     action: Action,
     on_click: EventHandler<()>,
+    on_remove: EventHandler<()>,
     on_drag: EventHandler<usize>,
     on_drop: EventHandler<usize>,
 ) -> Element {
@@ -193,7 +185,7 @@ fn ActionItem(
 
     rsx! {
         div {
-            class: "p-1 bg-white rounded shadow-sm cursor-move border-l-1 {border_color}",
+            class: "relative p-1 bg-white rounded shadow-sm cursor-move border-l-1 {border_color}",
             draggable: true,
             ondragenter: move |e| {
                 e.prevent_default();
@@ -284,107 +276,13 @@ fn ActionItem(
                     },
                 }
             }
-        }
-    }
-}
-
-#[component]
-fn Minimap(minimap: Signal<Option<MinimapData>>) -> Element {
-    const MINIMAP_JS: &str = r#"
-        let minimap = document.getElementById("canvas-minimap");
-        let minimapCtx = minimap.getContext("2d");
-        let lastWidth = minimap.width;
-        let lastHeight = minimap.height;
-
-        while (true) {
-            let [buffer, width, height] = await dioxus.recv();
-            let data = new ImageData(new Uint8ClampedArray(buffer), width, height);
-            let bitmap = await createImageBitmap(data);
-            minimapCtx.drawImage(bitmap, 0, 0);
-            if (lastWidth != width || lastHeight != height) {
-                lastWidth = width;
-                lastHeight = height;
-                minimap.width = width;
-                minimap.height = height;
-            }
-        }
-    "#;
-    let mut halting = use_signal(|| true);
-    let mut position = use_signal::<Option<(i32, i32)>>(|| None);
-    let reset = use_callback(move |_| {
-        minimap.set(None);
-        position.set(None);
-    });
-
-    use_future(move || async move {
-        let mut canvas = document::eval(MINIMAP_JS);
-        loop {
-            let result = minimap_frame().await;
-            let Ok(frame) = result else {
-                if minimap.peek().is_some() {
-                    reset(());
-                }
-                continue;
-            };
-            if minimap.peek().is_none() {
-                minimap.set(minimap_data().await.ok());
-            }
-            position.set(player_position().await.ok());
-            let Err(error) = canvas.send(frame) else {
-                continue;
-            };
-            if matches!(error, EvalError::Finished) {
-                // probably: https://github.com/DioxusLabs/dioxus/issues/2979
-                canvas = document::eval(MINIMAP_JS);
-            }
-        }
-    });
-
-    rsx! {
-        div { class: "flex flex-col items-center justify-center space-y-6 mb-8",
-            canvas {
-                class: "h-36 p-3 border border-gray-300 rounded-md",
-                id: "canvas-minimap",
-            }
-            div { class: "flex w-full space-x-6 items-center justify-center",
+            div { class: "flex flex-col absolute right-3 top-1",
                 button {
-                    class: "button-tertiary w-24",
-                    disabled: minimap().is_none(),
-                    onclick: move |_| async move {
-                        let value = *halting.peek();
-                        halting.set(!value);
-                        rotate_actions(!value).await;
+                    onclick: move |e| {
+                        e.stop_propagation();
+                        on_remove(());
                     },
-                    if halting() {
-                        "Start actions"
-                    } else {
-                        "Stop actions"
-                    }
-                }
-                button {
-                    class: "button-secondary",
-                    disabled: minimap().is_none(),
-                    onclick: move |_| async move {
-                        redetect_minimap().await;
-                        reset(());
-                    },
-                    "Re-detect map"
-                }
-                button {
-                    class: "button-danger",
-                    disabled: minimap().is_none(),
-                    onclick: move |_| async move {
-                        if let Some(minimap) = minimap.peek().clone() {
-                            spawn_blocking(move || {
-                                    delete_map(&minimap).unwrap();
-                                })
-                                .await
-                                .unwrap();
-                        }
-                        redetect_minimap().await;
-                        reset(());
-                    },
-                    "Delete map"
+                    XMark { class: "w-[10px] h-[10px] text-red-400 fill-current" }
                 }
             }
         }
@@ -430,6 +328,12 @@ fn ActionInput(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<Strin
             save_minimap(minimap.clone());
         }
     });
+    let on_remove = use_callback(move |index| {
+        if let Some((minimap, preset)) = minimap.write().as_mut().zip(preset.peek().clone()) {
+            minimap.actions.get_mut(&preset).unwrap().remove(index);
+            save_minimap(minimap.clone());
+        }
+    });
     let on_swap = use_callback(move |(a, b)| {
         if let Some((minimap, preset)) = minimap.write().as_mut().zip(preset.peek().clone()) {
             minimap.actions.get_mut(&preset).unwrap().swap(a, b);
@@ -445,29 +349,27 @@ fn ActionInput(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<Strin
 
     rsx! {
         div { class: "flex flex-col h-full",
-            div { class: "w-fit mb-2",
-                TextSelect {
-                    on_create: move |created: String| {
-                        if let Some(minimap) = minimap.write().deref_mut() {
-                            let actions_inserted = minimap
-                                .actions
-                                .try_insert(created.clone(), vec![])
-                                .is_ok();
-                            if actions_inserted {
-                                save_minimap(minimap.clone());
-                            }
-                            preset.set(Some(created));
+            TextSelect {
+                on_create: move |created: String| {
+                    if let Some(minimap) = minimap.write().deref_mut() {
+                        let actions_inserted = minimap
+                            .actions
+                            .try_insert(created.clone(), vec![])
+                            .is_ok();
+                        if actions_inserted {
+                            save_minimap(minimap.clone());
                         }
-                    },
-                    disabled: minimap().is_none(),
-                    on_select: move |selected| {
-                        preset.set(Some(selected));
-                    },
-                    options: presets(),
-                    selected: preset(),
-                }
+                        preset.set(Some(created));
+                    }
+                },
+                disabled: minimap().is_none(),
+                on_select: move |selected| {
+                    preset.set(Some(selected));
+                },
+                options: presets(),
+                selected: preset(),
             }
-            div { class: "flex space-x-4 h-full",
+            div { class: "flex space-x-4 overflow-y-auto flex-1",
                 div { class: "w-1/2 flex flex-col space-y-3",
                     ActionTypeInput {
                         on_input: move |action: Action| {
@@ -504,7 +406,7 @@ fn ActionInput(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<Strin
                     }
                     if editing_action().is_none() {
                         button {
-                            class: "rounded w-full bg-blue-100 enabled:hover:bg-blue-200 py-1.5 px-2 text-xs font-medium text-blue-700 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed",
+                            class: "w-full button-primary h-6",
                             disabled: preset().is_none(),
                             onclick: move |_| {
                                 on_save(None);
@@ -514,14 +416,14 @@ fn ActionInput(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<Strin
                     } else {
                         div { class: "grid grid-cols-2 gap-x-2",
                             button {
-                                class: "rounded bg-blue-100 hover:bg-blue-200 py-1.5 px-2 text-xs font-medium text-blue-700",
+                                class: "button-primary h-6",
                                 onclick: move |_| {
                                     on_save(editing_action.replace(None).map(|tuple| tuple.1));
                                 },
                                 "Save"
                             }
                             button {
-                                class: "rounded bg-gray-100 hover:bg-gray-200 py-1.5 px-2 text-xs font-medium text-gray-500",
+                                class: "button-secondary h-6",
                                 onclick: move |_| {
                                     editing_action.set(None);
                                 },
@@ -535,6 +437,15 @@ fn ActionInput(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<Strin
                     on_click: move |(action, index)| {
                         editing_action.set(Some((action, index)));
                         on_edit(action);
+                    },
+                    on_remove: move |index| {
+                        let editing = *editing_action.peek();
+                        if let Some((_, i)) = editing {
+                            if index == i {
+                                editing_action.set(None);
+                            }
+                        }
+                        on_remove(index);
                     },
                     on_swap: move |(a, b)| {
                         let editing = *editing_action.peek();
@@ -728,10 +639,10 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
                 div_class: DIV_CLASS,
                 input_class: INPUT_CLASS,
                 disabled: props.disabled,
-                on_input: move |key: Option<KeyBinding>| {
-                    set_key(key.unwrap());
+                on_input: move |key| {
+                    set_key(key);
                 },
-                value: Some(key),
+                value: key,
             }
             ActionConditionInput {
                 on_input: move |condition| {

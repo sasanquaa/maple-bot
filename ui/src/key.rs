@@ -8,7 +8,7 @@ pub struct KeyInputProps {
     disabled: bool,
     is_active: bool,
     on_active: EventHandler<bool>,
-    on_input: EventHandler<Option<KeyBinding>>,
+    on_input: EventHandler<KeyBinding>,
     value: Option<KeyBinding>,
 }
 
@@ -70,7 +70,7 @@ pub fn KeyInput(
                         }
                         has_error.set(false);
                         on_active(false);
-                        on_input(Some(key));
+                        on_input(key);
                     } else {
                         has_error.set(true);
                     }

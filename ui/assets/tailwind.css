@@ -10,7 +10,7 @@ body {
 }
 
 @utility button-base {
-    @apply rounded text-xs font-medium py-1.5 px-2 disabled:cursor-not-allowed;
+    @apply rounded text-xs text-center font-medium px-2 disabled:cursor-not-allowed;
 }
 
 @layer base {
@@ -22,10 +22,6 @@ body {
 }
 
 @layer utilities {
-    .x-mark {
-        background-image: url('data:image/smg+xml,<svg xmlns="http://www.w3.org/2000/svg" fill="red" width="24" height="24" viewBox="0 0 24 24"><path d="M24 20.188l-8.315-8.209 8.2-8.282-3.697-3.697-8.212 8.318-8.31-8.203-3.666 3.666 8.321 8.24-8.206 8.313 3.666 3.666 8.237-8.318 8.285 8.203z"/></svg>');
-    }
-
     .button-primary {
         @apply button-base text-blue-700 bg-blue-100 enabled:hover:bg-blue-200 disabled:bg-gray-100 disabled:text-gray-500;
     }
