@@ -226,9 +226,6 @@ impl Rotator {
             }
         }
         if !self.priority_actions_queue.is_empty() {
-            if player.has_normal_action() {
-                return;
-            }
             let (front_id, front_action) = self.priority_actions_queue.pop_front().unwrap();
             let has_queue_to_front = match front_action {
                 PlayerAction::Fixed(Action::Key(ActionKey { queue_to_front, .. })) => {

@@ -1,3 +1,4 @@
+use log::debug;
 #[cfg(test)]
 use strum::EnumIter;
 
@@ -7,16 +8,22 @@ use crate::{
 };
 
 const BUFF_CHECK_EVERY_TICKS: u32 = 215; // around 7 seconds
+const BUFF_FAIL_MAX_COUNT: u32 = 3;
 
 #[derive(Debug)]
 pub struct BuffState {
     kind: BuffKind,
     interval: u32,
+    fail_count: u32,
 }
 
 impl BuffState {
     pub fn new(kind: BuffKind) -> Self {
-        Self { kind, interval: 0 }
+        Self {
+            kind,
+            interval: 0,
+            fail_count: 0,
+        }
     }
 }
 
@@ -61,10 +68,27 @@ fn update_context(contextual: Buff, detector: &mut impl Detector, state: &mut Bu
             BuffKind::LegionWealth => detector.detect_player_legion_wealth_buff(),
             BuffKind::LegionLuck => detector.detect_player_legion_luck_buff(),
         };
-        if has_buff {
-            Buff::HasBuff
+        state.fail_count = if matches!(contextual, Buff::HasBuff) && !has_buff {
+            state.fail_count + 1
         } else {
-            Buff::NoBuff
+            0
+        };
+        debug!(target: "buff", "{contextual:?} {state:?}");
+        match contextual {
+            Buff::NoBuff => {
+                if has_buff {
+                    Buff::HasBuff
+                } else {
+                    Buff::NoBuff
+                }
+            }
+            Buff::HasBuff => {
+                if state.fail_count >= BUFF_FAIL_MAX_COUNT {
+                    Buff::NoBuff
+                } else {
+                    Buff::HasBuff
+                }
+            }
         }
     } else {
         contextual

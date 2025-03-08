@@ -97,7 +97,7 @@ pub trait Detector {
     fn detect_erda_shower(&mut self) -> Result<Rect>;
 }
 
-/// A detector temporary caches transformed `Mat`.
+/// A detector that temporary caches the transformed `Mat`.
 ///
 /// It is useful when there are multiple detections in a single tick that rely on grayscale (e.g. buffs).
 #[derive(Debug)]
@@ -200,7 +200,7 @@ fn crop_to_buffs_region(mat: &Mat) -> BoxedRef<Mat> {
     let size = mat.size().unwrap();
     // crop to top right of the image for buffs region
     let crop_x = size.width / 3;
-    let crop_y = size.height / 5;
+    let crop_y = size.height / 4;
     let crop_bbox = Rect::new(size.width - crop_x, 0, crop_x, crop_y);
     mat.roi(crop_bbox).unwrap()
 }
