@@ -1040,6 +1040,7 @@ fn update_up_jumping_context(
     }
 
     let y_changed = (cur_pos.y - moving.pos.y).abs();
+    let (x_distance, _) = x_distance_direction(&moving.dest, &cur_pos);
     update_moving_axis_context(
         moving,
         cur_pos,
@@ -1064,7 +1065,9 @@ fn update_up_jumping_context(
                 } else {
                     moving = moving.completed(true);
                 }
-            } else if moving.timeout.current >= PLAYER_MOVE_TIMEOUT {
+            } else if x_distance >= ADJUSTING_MEDIUM_THRESHOLD
+                && moving.timeout.current >= PLAYER_MOVE_TIMEOUT
+            {
                 moving = moving.timeout_current(UP_JUMP_TIMEOUT);
             }
             Player::UpJumping(moving)

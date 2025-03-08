@@ -10,6 +10,7 @@ use tokio::task::spawn_blocking;
 pub fn Minimap(
     minimap: Signal<Option<MinimapData>>,
     preset: Signal<Option<String>>,
+    last_preset: Signal<Option<(i64, String)>>,
     config: ReadOnlySignal<Option<Configuration>, SyncStorage>,
 ) -> Element {
     const MINIMAP_JS: &str = r#"
@@ -39,10 +40,12 @@ pub fn Minimap(
     });
 
     use_effect(move || {
-        if let Some(minimap) = minimap() {
-            spawn(async move {
-                update_minimap(preset(), minimap).await;
-            });
+        #[allow(clippy::single_match)]
+        match (minimap(), preset()) {
+            (Some(minimap), preset) => {
+                spawn(async move { update_minimap(preset, minimap).await });
+            }
+            (None, _) => (),
         }
         if let Some(config) = config() {
             spawn(async move {
@@ -53,7 +56,14 @@ pub fn Minimap(
     use_effect(move || {
         if let Some(minimap) = minimap() {
             if preset.peek().is_none() {
-                preset.set(minimap.actions.keys().next().cloned());
+                match last_preset.peek().clone() {
+                    Some((id, last_preset)) if Some(id) == minimap.id => {
+                        preset.set(Some(last_preset));
+                    }
+                    _ => {
+                        preset.set(minimap.actions.keys().next().cloned());
+                    }
+                }
             }
         } else {
             preset.set(None);
@@ -64,7 +74,9 @@ pub fn Minimap(
         loop {
             let result = minimap_frame().await;
             let Ok(frame) = result else {
-                if minimap.peek().is_some() {
+                let minimap = minimap.peek().clone();
+                if let Some(minimap) = minimap {
+                    last_preset.set(minimap.id.zip(preset.peek().clone()));
                     reset(());
                 }
                 continue;

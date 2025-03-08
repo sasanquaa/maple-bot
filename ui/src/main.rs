@@ -61,6 +61,7 @@ fn App() -> Element {
 
     let minimap = use_signal::<Option<MinimapData>>(|| None);
     let preset = use_signal::<Option<String>>(|| None);
+    let last_preset = use_signal::<Option<(i64, String)>>(|| None);
     let configs = use_signal_sync(Vec::<ConfigurationData>::new);
     let config = use_signal_sync::<Option<ConfigurationData>>(|| None);
     let mut active_tab = use_signal(|| TAB_CONFIGURATION.to_string());
@@ -68,7 +69,12 @@ fn App() -> Element {
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         div { class: "flex flex-col w-md h-screen space-y-2",
-            Minimap { minimap, preset, config }
+            Minimap {
+                minimap,
+                preset,
+                last_preset,
+                config,
+            }
             Tab {
                 tabs: vec![TAB_CONFIGURATION.to_string(), TAB_ACTIONS.to_string()],
                 on_tab: move |tab| {
@@ -124,15 +130,23 @@ fn Tab(TabProps { tabs, on_tab, tab }: TabProps) -> Element {
 
 #[component]
 fn ActionItemList(
+    disabled: bool,
     actions: Vec<Action>,
     on_click: EventHandler<(Action, usize)>,
     on_remove: EventHandler<usize>,
-    on_swap: EventHandler<(usize, usize)>,
+    on_change: EventHandler<(usize, usize, bool)>,
 ) -> Element {
     let mut drag_index = use_signal(|| None);
+    let dragging = use_memo(move || drag_index().is_some());
+
+    use_effect(use_reactive!(|disabled| {
+        if disabled {
+            drag_index.set(None);
+        }
+    }));
 
     rsx! {
-        div { class: "flex-1 flex flex-col space-y-1 pl-1 overflow-y-auto scrollbar rounded border-l border-gray-300",
+        div { class: "flex-1 flex flex-col space-y-1 px-1 overflow-y-auto scrollbar rounded border-l border-gray-300",
             if actions.is_empty() {
                 div { class: "flex items-center justify-center text-sm text-gray-500 h-full",
                     "No actions"
@@ -140,6 +154,7 @@ fn ActionItemList(
             } else {
                 for (i , action) in actions.into_iter().enumerate() {
                     ActionItem {
+                        dragging: dragging(),
                         index: i,
                         action,
                         on_click: move |_| {
@@ -151,10 +166,10 @@ fn ActionItemList(
                         on_drag: move |i| {
                             drag_index.set(Some(i));
                         },
-                        on_drop: move |i| {
+                        on_drop: move |(i, swapping)| {
                             if let Some(drag_i) = drag_index.take() {
                                 if drag_i != i {
-                                    on_swap((drag_i, i));
+                                    on_change((drag_i, i, swapping));
                                 }
                             }
                         },
@@ -169,10 +184,11 @@ fn ActionItemList(
 fn ActionItem(
     index: usize,
     action: Action,
+    dragging: bool,
     on_click: EventHandler<()>,
     on_remove: EventHandler<()>,
     on_drag: EventHandler<usize>,
-    on_drop: EventHandler<usize>,
+    on_drop: EventHandler<(usize, bool)>,
 ) -> Element {
     const KEY: &str = "font-medium w-1/2 text-xs";
     const VALUE: &str = "font-mono text-xs w-16 overflow-hidden text-ellipsis";
@@ -197,12 +213,12 @@ fn ActionItem(
                 on_drag(index);
             },
             ondrop: move |_| {
-                on_drop(index);
+                on_drop((index, true));
             },
             onclick: move |_| {
                 on_click(());
             },
-            div { class: "text-xs text-gray-700 space-y-2",
+            div { class: "flex flex-col text-xs text-gray-700 space-y-1.5",
                 match action {
                     Action::Move(
                         ActionMove {
@@ -276,7 +292,16 @@ fn ActionItem(
                     },
                 }
             }
-            div { class: "flex flex-col absolute right-3 top-1",
+            if dragging {
+                div {
+                    class: "absolute left-0 top-0 w-full h-1.5 bg-gray-300",
+                    ondrop: move |e| {
+                        e.stop_propagation();
+                        on_drop((index, false));
+                    },
+                }
+            }
+            div { class: "absolute right-3 top-1",
                 button {
                     onclick: move |e| {
                         e.stop_propagation();
@@ -334,9 +359,15 @@ fn ActionInput(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<Strin
             save_minimap(minimap.clone());
         }
     });
-    let on_swap = use_callback(move |(a, b)| {
+    let on_change = use_callback(move |(a, b, swapping)| {
         if let Some((minimap, preset)) = minimap.write().as_mut().zip(preset.peek().clone()) {
-            minimap.actions.get_mut(&preset).unwrap().swap(a, b);
+            let actions = minimap.actions.get_mut(&preset).unwrap();
+            if swapping {
+                actions.swap(a, b);
+            } else {
+                let action = actions.remove(a);
+                actions.insert(b, action);
+            }
             save_minimap(minimap.clone());
         }
     });
@@ -433,6 +464,7 @@ fn ActionInput(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<Strin
                     }
                 }
                 ActionItemList {
+                    disabled: preset().is_none(),
                     actions: actions(),
                     on_click: move |(action, index)| {
                         editing_action.set(Some((action, index)));
@@ -447,16 +479,16 @@ fn ActionInput(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<Strin
                         }
                         on_remove(index);
                     },
-                    on_swap: move |(a, b)| {
+                    on_change: move |(a, b, swapping)| {
                         let editing = *editing_action.peek();
                         if let Some((action, index)) = editing {
                             if index == a {
                                 editing_action.set(Some((action, b)));
-                            } else if index == b {
+                            } else if swapping && index == b {
                                 editing_action.set(Some((action, a)));
                             }
                         }
-                        on_swap((a, b));
+                        on_change((a, b, swapping));
                     },
                 }
             }
