@@ -3,6 +3,7 @@ use std::ops::Range;
 use log::debug;
 use opencv::core::Point;
 use platforms::windows::KeyKind;
+use strum::Display;
 
 use crate::{
     buff::Buff,
@@ -86,7 +87,27 @@ pub enum PlayerAction {
     SolveRune,
 }
 
+impl std::fmt::Display for PlayerAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PlayerAction::Fixed(action) => action.fmt(f),
+            PlayerAction::SolveRune => write!(f, "SolveRune"),
+        }
+    }
+    // fn to_string(&self) -> String {
+    //     match self {
+    //         PlayerAction::Fixed(action) => action.to_string(),
+    //         PlayerAction::SolveRune => "SolveRune".to_string(),
+    //     }
+    // }
+}
+
 impl PlayerState {
+    #[inline]
+    pub fn normal_action_name(&self) -> Option<String> {
+        self.normal_action.map(|action| action.to_string())
+    }
+
     #[inline]
     pub fn has_normal_action(&self) -> bool {
         self.normal_action.is_some()
@@ -96,6 +117,11 @@ impl PlayerState {
     pub fn set_normal_action(&mut self, action: PlayerAction) {
         self.reset_to_idle_next_update = true;
         self.normal_action = Some(action);
+    }
+
+    #[inline]
+    pub fn priority_action_name(&self) -> Option<String> {
+        self.priority_action.map(|action| action.to_string())
     }
 
     #[inline]
@@ -237,7 +263,7 @@ pub struct PlayerSolvingRune {
     failed_count: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Display)]
 pub enum Player {
     Detecting,
     Idle,
@@ -508,7 +534,7 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
                         return Some((Player::Moving(rune, true), false));
                     }
                 }
-                None
+                Some((Player::Idle, true))
             }
         },
         || Player::Idle,

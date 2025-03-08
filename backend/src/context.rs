@@ -215,7 +215,12 @@ pub fn start_update_loop() {
                         matches!(context.minimap, Minimap::Idle(_))
                             .then_some(minimap_state.data.clone()),
                     ),
-                    Request::PlayerPosition => Box::new(player_state.last_known_pos),
+                    Request::PlayerState => Box::new(crate::PlayerState {
+                        position: player_state.last_known_pos.map(|pos| (pos.x, pos.y)),
+                        state: context.player.to_string(),
+                        normal_action: player_state.normal_action_name(),
+                        priority_action: player_state.priority_action_name(),
+                    }),
                     Request::UpdateMinimap(preset, updated_minimap) => {
                         update_minimap(
                             updated_minimap,

@@ -1,8 +1,8 @@
 use dioxus::{document::EvalError, prelude::*};
 
 use backend::{
-    Configuration, Minimap as MinimapData, delete_map, minimap_data, minimap_frame,
-    player_position, redetect_minimap, rotate_actions, update_configuration, update_minimap,
+    Configuration, Minimap as MinimapData, PlayerState, delete_map, minimap_data, minimap_frame,
+    player_state, redetect_minimap, rotate_actions, update_configuration, update_minimap,
 };
 use tokio::task::spawn_blocking;
 
@@ -33,10 +33,9 @@ pub fn Minimap(
         }
     "#;
     let mut halting = use_signal(|| true);
-    let mut position = use_signal::<Option<(i32, i32)>>(|| None);
+    let mut state = use_signal::<Option<PlayerState>>(|| None);
     let reset = use_callback(move |_| {
         minimap.set(None);
-        position.set(None);
     });
 
     use_effect(move || {
@@ -72,6 +71,7 @@ pub fn Minimap(
     use_future(move || async move {
         let mut canvas = document::eval(MINIMAP_JS);
         loop {
+            state.set(Some(player_state().await));
             let result = minimap_frame().await;
             let Ok(frame) = result else {
                 let minimap = minimap.peek().clone();
@@ -84,7 +84,6 @@ pub fn Minimap(
             if minimap.peek().is_none() {
                 minimap.set(minimap_data().await.ok());
             }
-            position.set(player_position().await.ok());
             let Err(error) = canvas.send(frame) else {
                 continue;
             };
@@ -104,8 +103,49 @@ pub fn Minimap(
                 class: "h-36 p-3 border border-gray-300 rounded-md",
                 id: "canvas-minimap",
             }
-            p { class: "text-gray-700 text-xs",
-                {position().map(|(x, y)| format!("{x}, {y}")).unwrap_or("X, Y".to_string())}
+            div { class: "flex flex-col text-gray-700 text-xs space-y-1",
+                p { class: "text-center",
+                    {
+                        state()
+                            .and_then(|state| state.position)
+                            .map(|(x, y)| { format!("{}, {}", x, y) })
+                            .unwrap_or("X, Y".to_string())
+                    }
+                }
+                div { class: "flex flex-col text-left",
+                    p {
+                        {
+                            state()
+                                .map(|state| format!("State: {}", state.state))
+                                .unwrap_or("State: Unknown".to_string())
+                        }
+                    }
+                    p {
+                        {
+                            state()
+                                .map(|state| {
+                                    format!(
+                                        "Priority Action: {}",
+                                        state.priority_action.unwrap_or("None".to_string()),
+                                    )
+                                })
+                                .unwrap_or("Priority Action: Unknown".to_string())
+                        }
+                    }
+                    p {
+                        {
+                            state()
+                                .map(|state| {
+                                    format!(
+                                        "Normal Action: {}",
+                                        state.normal_action.unwrap_or("None".to_string()),
+                                    )
+                                })
+                                .unwrap_or("Normal Action: Unknown".to_string())
+                        }
+                    }
+                }
+            
             }
             div { class: "flex w-full space-x-6 items-center justify-center items-stretch h-7",
                 button {

@@ -21,6 +21,7 @@ struct PriorityAction {
     condition: Condition,
     action: PlayerAction,
     push_front: bool,
+    is_erda: bool,
     last_queued_time: Option<Instant>,
 }
 
@@ -39,6 +40,7 @@ pub struct Rotator {
     normal_rotate_mode: RotatorMode,
     priority_actions: Vec<PriorityAction>,
     priority_actions_queue: VecDeque<PlayerAction>,
+    ignore_erda_action: bool,
 }
 
 impl Rotator {
@@ -59,11 +61,12 @@ impl Rotator {
                 | Action::Key(ActionKey { condition, .. }) => match condition {
                     ActionCondition::EveryMillis(_) | ActionCondition::ErdaShowerOffCooldown => {
                         self.priority_actions.push(PriorityAction {
+                            action: PlayerAction::Fixed(action),
                             condition: Box::new(move |context, last_queued_time| {
                                 should_queue_fixed_action(context, last_queued_time, condition)
                             }),
                             push_front: false,
-                            action: PlayerAction::Fixed(action),
+                            is_erda: matches!(condition, ActionCondition::ErdaShowerOffCooldown),
                             last_queued_time: None,
                         })
                     }
@@ -94,6 +97,7 @@ impl Rotator {
                 wait_after_use_ticks: 0,
             })),
             push_front: true,
+            is_erda: false,
             last_queued_time: None,
         });
         self.priority_actions.push(PriorityAction {
@@ -109,6 +113,7 @@ impl Rotator {
             }),
             action: PlayerAction::SolveRune,
             push_front: false,
+            is_erda: false,
             last_queued_time: None,
         });
         for (i, key) in buffs.iter().copied() {
@@ -135,6 +140,7 @@ impl Rotator {
                     wait_after_use_ticks: 10,
                 })),
                 push_front: false,
+                is_erda: false,
                 last_queued_time: None,
             });
         }
@@ -151,18 +157,18 @@ impl Rotator {
         self.normal_action_backward = false;
         self.normal_index = 0;
         self.priority_actions_queue.clear();
+        self.ignore_erda_action = false;
     }
 
     pub fn rotate_action(&mut self, context: &Context, player: &mut PlayerState) {
-        if player.has_priority_action() || !self.priority_actions_queue.is_empty() {
-            if !player.has_priority_action() {
-                player.set_priority_action(self.priority_actions_queue.pop_front().unwrap());
-            }
-            return;
-        }
         if !self.priority_actions.is_empty() {
+            let mut ignore_erda_action = false;
             for action in self.priority_actions.iter_mut() {
+                if self.ignore_erda_action && action.is_erda {
+                    continue;
+                }
                 if (action.condition)(context, action.last_queued_time) {
+                    ignore_erda_action = action.is_erda;
                     action.last_queued_time = Some(Instant::now());
                     if action.push_front {
                         self.priority_actions_queue.push_front(action.action);
@@ -171,7 +177,15 @@ impl Rotator {
                     }
                 }
             }
+            self.ignore_erda_action = ignore_erda_action;
         }
+        if player.has_priority_action() || !self.priority_actions_queue.is_empty() {
+            if !player.has_normal_action() && !player.has_priority_action() {
+                player.set_priority_action(self.priority_actions_queue.pop_front().unwrap());
+            }
+            return;
+        }
+        self.ignore_erda_action = false;
         if !player.has_normal_action() && !self.normal_actions.is_empty() {
             match self.normal_rotate_mode {
                 RotatorMode::StartToEnd => {
@@ -228,6 +242,8 @@ fn should_queue_fixed_action(
 
 #[cfg(test)]
 mod tests {
+    use opencv::core::Point;
+
     use super::*;
     use crate::{Position, minimap::MinimapIdle};
     use std::time::{Duration, Instant};
@@ -372,8 +388,10 @@ mod tests {
     fn rotator_priority_action_queue() {
         let mut rotator = Rotator::default();
         let mut player = PlayerState::default();
+        let mut minimap = MinimapIdle::default();
+        minimap.rune = Some(Point::default());
         let mut context = Context {
-            minimap: Minimap::Idle(MinimapIdle::default()),
+            minimap: Minimap::Idle(minimap),
             ..Context::default()
         };
         context.buffs[RUNE_BUFF_POSITION] = Buff::NoBuff;
@@ -381,12 +399,9 @@ mod tests {
             condition: Box::new(|context, _| matches!(context.minimap, Minimap::Idle(_))),
             action: PlayerAction::SolveRune,
             push_front: false,
+            is_erda: false,
             last_queued_time: None,
         });
-
-        rotator.rotate_action(&context, &mut player);
-        assert_eq!(rotator.priority_actions_queue.len(), 1);
-        assert!(!player.has_priority_action());
 
         rotator.rotate_action(&context, &mut player);
         assert_eq!(rotator.priority_actions_queue.len(), 0);

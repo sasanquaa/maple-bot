@@ -55,9 +55,17 @@ enum Request {
     UpdateMinimap(Option<String>, Minimap),
     UpdateConfiguration(Configuration),
     RedetectMinimap,
-    PlayerPosition,
+    PlayerState,
     MinimapFrame,
     MinimapData,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlayerState {
+    pub position: Option<(i32, i32)>,
+    pub state: String,
+    pub normal_action: Option<String>,
+    pub priority_action: Option<String>,
 }
 
 pub async fn rotate_actions(halting: bool) {
@@ -76,10 +84,8 @@ pub async fn redetect_minimap() {
     request::<()>(Request::RedetectMinimap).await
 }
 
-pub async fn player_position() -> Result<(i32, i32)> {
-    request::<Option<(i32, i32)>>(Request::PlayerPosition)
-        .await
-        .ok_or(anyhow!("player position not found"))
+pub async fn player_state() -> PlayerState {
+    request::<PlayerState>(Request::PlayerState).await
 }
 
 pub async fn minimap_frame() -> Result<(Vec<u8>, usize, usize)> {
