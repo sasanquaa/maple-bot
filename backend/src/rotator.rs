@@ -26,7 +26,6 @@ struct PriorityAction {
     condition: Condition,
     condition_kind: Option<ActionCondition>,
     action: PlayerAction,
-    push_front: bool,
     ignoring: bool,
     last_queued_time: Option<Instant>,
 }
@@ -74,7 +73,6 @@ impl Rotator {
                                 should_queue_fixed_action(context, last_queued_time, condition)
                             }),
                             condition_kind: Some(condition),
-                            push_front: false,
                             ignoring: false,
                             last_queued_time: None,
                         })
@@ -106,8 +104,8 @@ impl Rotator {
                 with: ActionKeyWith::Any,
                 wait_before_use_ticks: 5,
                 wait_after_use_ticks: 0,
+                queue_to_front: Some(true),
             })),
-            push_front: true,
             ignoring: false,
             last_queued_time: None,
         });
@@ -125,7 +123,6 @@ impl Rotator {
             }),
             condition_kind: None,
             action: PlayerAction::SolveRune,
-            push_front: false,
             ignoring: false,
             last_queued_time: None,
         });
@@ -153,8 +150,8 @@ impl Rotator {
                     with: ActionKeyWith::Stationary,
                     wait_before_use_ticks: 10,
                     wait_after_use_ticks: 10,
+                    queue_to_front: Some(true),
                 })),
-                push_front: false,
                 ignoring: false,
                 last_queued_time: None,
             });
@@ -207,7 +204,16 @@ impl Rotator {
             }
             if (action.condition)(context, action.last_queued_time) {
                 action.last_queued_time = Some(Instant::now());
-                if action.push_front {
+                let queue_to_front = match action.action {
+                    PlayerAction::Fixed(action) => match action {
+                        Action::Move(ActionMove { queue_to_front, .. })
+                        | Action::Key(ActionKey { queue_to_front, .. }) => {
+                            queue_to_front.unwrap_or_default()
+                        }
+                    },
+                    PlayerAction::SolveRune => false,
+                };
+                if queue_to_front {
                     self.priority_actions_queue
                         .push_front((action.id, action.action));
                 } else {
@@ -292,6 +298,7 @@ mod tests {
         },
         condition: ActionCondition::Any,
         wait_after_move_ticks: 0,
+        queue_to_front: None,
     });
     const PRIORITY_ACTION: Action = Action::Move(ActionMove {
         position: Position {
@@ -301,6 +308,7 @@ mod tests {
         },
         condition: ActionCondition::ErdaShowerOffCooldown,
         wait_after_move_ticks: 0,
+        queue_to_front: None,
     });
 
     #[test]
@@ -436,7 +444,6 @@ mod tests {
             condition: Box::new(|context, _| matches!(context.minimap, Minimap::Idle(_))),
             condition_kind: None,
             action: PlayerAction::SolveRune,
-            push_front: false,
             ignoring: false,
             last_queued_time: None,
         });

@@ -125,6 +125,7 @@ pub struct ActionMove {
     pub position: Position,
     pub condition: ActionCondition,
     pub wait_after_move_ticks: u32,
+    pub queue_to_front: Option<bool>,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize)]
@@ -136,6 +137,7 @@ pub struct ActionKey {
     pub with: ActionKeyWith,
     pub wait_before_use_ticks: u32,
     pub wait_after_use_ticks: u32,
+    pub queue_to_front: Option<bool>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, EnumIter, Display, EnumString)]

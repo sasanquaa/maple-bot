@@ -82,7 +82,7 @@ fn App() -> Element {
                 },
                 tab: active_tab(),
             }
-            div { class: "px-4 pb-4 pt-2 overflow-y-auto scrollbar h-full",
+            div { class: "px-2 pb-2 pt-2 overflow-y-auto scrollbar h-full",
                 match active_tab().as_str() {
                     TAB_CONFIGURATION => rsx! {
                         Configuration { configs, config }
@@ -190,7 +190,7 @@ fn ActionItem(
     on_drag: EventHandler<usize>,
     on_drop: EventHandler<(usize, bool)>,
 ) -> Element {
-    const KEY: &str = "font-medium w-1/2 text-xs";
+    const KEY: &str = "font-mono w-1/2 text-xs";
     const VALUE: &str = "font-mono text-xs w-16 overflow-hidden text-ellipsis";
     const DIV: &str = "flex items-center space-x-1";
 
@@ -201,7 +201,7 @@ fn ActionItem(
 
     rsx! {
         div {
-            class: "relative p-1 bg-white rounded shadow-sm cursor-move border-l-1 {border_color}",
+            class: "relative p-1 bg-white rounded shadow-sm cursor-move border-l-2 {border_color}",
             draggable: true,
             ondragenter: move |e| {
                 e.prevent_default();
@@ -218,13 +218,14 @@ fn ActionItem(
             onclick: move |_| {
                 on_click(());
             },
-            div { class: "flex flex-col text-xs text-gray-700 space-y-1.5",
+            div { class: "flex flex-col text-xs text-gray-700",
                 match action {
                     Action::Move(
                         ActionMove {
                             position: Position { x, y, allow_adjusting },
                             condition,
                             wait_after_move_ticks,
+                            queue_to_front,
                         },
                     ) => rsx! {
                         div { class: DIV,
@@ -243,6 +244,12 @@ fn ActionItem(
                             span { class: KEY, "Wait after" }
                             span { class: VALUE, {wait_after_move_ticks.to_string()} }
                         }
+                        if let Some(queue_to_front) = queue_to_front {
+                            div { class: DIV,
+                                span { class: KEY, "Queue to front" }
+                                span { class: VALUE, {queue_to_front.to_string()} }
+                            }
+                        }
                     },
                     Action::Key(
                         ActionKey {
@@ -253,6 +260,7 @@ fn ActionItem(
                             with,
                             wait_before_use_ticks,
                             wait_after_use_ticks,
+                            queue_to_front,
                         },
                     ) => rsx! {
                         if let Some(Position { x, y, allow_adjusting }) = position {
@@ -288,6 +296,12 @@ fn ActionItem(
                         div { class: DIV,
                             span { class: KEY, "Wait after" }
                             span { class: VALUE, {wait_after_use_ticks.to_string()} }
+                        }
+                        if let Some(queue_to_front) = queue_to_front {
+                            div { class: DIV,
+                                span { class: KEY, "Queue to front" }
+                                span { class: VALUE, {queue_to_front.to_string()} }
+                            }
                         }
                     },
                 }
@@ -400,65 +414,67 @@ fn ActionInput(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<Strin
                 options: presets(),
                 selected: preset(),
             }
-            div { class: "flex space-x-4 overflow-y-auto flex-1",
-                div { class: "w-1/2 flex flex-col space-y-2.5",
-                    ActionTypeInput {
-                        on_input: move |action: Action| {
-                            if let Some((editing_action, _)) = *editing_action.peek() {
-                                if editing_action.to_string() == action.to_string() {
-                                    on_edit(editing_action);
-                                    return;
+            div { class: "flex space-x-2 overflow-y-auto flex-1",
+                div { class: "w-1/2 overflow-y-auto scrollbar pr-2",
+                    div { class: "flex flex-col space-y-2.5",
+                        ActionTypeInput {
+                            on_input: move |action: Action| {
+                                if let Some((editing_action, _)) = *editing_action.peek() {
+                                    if editing_action.to_string() == action.to_string() {
+                                        on_edit(editing_action);
+                                        return;
+                                    }
                                 }
-                            }
-                            on_edit(action);
-                        },
-                        disabled: preset().is_none(),
-                        value: value_action(),
-                    }
-                    match value_action() {
-                        Action::Move(_) => rsx! {
-                            ActionMoveInput {
-                                on_input: move |action| {
-                                    on_edit(action);
-                                },
-                                disabled: preset().is_none(),
-                                value: value_action(),
-                            }
-                        },
-                        Action::Key(_) => rsx! {
-                            ActionKeyInput {
-                                on_input: move |action| {
-                                    on_edit(action);
-                                },
-                                disabled: preset().is_none(),
-                                value: value_action(),
-                            }
-                        },
-                    }
-                    if editing_action().is_none() {
-                        button {
-                            class: "w-full button-primary h-6",
-                            disabled: preset().is_none(),
-                            onclick: move |_| {
-                                on_save(None);
+                                on_edit(action);
                             },
-                            "Add action"
+                            disabled: preset().is_none(),
+                            value: value_action(),
                         }
-                    } else {
-                        div { class: "grid grid-cols-2 gap-x-2",
+                        match value_action() {
+                            Action::Move(_) => rsx! {
+                                ActionMoveInput {
+                                    on_input: move |action| {
+                                        on_edit(action);
+                                    },
+                                    disabled: preset().is_none(),
+                                    value: value_action(),
+                                }
+                            },
+                            Action::Key(_) => rsx! {
+                                ActionKeyInput {
+                                    on_input: move |action| {
+                                        on_edit(action);
+                                    },
+                                    disabled: preset().is_none(),
+                                    value: value_action(),
+                                }
+                            },
+                        }
+                        if editing_action().is_none() {
                             button {
-                                class: "button-primary h-6",
+                                class: "w-full button-primary h-6",
+                                disabled: preset().is_none(),
                                 onclick: move |_| {
-                                    on_save(editing_action.replace(None).map(|tuple| tuple.1));
+                                    on_save(None);
                                 },
-                                "Save"
+                                "Add action"
                             }
-                            button {
-                                class: "button-secondary h-6",
-                                onclick: move |_| {
-                                    editing_action.set(None);
-                                },
-                                "Cancel"
+                        } else {
+                            div { class: "grid grid-cols-2 gap-x-2",
+                                button {
+                                    class: "button-primary h-6",
+                                    onclick: move |_| {
+                                        on_save(editing_action.replace(None).map(|tuple| tuple.1));
+                                    },
+                                    "Save"
+                                }
+                                button {
+                                    class: "button-secondary h-6",
+                                    onclick: move |_| {
+                                        editing_action.set(None);
+                                    },
+                                    "Cancel"
+                                }
                             }
                         }
                     }
@@ -566,6 +582,7 @@ fn ActionMoveInput(props: InputConfigProps<Action>) -> Element {
         position,
         condition,
         wait_after_move_ticks,
+        queue_to_front,
     } = value;
     let submit =
         use_callback(move |action_move: ActionMove| (props.on_input)(Action::Move(action_move)));
@@ -574,6 +591,12 @@ fn ActionMoveInput(props: InputConfigProps<Action>) -> Element {
     let set_wait_after_move_ticks = use_callback(move |wait_after_move_ticks| {
         submit(ActionMove {
             wait_after_move_ticks,
+            ..value
+        })
+    });
+    let set_queue_to_front = use_callback(move |queue_to_front| {
+        submit(ActionMove {
+            queue_to_front,
             ..value
         })
     });
@@ -590,6 +613,11 @@ fn ActionMoveInput(props: InputConfigProps<Action>) -> Element {
             ActionConditionInput {
                 on_input: move |condition| {
                     set_condition(condition);
+                    if matches!(condition, ActionCondition::Any) {
+                        set_queue_to_front(None);
+                    } else {
+                        set_queue_to_front(Some(false));
+                    }
                 },
                 disabled: props.disabled,
                 value: condition,
@@ -604,6 +632,19 @@ fn ActionMoveInput(props: InputConfigProps<Action>) -> Element {
                     set_wait_after_move_ticks(value);
                 },
                 value: wait_after_move_ticks,
+            }
+            if let Some(queue_to_front) = queue_to_front {
+                Checkbox {
+                    label: "Queue to front",
+                    label_class: LABEL_CLASS,
+                    div_class: DIV_CLASS,
+                    input_class: "appearance-none h-4 w-4 border border-gray-300 rounded checked:bg-gray-400",
+                    disabled: props.disabled,
+                    on_input: move |checked: bool| {
+                        set_queue_to_front(Some(checked));
+                    },
+                    value: queue_to_front,
+                }
             }
         }
     }
@@ -622,6 +663,7 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
         with,
         wait_before_use_ticks,
         wait_after_use_ticks,
+        queue_to_front,
     } = value;
     let submit =
         use_callback(move |action_key: ActionKey| (props.on_input)(Action::Key(action_key)));
@@ -639,6 +681,12 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
     let set_wait_after_use_ticks = use_callback(move |wait_after_use_ticks| {
         submit(ActionKey {
             wait_after_use_ticks,
+            ..value
+        })
+    });
+    let set_queue_to_front = use_callback(move |queue_to_front| {
+        submit(ActionKey {
+            queue_to_front,
             ..value
         })
     });
@@ -679,6 +727,11 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
             ActionConditionInput {
                 on_input: move |condition| {
                     set_condition(condition);
+                    if matches!(condition, ActionCondition::Any) {
+                        set_queue_to_front(None);
+                    } else {
+                        set_queue_to_front(Some(false));
+                    }
                 },
                 disabled: props.disabled,
                 value: condition,
@@ -718,6 +771,19 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
                 },
                 disabled: props.disabled,
                 value: wait_after_use_ticks,
+            }
+            if let Some(queue_to_front) = queue_to_front {
+                Checkbox {
+                    label: "Queue to front",
+                    label_class: LABEL_CLASS,
+                    div_class: DIV_CLASS,
+                    input_class: "appearance-none h-4 w-4 border border-gray-300 rounded checked:bg-gray-400",
+                    disabled: props.disabled,
+                    on_input: move |checked: bool| {
+                        set_queue_to_front(Some(checked));
+                    },
+                    value: queue_to_front,
+                }
             }
         }
     }

@@ -145,7 +145,6 @@ pub fn Minimap(
                         }
                     }
                 }
-            
             }
             div { class: "flex w-full space-x-6 items-center justify-center items-stretch h-7",
                 button {
