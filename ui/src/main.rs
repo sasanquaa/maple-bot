@@ -663,7 +663,7 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
         if matches!(condition, ActionCondition::Any) {
             set_queue_to_front(None);
         } else {
-            set_queue_to_front(Some(false));
+            set_queue_to_front(queue_to_front.or(Some(false)));
         }
     }));
 
@@ -835,6 +835,7 @@ fn ActionConditionInput(
                 label_class: LABEL_CLASS,
                 div_class: DIV_CLASS,
                 input_class: "{INPUT_CLASS} p-1",
+                disabled,
                 on_input: move |millis| {
                     on_input(ActionCondition::EveryMillis(millis));
                 },

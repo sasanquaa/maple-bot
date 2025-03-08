@@ -132,6 +132,20 @@ impl PlayerState {
     }
 
     #[inline]
+    pub fn has_solve_rune_or_queue_front_action(&self) -> bool {
+        self.priority_action.is_some_and(|action| {
+            matches!(
+                action,
+                PlayerAction::SolveRune
+                    | PlayerAction::Fixed(Action::Key(ActionKey {
+                        queue_to_front: Some(true),
+                        ..
+                    }))
+            )
+        })
+    }
+
+    #[inline]
     pub fn replace_priority_action(
         &mut self,
         id: i32,

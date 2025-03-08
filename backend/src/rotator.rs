@@ -237,6 +237,7 @@ impl Rotator {
                 _ => false,
             };
             if has_queue_to_front
+                && !player.has_solve_rune_or_queue_front_action()
                 && !matches!(context.player, Player::UseKey(_) | Player::Stalling(_, _))
             {
                 if let Some(action) = player.replace_priority_action(front_id, front_action) {
