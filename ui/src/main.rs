@@ -225,7 +225,6 @@ fn ActionItem(
                             position: Position { x, y, allow_adjusting },
                             condition,
                             wait_after_move_ticks,
-                            queue_to_front,
                         },
                     ) => rsx! {
                         div { class: DIV,
@@ -243,12 +242,6 @@ fn ActionItem(
                         div { class: DIV,
                             span { class: KEY, "Wait after" }
                             span { class: VALUE, {wait_after_move_ticks.to_string()} }
-                        }
-                        if let Some(queue_to_front) = queue_to_front {
-                            div { class: DIV,
-                                span { class: KEY, "Queue to front" }
-                                span { class: VALUE, {queue_to_front.to_string()} }
-                            }
                         }
                     },
                     Action::Key(
@@ -582,7 +575,6 @@ fn ActionMoveInput(props: InputConfigProps<Action>) -> Element {
         position,
         condition,
         wait_after_move_ticks,
-        queue_to_front,
     } = value;
     let submit =
         use_callback(move |action_move: ActionMove| (props.on_input)(Action::Move(action_move)));
@@ -591,12 +583,6 @@ fn ActionMoveInput(props: InputConfigProps<Action>) -> Element {
     let set_wait_after_move_ticks = use_callback(move |wait_after_move_ticks| {
         submit(ActionMove {
             wait_after_move_ticks,
-            ..value
-        })
-    });
-    let set_queue_to_front = use_callback(move |queue_to_front| {
-        submit(ActionMove {
-            queue_to_front,
             ..value
         })
     });
@@ -613,11 +599,6 @@ fn ActionMoveInput(props: InputConfigProps<Action>) -> Element {
             ActionConditionInput {
                 on_input: move |condition| {
                     set_condition(condition);
-                    if matches!(condition, ActionCondition::Any) {
-                        set_queue_to_front(None);
-                    } else {
-                        set_queue_to_front(Some(false));
-                    }
                 },
                 disabled: props.disabled,
                 value: condition,
@@ -632,19 +613,6 @@ fn ActionMoveInput(props: InputConfigProps<Action>) -> Element {
                     set_wait_after_move_ticks(value);
                 },
                 value: wait_after_move_ticks,
-            }
-            if let Some(queue_to_front) = queue_to_front {
-                Checkbox {
-                    label: "Queue to front",
-                    label_class: LABEL_CLASS,
-                    div_class: DIV_CLASS,
-                    input_class: "appearance-none h-4 w-4 border border-gray-300 rounded checked:bg-gray-400",
-                    disabled: props.disabled,
-                    on_input: move |checked: bool| {
-                        set_queue_to_front(Some(checked));
-                    },
-                    value: queue_to_front,
-                }
             }
         }
     }
@@ -691,6 +659,14 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
         })
     });
 
+    use_effect(use_reactive!(|condition| {
+        if matches!(condition, ActionCondition::Any) {
+            set_queue_to_front(None);
+        } else {
+            set_queue_to_front(Some(false));
+        }
+    }));
+
     rsx! {
         div { class: "flex flex-col space-y-3",
             Checkbox {
@@ -727,14 +703,22 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
             ActionConditionInput {
                 on_input: move |condition| {
                     set_condition(condition);
-                    if matches!(condition, ActionCondition::Any) {
-                        set_queue_to_front(None);
-                    } else {
-                        set_queue_to_front(Some(false));
-                    }
                 },
                 disabled: props.disabled,
                 value: condition,
+            }
+            if let Some(queue_to_front) = queue_to_front {
+                Checkbox {
+                    label: "Queue to front",
+                    label_class: LABEL_CLASS,
+                    div_class: DIV_CLASS,
+                    input_class: "appearance-none h-4 w-4 border border-gray-300 rounded checked:bg-gray-400",
+                    disabled: props.disabled,
+                    on_input: move |checked: bool| {
+                        set_queue_to_front(Some(checked));
+                    },
+                    value: queue_to_front,
+                }
             }
             ActionKeyDirectionInput {
                 on_input: move |direction| {
@@ -771,19 +755,6 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
                 },
                 disabled: props.disabled,
                 value: wait_after_use_ticks,
-            }
-            if let Some(queue_to_front) = queue_to_front {
-                Checkbox {
-                    label: "Queue to front",
-                    label_class: LABEL_CLASS,
-                    div_class: DIV_CLASS,
-                    input_class: "appearance-none h-4 w-4 border border-gray-300 rounded checked:bg-gray-400",
-                    disabled: props.disabled,
-                    on_input: move |checked: bool| {
-                        set_queue_to_front(Some(checked));
-                    },
-                    value: queue_to_front,
-                }
             }
         }
     }

@@ -12,7 +12,7 @@ use crate::{
     context::{Context, ERDA_SHOWER_SKILL_POSITION, RUNE_BUFF_POSITION},
     database::{Action, ActionCondition, ActionKey, ActionMove},
     minimap::Minimap,
-    player::{PlayerAction, PlayerState},
+    player::{Player, PlayerAction, PlayerState},
     skill::Skill,
 };
 
@@ -171,9 +171,9 @@ impl Rotator {
         self.priority_actions_queue.clear();
     }
 
-    pub fn rotate_action(&mut self, context: &Context, player: &mut PlayerState) {
-        // what a mess
-        let has_erda_action = self.priority_actions_queue.iter().any(|(_, action)| {
+    #[inline]
+    fn has_erda_action_in_queue(&self) -> bool {
+        self.priority_actions_queue.iter().any(|(_, action)| {
             matches!(
                 action,
                 PlayerAction::Fixed(
@@ -186,7 +186,12 @@ impl Rotator {
                     }),
                 )
             )
-        });
+        })
+    }
+
+    pub fn rotate_action(&mut self, context: &Context, player: &mut PlayerState) {
+        // what a mess
+        let has_erda_action = self.has_erda_action_in_queue();
         for action in self.priority_actions.iter_mut() {
             action.ignoring = match action.condition_kind {
                 Some(condition) => match condition {
@@ -200,19 +205,17 @@ impl Rotator {
                 None => false,
             };
             if action.ignoring {
+                action.last_queued_time = Some(Instant::now());
                 continue;
             }
             if (action.condition)(context, action.last_queued_time) {
-                action.last_queued_time = Some(Instant::now());
                 let queue_to_front = match action.action {
-                    PlayerAction::Fixed(action) => match action {
-                        Action::Move(ActionMove { queue_to_front, .. })
-                        | Action::Key(ActionKey { queue_to_front, .. }) => {
-                            queue_to_front.unwrap_or_default()
-                        }
-                    },
-                    PlayerAction::SolveRune => false,
+                    PlayerAction::Fixed(Action::Key(ActionKey { queue_to_front, .. })) => {
+                        queue_to_front.unwrap_or_default()
+                    }
+                    _ => false,
                 };
+                action.last_queued_time = Some(Instant::now());
                 if queue_to_front {
                     self.priority_actions_queue
                         .push_front((action.id, action.action));
@@ -222,10 +225,31 @@ impl Rotator {
                 }
             }
         }
-        if player.has_priority_action() || !self.priority_actions_queue.is_empty() {
-            if !player.has_normal_action() && !player.has_priority_action() {
-                player.set_priority_action(self.priority_actions_queue.pop_front().unwrap().1);
+        if !self.priority_actions_queue.is_empty() {
+            if player.has_normal_action() {
+                return;
             }
+            let (front_id, front_action) = self.priority_actions_queue.pop_front().unwrap();
+            let has_queue_to_front = match front_action {
+                PlayerAction::Fixed(Action::Key(ActionKey { queue_to_front, .. })) => {
+                    queue_to_front.unwrap_or_default()
+                }
+                _ => false,
+            };
+            if has_queue_to_front
+                && !matches!(context.player, Player::UseKey(_) | Player::Stalling(_, _))
+            {
+                if let Some(action) = player.replace_priority_action(front_id, front_action) {
+                    self.priority_actions_queue.push_front(action);
+                }
+            } else if !player.has_priority_action() {
+                player.set_priority_action(front_id, front_action);
+            } else {
+                self.priority_actions_queue
+                    .push_front((front_id, front_action));
+            }
+        }
+        if player.has_priority_action() {
             return;
         }
         if !player.has_normal_action() && !self.normal_actions.is_empty() {
@@ -298,7 +322,6 @@ mod tests {
         },
         condition: ActionCondition::Any,
         wait_after_move_ticks: 0,
-        queue_to_front: None,
     });
     const PRIORITY_ACTION: Action = Action::Move(ActionMove {
         position: Position {
@@ -308,7 +331,6 @@ mod tests {
         },
         condition: ActionCondition::ErdaShowerOffCooldown,
         wait_after_move_ticks: 0,
-        queue_to_front: None,
     });
 
     #[test]

@@ -38,6 +38,7 @@ const PLAYER_MOVE_TIMEOUT: u32 = 5;
 pub struct PlayerState {
     /// A normal action requested by the `Rotator`
     normal_action: Option<PlayerAction>,
+    priority_action_id: i32,
     /// A priority action requested by the `Rotator`, this action will override
     /// the normal action if it is in the middle of executing.
     priority_action: Option<PlayerAction>,
@@ -124,9 +125,23 @@ impl PlayerState {
     }
 
     #[inline]
-    pub fn set_priority_action(&mut self, action: PlayerAction) {
+    pub fn set_priority_action(&mut self, id: i32, action: PlayerAction) {
         self.reset_to_idle_next_update = true;
+        self.priority_action_id = id;
         self.priority_action = Some(action);
+    }
+
+    #[inline]
+    pub fn replace_priority_action(
+        &mut self,
+        id: i32,
+        action: PlayerAction,
+    ) -> Option<(i32, PlayerAction)> {
+        debug_assert!(matches!(action, PlayerAction::Fixed(Action::Key(_))));
+        let prev_id = self.priority_action_id;
+        self.reset_to_idle_next_update = true;
+        self.priority_action_id = id;
+        Some(prev_id).zip(self.priority_action.replace(action))
     }
 
     #[inline]
