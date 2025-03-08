@@ -1,4 +1,8 @@
-use std::{collections::VecDeque, time::Instant};
+use std::{
+    collections::VecDeque,
+    sync::atomic::{AtomicI32, Ordering},
+    time::Instant,
+};
 
 use log::debug;
 
@@ -18,10 +22,12 @@ const COOLDOWN_BETWEEN_POTION_QUEUE_MILLIS: u128 = 2_000;
 type Condition = Box<dyn Fn(&Context, Option<Instant>) -> bool>;
 
 struct PriorityAction {
+    id: i32,
     condition: Condition,
+    condition_kind: Option<ActionCondition>,
     action: PlayerAction,
     push_front: bool,
-    is_erda: bool,
+    ignoring: bool,
     last_queued_time: Option<Instant>,
 }
 
@@ -39,8 +45,7 @@ pub struct Rotator {
     normal_action_backward: bool,
     normal_rotate_mode: RotatorMode,
     priority_actions: Vec<PriorityAction>,
-    priority_actions_queue: VecDeque<PlayerAction>,
-    ignore_erda_action: bool,
+    priority_actions_queue: VecDeque<(i32, PlayerAction)>,
 }
 
 impl Rotator {
@@ -55,18 +60,22 @@ impl Rotator {
         self.normal_actions.clear();
         self.priority_actions.clear();
 
+        // this is literally free postfix increment!
+        let id = AtomicI32::new(0);
         for action in actions.iter().copied() {
             match action {
                 Action::Move(ActionMove { condition, .. })
                 | Action::Key(ActionKey { condition, .. }) => match condition {
                     ActionCondition::EveryMillis(_) | ActionCondition::ErdaShowerOffCooldown => {
                         self.priority_actions.push(PriorityAction {
+                            id: id.fetch_add(1, Ordering::Relaxed),
                             action: PlayerAction::Fixed(action),
                             condition: Box::new(move |context, last_queued_time| {
                                 should_queue_fixed_action(context, last_queued_time, condition)
                             }),
+                            condition_kind: Some(condition),
                             push_front: false,
-                            is_erda: matches!(condition, ActionCondition::ErdaShowerOffCooldown),
+                            ignoring: false,
                             last_queued_time: None,
                         })
                     }
@@ -75,6 +84,7 @@ impl Rotator {
             }
         }
         self.priority_actions.push(PriorityAction {
+            id: id.fetch_add(1, Ordering::Relaxed),
             condition: Box::new(|context, last_queued_time| {
                 if !at_least_millis_passed_since(
                     last_queued_time,
@@ -87,6 +97,7 @@ impl Rotator {
                 }
                 false
             }),
+            condition_kind: None,
             action: PlayerAction::Fixed(Action::Key(ActionKey {
                 key: potion_key,
                 position: None,
@@ -97,10 +108,11 @@ impl Rotator {
                 wait_after_use_ticks: 0,
             })),
             push_front: true,
-            is_erda: false,
+            ignoring: false,
             last_queued_time: None,
         });
         self.priority_actions.push(PriorityAction {
+            id: id.fetch_add(1, Ordering::Relaxed),
             condition: Box::new(|context, last_queued_time| {
                 if !at_least_millis_passed_since(last_queued_time, COOLDOWN_BETWEEN_QUEUE_MILLIS) {
                     return false;
@@ -111,13 +123,15 @@ impl Rotator {
                 }
                 false
             }),
+            condition_kind: None,
             action: PlayerAction::SolveRune,
             push_front: false,
-            is_erda: false,
+            ignoring: false,
             last_queued_time: None,
         });
         for (i, key) in buffs.iter().copied() {
             self.priority_actions.push(PriorityAction {
+                id: id.fetch_add(1, Ordering::Relaxed),
                 condition: Box::new(move |context, last_queued_time| {
                     if !at_least_millis_passed_since(
                         last_queued_time,
@@ -130,6 +144,7 @@ impl Rotator {
                     }
                     matches!(context.buffs[i], Buff::NoBuff)
                 }),
+                condition_kind: None,
                 action: PlayerAction::Fixed(Action::Key(ActionKey {
                     key,
                     position: None,
@@ -140,7 +155,7 @@ impl Rotator {
                     wait_after_use_ticks: 10,
                 })),
                 push_front: false,
-                is_erda: false,
+                ignoring: false,
                 last_queued_time: None,
             });
         }
@@ -157,35 +172,56 @@ impl Rotator {
         self.normal_action_backward = false;
         self.normal_index = 0;
         self.priority_actions_queue.clear();
-        self.ignore_erda_action = false;
     }
 
     pub fn rotate_action(&mut self, context: &Context, player: &mut PlayerState) {
-        if !self.priority_actions.is_empty() {
-            let mut ignore_erda_action = false;
-            for action in self.priority_actions.iter_mut() {
-                if self.ignore_erda_action && action.is_erda {
-                    continue;
-                }
-                if (action.condition)(context, action.last_queued_time) {
-                    ignore_erda_action = action.is_erda;
-                    action.last_queued_time = Some(Instant::now());
-                    if action.push_front {
-                        self.priority_actions_queue.push_front(action.action);
-                    } else {
-                        self.priority_actions_queue.push_back(action.action);
-                    }
+        // what a mess
+        let has_erda_action = self.priority_actions_queue.iter().any(|(_, action)| {
+            matches!(
+                action,
+                PlayerAction::Fixed(
+                    Action::Move(ActionMove {
+                        condition: ActionCondition::ErdaShowerOffCooldown,
+                        ..
+                    }) | Action::Key(ActionKey {
+                        condition: ActionCondition::ErdaShowerOffCooldown,
+                        ..
+                    }),
+                )
+            )
+        });
+        for action in self.priority_actions.iter_mut() {
+            action.ignoring = match action.condition_kind {
+                Some(condition) => match condition {
+                    ActionCondition::EveryMillis(_) => self
+                        .priority_actions_queue
+                        .iter()
+                        .any(|(id, _)| *id == action.id),
+                    ActionCondition::ErdaShowerOffCooldown => has_erda_action,
+                    ActionCondition::Any => unreachable!(),
+                },
+                None => false,
+            };
+            if action.ignoring {
+                continue;
+            }
+            if (action.condition)(context, action.last_queued_time) {
+                action.last_queued_time = Some(Instant::now());
+                if action.push_front {
+                    self.priority_actions_queue
+                        .push_front((action.id, action.action));
+                } else {
+                    self.priority_actions_queue
+                        .push_back((action.id, action.action));
                 }
             }
-            self.ignore_erda_action = ignore_erda_action;
         }
         if player.has_priority_action() || !self.priority_actions_queue.is_empty() {
             if !player.has_normal_action() && !player.has_priority_action() {
-                player.set_priority_action(self.priority_actions_queue.pop_front().unwrap());
+                player.set_priority_action(self.priority_actions_queue.pop_front().unwrap().1);
             }
             return;
         }
-        self.ignore_erda_action = false;
         if !player.has_normal_action() && !self.normal_actions.is_empty() {
             match self.normal_rotate_mode {
                 RotatorMode::StartToEnd => {
@@ -396,10 +432,12 @@ mod tests {
         };
         context.buffs[RUNE_BUFF_POSITION] = Buff::NoBuff;
         rotator.priority_actions.push(PriorityAction {
+            id: 0,
             condition: Box::new(|context, _| matches!(context.minimap, Minimap::Idle(_))),
+            condition_kind: None,
             action: PlayerAction::SolveRune,
             push_front: false,
-            is_erda: false,
+            ignoring: false,
             last_queued_time: None,
         });
 

@@ -94,12 +94,6 @@ impl std::fmt::Display for PlayerAction {
             PlayerAction::SolveRune => write!(f, "SolveRune"),
         }
     }
-    // fn to_string(&self) -> String {
-    //     match self {
-    //         PlayerAction::Fixed(action) => action.to_string(),
-    //         PlayerAction::SolveRune => "SolveRune".to_string(),
-    //     }
-    // }
 }
 
 impl PlayerState {
