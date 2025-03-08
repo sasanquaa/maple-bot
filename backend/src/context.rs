@@ -64,6 +64,7 @@ pub struct Context {
     pub player: Player,
     pub skills: [Skill; mem::variant_count::<SkillKind>()],
     pub buffs: [Buff; mem::variant_count::<BuffKind>()],
+    pub halting: bool,
 }
 
 #[cfg(test)]
@@ -75,6 +76,7 @@ impl Default for Context {
             player: Player::Detecting,
             skills: [Skill::Detecting; mem::variant_count::<SkillKind>()],
             buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
+            halting: true,
         }
     }
 }
@@ -100,7 +102,6 @@ pub fn start_update_loop() {
         thread::spawn(|| {
             let handle = Handle::new(Some("MapleStoryClass"), None).unwrap();
             let keys = Keys::new(handle);
-            let mut halting = true;
             let mut capture = Capture::new(handle);
             let mut player_state = PlayerState::default();
             let mut minimap_state = MinimapState::default();
@@ -123,6 +124,7 @@ pub fn start_update_loop() {
                 player: Player::Detecting,
                 skills: [Skill::Detecting],
                 buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
+                halting: true,
             };
             let update_minimap = |updated_minimap: crate::database::Minimap,
                                   preset: Option<String>,
@@ -194,12 +196,12 @@ pub fn start_update_loop() {
                         &mut buff_states[i],
                     );
                 });
-                if !halting {
+                if !context.halting {
                     rotator.rotate_action(&context, &mut player_state);
                 }
                 poll_request(|request| match request {
                     Request::RotateActions(halted) => {
-                        halting = halted;
+                        context.halting = halted;
                         if halted {
                             rotator.reset_queue();
                             player_state.abort_actions();

@@ -16,9 +16,6 @@ use crate::{
 /// Maximum number of times adjusting or double jump states can be transitioned to without changing position
 const UNSTUCK_TRACKER_THRESHOLD: u32 = 10;
 
-/// Random threshold to choose unstucking direction
-const UNSTUCK_TO_RIGHT_X_THRESHOLD: i32 = 10;
-
 /// Minimium y distance required to perform a fall and double jump/adjusting
 const ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD: i32 = 8;
 
@@ -326,10 +323,11 @@ impl Contextual for Player {
             if let Some(next) = update_non_positional_context(self, context, detector, state) {
                 return ControlFlow::Next(next);
             }
-            let next = if let Minimap::Idle(idle) = context.minimap
-                && let Some(pos) = state.last_known_pos
+            let next = if !context.halting
+                && let Minimap::Idle(idle) = context.minimap
+                && state.last_known_pos.is_some()
             {
-                if idle.partially_overlapping || pos.x > UNSTUCK_TO_RIGHT_X_THRESHOLD {
+                if idle.partially_overlapping {
                     Player::Detecting
                 } else {
                     Player::Unstucking(Timeout::default())
@@ -378,6 +376,7 @@ fn update_non_positional_context(
             context,
             state.last_known_pos.unwrap(),
             timeout,
+            rand::random_bool(0.5), // gamba
         )),
         Player::Stalling(timeout, max_timeout) => {
             let update = |timeout| Player::Stalling(timeout, max_timeout);
@@ -1161,7 +1160,12 @@ fn update_falling_context(
     )
 }
 
-fn update_unstucking_context(context: &Context, cur_pos: Point, timeout: Timeout) -> Player {
+fn update_unstucking_context(
+    context: &Context,
+    cur_pos: Point,
+    timeout: Timeout,
+    to_right: bool,
+) -> Player {
     const Y_IGNORE_THRESHOLD: i32 = 15;
 
     let Minimap::Idle(idle) = context.minimap else {
@@ -1176,8 +1180,7 @@ fn update_unstucking_context(context: &Context, cur_pos: Point, timeout: Timeout
             if y <= Y_IGNORE_THRESHOLD {
                 return Player::Unstucking(timeout);
             }
-            // random threshold for picking whether to go left or right
-            if cur_pos.x <= UNSTUCK_TO_RIGHT_X_THRESHOLD {
+            if to_right {
                 let _ = context.keys.send_down(KeyKind::Right);
             } else {
                 let _ = context.keys.send_down(KeyKind::Left);
