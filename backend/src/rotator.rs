@@ -215,17 +215,19 @@ impl Rotator {
                     }
                     _ => false,
                 };
-                action.last_queued_time = Some(Instant::now());
+                let item = (action.id, action.action);
                 if queue_to_front {
-                    self.priority_actions_queue
-                        .push_front((action.id, action.action));
+                    self.priority_actions_queue.push_front(item);
                 } else {
-                    self.priority_actions_queue
-                        .push_back((action.id, action.action));
+                    self.priority_actions_queue.push_back(item);
                 }
+                action.last_queued_time = Some(Instant::now());
             }
         }
         if !self.priority_actions_queue.is_empty() {
+            if player.has_normal_action() && is_player_stalling_or_use_key(context) {
+                return;
+            }
             let (front_id, front_action) = self.priority_actions_queue.pop_front().unwrap();
             let has_queue_to_front = match front_action {
                 PlayerAction::Fixed(Action::Key(ActionKey { queue_to_front, .. })) => {
@@ -235,7 +237,7 @@ impl Rotator {
             };
             if has_queue_to_front
                 && !player.has_solve_rune_or_queue_front_action()
-                && !matches!(context.player, Player::UseKey(_) | Player::Stalling(_, _))
+                && !is_player_stalling_or_use_key(context)
             {
                 if let Some(action) = player.replace_priority_action(front_id, front_action) {
                     self.priority_actions_queue.push_front(action);
@@ -251,6 +253,7 @@ impl Rotator {
             return;
         }
         if !player.has_normal_action() && !self.normal_actions.is_empty() {
+            debug_assert!(self.normal_index < self.normal_actions.len());
             match self.normal_rotate_mode {
                 RotatorMode::StartToEnd => {
                     let action = self.normal_actions[self.normal_index];
@@ -276,6 +279,11 @@ impl Rotator {
 }
 
 #[inline]
+fn is_player_stalling_or_use_key(context: &Context) -> bool {
+    matches!(context.player, Player::UseKey(_) | Player::Stalling(_, _))
+}
+
+#[inline]
 fn at_least_millis_passed_since(last_queued_time: Option<Instant>, millis: u128) -> bool {
     last_queued_time
         .map(|instant| Instant::now().duration_since(instant).as_millis() >= millis)
@@ -297,7 +305,10 @@ fn should_queue_fixed_action(
         return false;
     }
     if matches!(condition, ActionCondition::ErdaShowerOffCooldown)
-        && !matches!(context.skills[ERDA_SHOWER_SKILL_POSITION], Skill::Idle)
+        && !matches!(
+            context.skills[ERDA_SHOWER_SKILL_POSITION],
+            Skill::Idle(_, _)
+        )
     {
         return false;
     }
@@ -306,7 +317,7 @@ fn should_queue_fixed_action(
 
 #[cfg(test)]
 mod tests {
-    use opencv::core::Point;
+    use opencv::core::{Point, Vec4b};
 
     use super::*;
     use crate::{Position, minimap::MinimapIdle};
@@ -367,7 +378,8 @@ mod tests {
         let mut context = Context::default();
         let now = Instant::now();
 
-        context.skills[ERDA_SHOWER_SKILL_POSITION] = Skill::Idle;
+        context.skills[ERDA_SHOWER_SKILL_POSITION] =
+            Skill::Idle(Point::default(), Vec4b::default());
         assert!(!should_queue_fixed_action(
             &context,
             Some(now - Duration::from_millis(COOLDOWN_BETWEEN_QUEUE_MILLIS as u64 - 1000)),

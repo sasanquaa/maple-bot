@@ -33,6 +33,51 @@ const BONUS_EXP_BUFF_POSITION: usize = 3;
 const LEGION_WEALTH_BUFF_POSITION: usize = 4;
 const LEGION_LUCK_BUFF_POSITION: usize = 5;
 
+/// A struct that stores the current tick before timing out.
+///
+/// Most contextual state can be timed out as there is no guaranteed
+/// an action will be performed or state can be transitioned. So timeout is used to retry
+/// such action/state and to avoid looping in a single state forever. Or
+/// for some contextual states to perform an action only after timing out.
+#[derive(Clone, Copy, Debug, Default)]
+#[cfg_attr(debug_assertions, derive(PartialEq))]
+pub struct Timeout {
+    pub current: u32,
+    pub started: bool,
+}
+
+#[inline]
+pub fn update_with_timeout<T, A>(
+    timeout: Timeout,
+    max_timeout: u32,
+    args: A,
+    on_started: impl FnOnce(A, Timeout) -> T,
+    on_timeout: impl FnOnce(A) -> T,
+    on_update: impl FnOnce(A, Timeout) -> T,
+) -> T {
+    debug_assert!(max_timeout > 0, "max_timeout must be positive");
+    debug_assert!(
+        timeout.started || timeout == Timeout::default(),
+        "started timeout in non-default state"
+    );
+    debug_assert!(
+        timeout.current <= max_timeout,
+        "current timeout tick larger than max_timeout"
+    );
+
+    match timeout {
+        Timeout { started: false, .. } => on_started(args, Timeout {
+            started: true,
+            ..timeout
+        }),
+        Timeout { current, .. } if current >= max_timeout => on_timeout(args),
+        timeout => on_update(args, Timeout {
+            current: timeout.current + 1,
+            ..timeout
+        }),
+    }
+}
+
 /// Represents a control flow after a context update.
 pub enum ControlFlow<T> {
     /// The context is updated immediately

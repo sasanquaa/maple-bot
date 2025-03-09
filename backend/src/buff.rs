@@ -3,7 +3,7 @@ use log::debug;
 use strum::EnumIter;
 
 use crate::{
-    context::{Context, Contextual, ControlFlow},
+    context::{Context, Contextual, ControlFlow, Timeout, update_with_timeout},
     detect::Detector,
 };
 
@@ -12,8 +12,11 @@ const BUFF_FAIL_MAX_COUNT: u32 = 3;
 
 #[derive(Debug)]
 pub struct BuffState {
+    /// The kind of buff
     kind: BuffKind,
-    interval: u32,
+    /// Timeout for detecting buff in a fixed interval
+    timeout: Timeout,
+    /// The count `Buff::HasBuff` has failed to detect
     fail_count: u32,
 }
 
@@ -21,7 +24,7 @@ impl BuffState {
     pub fn new(kind: BuffKind) -> Self {
         Self {
             kind,
-            interval: 0,
+            timeout: Timeout::default(),
             fail_count: 0,
         }
     }
@@ -59,42 +62,54 @@ impl Contextual for Buff {
 
 #[inline]
 fn update_context(contextual: Buff, detector: &mut impl Detector, state: &mut BuffState) -> Buff {
-    let next = if state.interval % BUFF_CHECK_EVERY_TICKS == 0 {
-        let has_buff = match state.kind {
-            BuffKind::Rune => detector.detect_player_rune_buff(),
-            BuffKind::SayramElixir => detector.detect_player_sayram_elixir_buff(),
-            BuffKind::ExpCouponX3 => detector.detect_player_exp_coupon_x3_buff(),
-            BuffKind::BonusExpCoupon => detector.detect_player_bonus_exp_coupon_buff(),
-            BuffKind::LegionWealth => detector.detect_player_legion_wealth_buff(),
-            BuffKind::LegionLuck => detector.detect_player_legion_luck_buff(),
-        };
-        state.fail_count = if matches!(contextual, Buff::HasBuff) && !has_buff {
-            state.fail_count + 1
-        } else {
-            0
-        };
-        debug!(target: "buff", "{contextual:?} {state:?}");
-        match contextual {
-            Buff::NoBuff => {
-                if has_buff {
-                    Buff::HasBuff
-                } else {
-                    Buff::NoBuff
-                }
+    let (has_buff, timeout) = update_with_timeout(
+        state.timeout,
+        BUFF_CHECK_EVERY_TICKS,
+        (),
+        |_, timeout| {
+            (
+                Some(match state.kind {
+                    BuffKind::Rune => detector.detect_player_rune_buff(),
+                    BuffKind::SayramElixir => detector.detect_player_sayram_elixir_buff(),
+                    BuffKind::ExpCouponX3 => detector.detect_player_exp_coupon_x3_buff(),
+                    BuffKind::BonusExpCoupon => detector.detect_player_bonus_exp_coupon_buff(),
+                    BuffKind::LegionWealth => detector.detect_player_legion_wealth_buff(),
+                    BuffKind::LegionLuck => detector.detect_player_legion_luck_buff(),
+                }),
+                timeout,
+            )
+        },
+        |_| (None, Timeout::default()),
+        |_, timeout| (None, timeout),
+    );
+    state.timeout = timeout;
+    state.fail_count = has_buff
+        .map(|has_buff| {
+            if matches!(contextual, Buff::HasBuff) && !has_buff {
+                state.fail_count + 1
+            } else {
+                0
             }
-            Buff::HasBuff => {
-                if state.fail_count >= BUFF_FAIL_MAX_COUNT {
-                    Buff::NoBuff
-                } else {
-                    Buff::HasBuff
-                }
+        })
+        .unwrap_or(state.fail_count);
+    debug!(target: "buff", "{contextual:?} {state:?}");
+    match (has_buff, contextual) {
+        (None, contextual) => contextual,
+        (Some(has_buff), Buff::NoBuff) => {
+            if has_buff {
+                Buff::HasBuff
+            } else {
+                Buff::NoBuff
             }
         }
-    } else {
-        contextual
-    };
-    state.interval = (state.interval + 1) % BUFF_CHECK_EVERY_TICKS;
-    next
+        (_, Buff::HasBuff) => {
+            if state.fail_count >= BUFF_FAIL_MAX_COUNT {
+                Buff::NoBuff
+            } else {
+                Buff::HasBuff
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -155,6 +170,9 @@ mod tests {
 
             let buff = update_context(Buff::NoBuff, &mut detector, &mut state);
             assert!(matches!(buff, Buff::HasBuff));
+            let buff = update_context(buff, &mut detector, &mut state);
+            assert_eq!(state.fail_count, 0);
+            assert!(matches!(buff, Buff::HasBuff));
         }
     }
 
@@ -163,8 +181,14 @@ mod tests {
         for kind in BuffKind::iter() {
             let mut detector = detector_with_kind(kind, false);
             let mut state = BuffState::new(kind);
+            state.fail_count = 2;
 
             let buff = update_context(Buff::HasBuff, &mut detector, &mut state);
+            assert_eq!(state.fail_count, 3);
+            assert_eq!(state.timeout, Timeout {
+                started: true,
+                ..Timeout::default()
+            });
             assert!(matches!(buff, Buff::NoBuff));
         }
     }
@@ -174,17 +198,24 @@ mod tests {
         for kind in BuffKind::iter() {
             let mut detector = detector_with_kind(kind, true);
             let mut state = BuffState::new(kind);
-            state.interval = 1; // skip initial check
+            state.timeout = Timeout {
+                current: 0,
+                started: true,
+            }; // skip initial check
 
             let mut buff = Buff::NoBuff;
-            for _ in 0..BUFF_CHECK_EVERY_TICKS - 1 {
+            for _ in 0..BUFF_CHECK_EVERY_TICKS {
                 buff = update_context(buff, &mut detector, &mut state);
                 assert!(matches!(buff, Buff::NoBuff));
             }
+            // timing out and restart
+            buff = update_context(buff, &mut detector, &mut state);
+            assert!(matches!(buff, Buff::NoBuff));
+            assert_eq!(state.timeout, Timeout::default());
 
             buff = update_context(buff, &mut detector, &mut state);
             assert!(matches!(buff, Buff::HasBuff));
-            assert_eq!(state.interval, 1);
+            assert_eq!(state.timeout.current, 0);
         }
     }
 }

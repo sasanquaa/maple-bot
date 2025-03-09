@@ -8,7 +8,7 @@ use opencv::{
 use strsim::normalized_damerau_levenshtein;
 
 use crate::{
-    context::{Context, Contextual, ControlFlow},
+    context::{Context, Contextual, ControlFlow, Timeout, update_with_timeout},
     database::{Action, ActionKey, ActionMove, Minimap as MinimapData, query_maps, upsert_map},
     detect::Detector,
 };
@@ -24,7 +24,7 @@ pub struct MinimapState {
 }
 
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(test, derive(Default))]
+#[cfg_attr(test, derive(Default, PartialEq))]
 struct Anchors {
     tl: (Point, Vec4b),
     br: (Point, Vec4b),
@@ -33,22 +33,31 @@ struct Anchors {
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(test, derive(Default))]
 pub struct MinimapIdle {
+    /// The two anchors top left and bottom right of the minimap.
+    /// They are just two fixed pixels.
     anchors: Anchors,
+    /// The bounding box of the minimap.
     pub bbox: Rect,
+    /// Whether the UI width is scaled or not depending on the saved data
     pub scale_w: f32,
+    /// Whether the UI height is scaled or not depending on the saved data
     pub scale_h: f32,
+    /// Approximates whether the minimap UI has other UI partially overlapping it
     pub partially_overlapping: bool,
+    /// The rune position
     pub rune: Option<Point>,
-    rune_interval: u32,
+    /// Timeout for detecting rune in a fixed interval
+    rune_timeout: Timeout,
+    /// Timeout for detecting elite boss in a fixed interval
     pub has_elite_boss: bool,
-    has_elite_boss_interval: u32,
+    has_elite_boss_timeout: Timeout,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum Minimap {
     Idle(MinimapIdle),
     Detecting,
-    Timeout(u32),
+    Timeout(Timeout),
 }
 
 impl Contextual for Minimap {
@@ -73,21 +82,24 @@ fn update_context(
     match contextual {
         Minimap::Detecting => {
             let Some((contextual, data)) = update_detecting_context(detector) else {
-                return Minimap::Timeout(0);
+                return Minimap::Timeout(Timeout::default());
             };
             state.data = data;
             contextual
         }
-        Minimap::Idle(idle) => update_idle_context(detector, idle).unwrap_or(Minimap::Timeout(0)),
+        Minimap::Idle(idle) => {
+            update_idle_context(detector, idle).unwrap_or(Minimap::Timeout(Timeout::default()))
+        }
         // stalling for a bit before re-detecting
         // maybe useful for dragging
-        Minimap::Timeout(timeout) => {
-            let timeout = timeout + 1;
-            if timeout >= MINIMAP_CHANGE_TIMEOUT {
-                return Minimap::Detecting;
-            }
-            Minimap::Timeout(timeout)
-        }
+        Minimap::Timeout(timeout) => update_with_timeout(
+            timeout,
+            MINIMAP_CHANGE_TIMEOUT,
+            (),
+            |_, timeout| Minimap::Timeout(timeout),
+            |_| Minimap::Detecting,
+            |_, timeout| Minimap::Timeout(timeout),
+        ),
     }
 }
 
@@ -110,9 +122,9 @@ fn update_detecting_context(detector: &mut impl Detector) -> Option<(Minimap, Mi
             scale_h,
             partially_overlapping: false,
             rune: None,
-            rune_interval: 0,
+            rune_timeout: Timeout::default(),
             has_elite_boss: false,
-            has_elite_boss_interval: 0,
+            has_elite_boss_timeout: Timeout::default(),
         }),
         data,
     ))
@@ -124,6 +136,10 @@ fn update_idle_context(detector: &mut impl Detector, idle: MinimapIdle) -> Optio
         bbox,
         scale_w,
         scale_h,
+        rune,
+        rune_timeout,
+        has_elite_boss,
+        has_elite_boss_timeout,
         ..
     } = idle;
     let tl_pixel = pixel_at(detector.mat(), anchors.tl.0)?;
@@ -137,37 +153,59 @@ fn update_idle_context(detector: &mut impl Detector, idle: MinimapIdle) -> Optio
             (tl_pixel, br_pixel),
             (anchors.tl.1, anchors.br.1)
         );
-        return Some(Minimap::Timeout(0));
+        return Some(Minimap::Timeout(Timeout::default()));
     }
-    let mut rune = idle.rune;
-    if idle.rune_interval % MINIMAP_DETECT_RUNE_INTERVAL_TICKS == 0 {
-        rune = detector.detect_minimap_rune(bbox).ok().map(|rune| {
-            let tl = rune.tl() - bbox.tl();
-            let br = rune.br() - bbox.tl();
-            let x = ((tl.x + br.x) / 2) as f32 / scale_w;
-            let y = (bbox.height - br.y + 1) as f32 / scale_h;
-            let point = Point::new(x as i32, y as i32);
-            debug!(target: "minimap", "detected rune at {point:?}");
-            point
-        });
-    }
-    let mut has_elite_boss = idle.has_elite_boss;
-    if idle.has_elite_boss_interval % MINIMAP_DETECT_ELITE_BOSS_INTERVAL_TICKS == 0 {
-        has_elite_boss = detector.detect_elite_boss_bar();
-    }
+    let (rune, rune_timeout) = update_with_timeout(
+        rune_timeout,
+        MINIMAP_DETECT_RUNE_INTERVAL_TICKS,
+        (),
+        |_, timeout| {
+            (
+                detector
+                    .detect_minimap_rune(bbox)
+                    .ok()
+                    .map(|rune| center_of_rune(rune, bbox, scale_w, scale_h)),
+                timeout,
+            )
+        },
+        |_| (rune, Timeout::default()),
+        |_, timeout| (rune, timeout),
+    );
+    let (has_elite_boss, has_elite_boss_timeout) = update_with_timeout(
+        has_elite_boss_timeout,
+        MINIMAP_DETECT_ELITE_BOSS_INTERVAL_TICKS,
+        (),
+        |_, timeout| (detector.detect_elite_boss_bar(), timeout),
+        |_| (has_elite_boss, Timeout::default()),
+        |_, timeout| (has_elite_boss, timeout),
+    );
     Some(Minimap::Idle(MinimapIdle {
         partially_overlapping: (tl_match && !br_match) || (!tl_match && br_match),
         rune,
-        rune_interval: (idle.rune_interval + 1) % MINIMAP_DETECT_RUNE_INTERVAL_TICKS,
+        rune_timeout,
         has_elite_boss,
-        has_elite_boss_interval: (idle.has_elite_boss_interval + 1)
-            % MINIMAP_DETECT_ELITE_BOSS_INTERVAL_TICKS,
+        has_elite_boss_timeout,
         ..idle
     }))
 }
 
 fn get_data_for_minimap(bbox: &Rect, name: &str) -> Option<(MinimapData, f32, f32)> {
     const MATCH_SCORE: f64 = 0.9;
+
+    // TODO: Mock this
+    if cfg!(test) {
+        return Some((
+            MinimapData {
+                id: None,
+                name: name.to_string(),
+                width: bbox.width,
+                height: bbox.height,
+                actions: HashMap::new(),
+            },
+            1.0,
+            1.0,
+        ));
+    }
 
     let candidate = query_maps().ok()?.into_iter().find_map(|map| {
         if normalized_damerau_levenshtein(name, &map.name) >= MATCH_SCORE {
@@ -245,6 +283,17 @@ fn get_data_for_minimap(bbox: &Rect, name: &str) -> Option<(MinimapData, f32, f3
 }
 
 #[inline]
+fn center_of_rune(rune: Rect, bbox: Rect, scale_w: f32, scale_h: f32) -> Point {
+    let tl = rune.tl() - bbox.tl();
+    let br = rune.br() - bbox.tl();
+    let x = ((tl.x + br.x) / 2) as f32 / scale_w;
+    let y = (bbox.height - br.y + 1) as f32 / scale_h;
+    let point = Point::new(x as i32, y as i32);
+    debug!(target: "minimap", "detected rune at {point:?}");
+    point
+}
+
+#[inline]
 fn pixel_at(mat: &Mat, point: Point) -> Option<Vec4b> {
     mat.at_pt::<Vec4b>(point).ok().copied()
 }
@@ -266,169 +315,155 @@ fn anchor_at(mat: &Mat, offset: Point, size: usize, sign: i32) -> Option<(Point,
     })
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::detect::MockDetector;
-//     use mockall::predicate::eq;
-//     use opencv::core::{Mat, MatExprTraitConst, MatTrait, Point, Rect, Vec4b};
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::detect::MockDetector;
+    use mockall::predicate::eq;
+    use opencv::core::{Mat, MatExprTraitConst, MatTrait, Point, Rect, Vec4b};
 
-//     fn create_test_mat() -> (Mat, Point, Point) {
-//         let mut mat = Mat::zeros(100, 100, opencv::core::CV_8UC4)
-//             .unwrap()
-//             .to_mat()
-//             .unwrap();
-//         let tr = Point::new(10, 10);
-//         let bl = Point::new(90, 90);
-//         *mat.at_pt_mut::<Vec4b>(tr).unwrap() = Vec4b::all(255);
-//         *mat.at_pt_mut::<Vec4b>(bl).unwrap() = Vec4b::all(255);
-//         (mat, tr, bl)
-//     }
+    fn create_test_mat() -> (Mat, Anchors) {
+        let mut mat = Mat::zeros(100, 100, opencv::core::CV_8UC4)
+            .unwrap()
+            .to_mat()
+            .unwrap();
+        let pixel = Vec4b::all(255);
+        let tl = Point::new(10, 10);
+        let br = Point::new(90, 90);
+        *mat.at_pt_mut::<Vec4b>(tl).unwrap() = Vec4b::all(255);
+        *mat.at_pt_mut::<Vec4b>(br).unwrap() = Vec4b::all(255);
+        (mat, Anchors {
+            tl: (tl, pixel),
+            br: (br, pixel),
+        })
+    }
 
-//     #[test]
-//     fn minimap_detecting_to_idle() {
-//         let mut detector = MockDetector::new();
-//         let mut state = MinimapState::default();
-//         let bbox = Rect::new(0, 0, 100, 100);
-//         detector
-//             .expect_detect_minimap()
-//             .with(eq(MINIMAP_BORDER_WHITENESS_THRESHOLD))
-//             .returning(move |_| Ok(bbox));
-//         detector
-//             .expect_detect_minimap_name()
-//             .with(eq(bbox))
-//             .returning(|_| Ok("TestMap".to_string()));
+    #[test]
+    fn minimap_detecting_to_idle() {
+        let mut detector = MockDetector::new();
+        let mut state = MinimapState::default();
+        let (mat, anchors) = create_test_mat();
+        let bbox = Rect::new(0, 0, 100, 100);
+        let data = MinimapData {
+            id: None,
+            name: "TestMap".to_string(),
+            width: bbox.width,
+            height: bbox.height,
+            actions: HashMap::new(),
+        };
+        detector
+            .expect_detect_minimap()
+            .with(eq(MINIMAP_BORDER_WHITENESS_THRESHOLD))
+            .returning(move |_| Ok(bbox));
+        detector
+            .expect_detect_minimap_name()
+            .with(eq(bbox))
+            .returning(|_| Ok("TestMap".to_string()));
+        detector.expect_mat().return_const(mat);
 
-//         let (mat, tl, br) = create_test_mat();
-//         detector.expect_mat().return_const(mat);
+        let minimap = update_context(Minimap::Detecting, &mut detector, &mut state);
+        assert!(matches!(minimap, Minimap::Idle(_)));
+        match minimap {
+            Minimap::Idle(idle) => {
+                assert_eq!(idle.anchors, anchors);
+                assert_eq!(idle.bbox, bbox);
+                assert!(!idle.partially_overlapping);
+                assert_eq!(state.data, data);
+                assert_eq!(idle.rune, None);
+                assert_eq!(idle.rune_timeout, Timeout::default());
+                assert!(!idle.has_elite_boss);
+                assert_eq!(idle.has_elite_boss_timeout, Timeout::default());
+            }
+            _ => unreachable!(),
+        }
+    }
 
-//         let minimap = update_context(Minimap::Detecting, &mut detector, &mut state);
-//         assert!(matches!(minimap, Minimap::Idle(_)));
-//         assert_eq!(minimap.)
-//     }
+    #[test]
+    fn minimap_idle_to_timeout() {
+        let mut detector = MockDetector::new();
+        let mut state = MinimapState::default();
+        let (mat, _) = create_test_mat();
+        let idle = MinimapIdle {
+            anchors: Anchors {
+                tl: (Point::new(10, 10), Vec4b::all(0)),
+                br: (Point::new(90, 90), Vec4b::all(0)),
+            },
+            bbox: Rect::new(0, 0, 100, 100),
+            scale_w: 1.0,
+            scale_h: 1.0,
+            partially_overlapping: false,
+            rune: None,
+            rune_timeout: Timeout {
+                current: 0,
+                started: true,
+            },
+            has_elite_boss: false,
+            has_elite_boss_timeout: Timeout {
+                current: 0,
+                started: true,
+            },
+        };
+        detector.expect_mat().return_const(mat);
 
-// #[test]
-// fn test_minimap_idle_to_timeout() {
-//     let mut detector = MockDetector::new();
-//     let mut state = MinimapState::default();
+        let minimap = update_context(Minimap::Idle(idle), &mut detector, &mut state);
+        assert!(matches!(minimap, Minimap::Timeout(_)));
+    }
 
-//     // Simulate anchor points mismatch
-//     let mat = create_test_mat();
-//     detector.expect_mat().return_const(mat);
+    #[test]
+    fn minimap_timeout_to_detecting() {
+        let mut detector = MockDetector::new();
+        let mut state = MinimapState::default();
 
-//     let idle = MinimapIdle {
-//         anchors: Anchors {
-//             tl: (Point::new(10, 10), Vec4b::all(255)),
-//             br: (Point::new(90, 90), Vec4b::all(0)), // Mismatch
-//         },
-//         bbox: Rect::new(0, 0, 100, 100),
-//         scale_w: 1.0,
-//         scale_h: 1.0,
-//         partially_overlapping: false,
-//         rune: None,
-//         rune_detect_interval: 0,
-//     };
+        let minimap = update_context(
+            Minimap::Timeout(Timeout {
+                current: MINIMAP_CHANGE_TIMEOUT,
+                started: true,
+            }),
+            &mut detector,
+            &mut state,
+        );
+        assert!(matches!(minimap, Minimap::Detecting));
+    }
 
-//     let minimap = update_context(Minimap::Idle(idle), &mut detector, &mut state);
-//     assert!(matches!(minimap, Minimap::Timeout(0)));
-// }
+    #[test]
+    fn minimap_idle_rune_detection() {
+        let mut detector = MockDetector::new();
+        let mut state = MinimapState::default();
+        let bbox = Rect::new(0, 0, 100, 100);
+        let (mat, anchors) = create_test_mat();
+        let rune_bbox = Rect::new(40, 40, 20, 20);
+        detector.expect_mat().return_const(mat);
+        detector
+            .expect_detect_minimap_rune()
+            .withf(move |b| *b == bbox)
+            .returning(move |_| Ok(rune_bbox));
 
-// #[test]
-// fn test_minimap_timeout_to_detecting() {
-//     let mut detector = MockDetector::new();
-//     let mut state = MinimapState::default();
+        let idle = MinimapIdle {
+            anchors,
+            bbox,
+            scale_w: 1.0,
+            scale_h: 1.0,
+            partially_overlapping: false,
+            rune: None,
+            rune_timeout: Timeout::default(),
+            has_elite_boss: false,
+            has_elite_boss_timeout: Timeout {
+                current: 0,
+                started: true,
+            },
+        };
 
-//     // Simulate timeout reaching the limit
-//     let minimap = update_context(
-//         Minimap::Timeout(MINIMAP_CHANGE_TIMEOUT - 1),
-//         &mut detector,
-//         &mut state,
-//     );
-//     assert!(matches!(minimap, Minimap::Detecting));
-// }
-
-// #[test]
-// fn test_minimap_rune_detection() {
-//     let mut detector = MockDetector::new();
-//     let mut state = MinimapState::default();
-
-//     // Simulate rune detection
-//     let bbox = Rect::new(0, 0, 100, 100);
-//     let rune_bbox = Rect::new(40, 40, 20, 20);
-//     detector
-//         .expect_detect_minimap_rune()
-//         .withf(move |b| *b == bbox)
-//         .returning(move || Ok(rune_bbox));
-
-//     let mat = create_test_mat();
-//     detector.expect_mat().return_const(mat);
-
-//     let idle = MinimapIdle {
-//         anchors: Anchors {
-//             tl: (Point::new(10, 10), Vec4b::all(255)),
-//             br: (Point::new(90, 90), Vec4b::all(255)),
-//         },
-//         bbox,
-//         scale_w: 1.0,
-//         scale_h: 1.0,
-//         partially_overlapping: false,
-//         rune: None,
-//         rune_detect_interval: MINIMAP_DETECT_RUNE_INTERVAL_TICKS - 1,
-//     };
-
-//     let minimap = update_context(Minimap::Idle(idle), &mut detector, &mut state);
-//     if let Minimap::Idle(idle) = minimap {
-//         assert!(idle.rune.is_some());
-//     } else {
-//         panic!("Expected Minimap::Idle");
-//     }
-// }
-
-// #[test]
-// fn test_minimap_data_scaling() {
-//     let mut detector = MockDetector::new();
-//     let mut state = MinimapState::default();
-
-//     // Simulate detecting a minimap
-//     let bbox = Rect::new(0, 0, 100, 100);
-//     detector
-//         .expect_detect_minimap()
-//         .withf(move |threshold| *threshold == MINIMAP_BORDER_WHITENESS_THRESHOLD)
-//         .returning(move || Ok(bbox));
-
-//     // Simulate detecting a minimap name
-//     detector
-//         .expect_detect_minimap_name()
-//         .withf(move |b| *b == bbox)
-//         .returning(|_| Ok("TestMap".to_string()));
-
-//     // Simulate anchor points
-//     let mat = create_test_mat();
-//     detector.expect_mat().return_const(mat);
-
-//     // Simulate querying maps
-//     let mut map = MinimapData {
-//         id: None,
-//         name: "TestMap".to_string(),
-//         width: 200,
-//         height: 200,
-//         actions: HashMap::new(),
-//     };
-//     map.actions
-//         .insert("test".to_string(), vec![Action::Move(ActionMove {
-//             position: Point::new(100, 100),
-//             ..Default::default()
-//         })]);
-
-//     // Mock the database query
-//     let _ = query_maps().and_then(|maps| {
-//         maps.into_iter().find(|m| m.name == "TestMap").map(|m| {
-//             assert_eq!(m.width, 200);
-//             assert_eq!(m.height, 200);
-//         })
-//     });
-
-//     let minimap = update_context(Minimap::Detecting, &mut detector, &mut state);
-//     assert!(matches!(minimap, Minimap::Idle(_)));
-// }
-// }
+        let minimap = update_context(Minimap::Idle(idle), &mut detector, &mut state);
+        assert!(matches!(minimap, Minimap::Idle(_)));
+        match minimap {
+            Minimap::Idle(idle) => {
+                assert_eq!(idle.rune, Some(center_of_rune(rune_bbox, bbox, 1.0, 1.0)));
+                assert_eq!(idle.rune_timeout, Timeout {
+                    current: 0,
+                    started: true
+                });
+            }
+            _ => unreachable!(),
+        }
+    }
+}
