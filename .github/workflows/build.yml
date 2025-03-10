@@ -63,7 +63,8 @@ jobs:
           npm install
           cd ../
           cargo binstall dioxus-cli --force
-          dx build --release --package ui
+          dx build --verbose --release --package ui
+          cargo test --verbose
 
       - uses: actions/upload-artifact@v4
         with:

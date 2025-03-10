@@ -10,10 +10,10 @@ use std::{
 
 use log::info;
 use opencv::core::{Mat, MatTraitConst, MatTraitConstManual, Vec4b};
-use platforms::windows::{self, Capture, Handle, KeyKind, Keys};
+use platforms::windows::{self, Capture, Handle, Keys};
 
 use crate::{
-    Action, ActionCondition, ActionKey, KeyBindingConfiguration, Request, RotationMode,
+    Action, ActionCondition, ActionKey, KeyBindingConfiguration, Request,
     buff::{Buff, BuffKind, BuffState},
     database::{Configuration, KeyBinding, query_configs},
     detect::{CachedDetector, Detector},
@@ -21,7 +21,7 @@ use crate::{
     minimap::{Minimap, MinimapState},
     player::{Player, PlayerState},
     poll_request,
-    rotator::{Rotator, RotatorMode},
+    rotator::Rotator,
     skill::{Skill, SkillKind, SkillState},
 };
 
@@ -39,8 +39,7 @@ const LEGION_LUCK_BUFF_POSITION: usize = 5;
 /// an action will be performed or state can be transitioned. So timeout is used to retry
 /// such action/state and to avoid looping in a single state forever. Or
 /// for some contextual states to perform an action only after timing out.
-#[derive(Clone, Copy, Debug, Default)]
-#[cfg_attr(debug_assertions, derive(PartialEq))]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Timeout {
     pub current: u32,
     pub started: bool,
@@ -171,6 +170,7 @@ pub fn start_update_loop() {
                 buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
                 halting: true,
             };
+            let mut ignore_update_action = false;
             let update_minimap = |updated_minimap: crate::database::Minimap,
                                   preset: Option<String>,
                                   config: &Configuration,
@@ -200,11 +200,11 @@ pub fn start_update_loop() {
                                  rotator: &mut Rotator| {
                 *config = updated_config;
                 *buffs = config_buffs(config);
-                player_state.interact_key = map_key(config.interact_key.key);
-                player_state.grappling_key = map_key(config.ropelift_key.key);
-                player_state.upjump_key = config.up_jump_key.map(|key| key.key).map(map_key);
-                player_state.cash_shop_key = map_key(config.cash_shop_key.key);
-                rotator.rotator_mode(map_rotate_mode(config.rotation_mode));
+                player_state.interact_key = config.interact_key.key.into();
+                player_state.grappling_key = config.ropelift_key.key.into();
+                player_state.upjump_key = config.up_jump_key.map(|key| key.key.into());
+                player_state.cash_shop_key = config.cash_shop_key.key.into();
+                rotator.rotator_mode(config.rotation_mode.into());
                 rotator.build_actions(
                     config_actions(config)
                         .into_iter()
@@ -244,6 +244,9 @@ pub fn start_update_loop() {
                 if !context.halting {
                     rotator.rotate_action(&context, &mut player_state);
                 }
+                if ignore_update_action && matches!(context.minimap, Minimap::Idle(_)) {
+                    ignore_update_action = false;
+                }
                 poll_request(|request| match request {
                     Request::RotateActions(halted) => {
                         context.halting = halted;
@@ -269,26 +272,36 @@ pub fn start_update_loop() {
                         priority_action: player_state.priority_action_name(),
                     }),
                     Request::UpdateMinimap(preset, updated_minimap) => {
-                        update_minimap(
-                            updated_minimap,
-                            preset,
-                            &config,
-                            &buffs,
-                            &mut minimap_state,
-                            &mut actions,
-                            &mut rotator,
-                        );
+                        if matches!(context.player, Player::CashShopThenExit(_, _, _)) {
+                            ignore_update_action = true;
+                        }
+                        if !ignore_update_action {
+                            update_minimap(
+                                updated_minimap,
+                                preset,
+                                &config,
+                                &buffs,
+                                &mut minimap_state,
+                                &mut actions,
+                                &mut rotator,
+                            );
+                        }
                         Box::new(())
                     }
                     Request::UpdateConfiguration(updated_config) => {
-                        update_config(
-                            updated_config,
-                            &mut config,
-                            &mut buffs,
-                            &mut actions,
-                            &mut player_state,
-                            &mut rotator,
-                        );
+                        if matches!(context.player, Player::CashShopThenExit(_, _, _)) {
+                            ignore_update_action = true;
+                        }
+                        if !ignore_update_action {
+                            update_config(
+                                updated_config,
+                                &mut config,
+                                &mut buffs,
+                                &mut actions,
+                                &mut player_state,
+                                &mut rotator,
+                            );
+                        }
                         Box::new(())
                     }
                 });
@@ -351,87 +364,6 @@ fn loop_with_fps(fps: u32, mut on_tick: impl FnMut()) {
         } else {
             info!(target: "context", "ticking running late at {}ms", (elapsed_nanos - nanos_per_frame) / 1_000_000);
         }
-    }
-}
-
-#[inline]
-fn map_rotate_mode(mode: RotationMode) -> RotatorMode {
-    match mode {
-        RotationMode::StartToEnd => RotatorMode::StartToEnd,
-        RotationMode::StartToEndThenReverse => RotatorMode::StartToEndThenReverse,
-    }
-}
-
-#[inline]
-pub fn map_key(key: KeyBinding) -> KeyKind {
-    match key {
-        KeyBinding::A => KeyKind::A,
-        KeyBinding::B => KeyKind::B,
-        KeyBinding::C => KeyKind::C,
-        KeyBinding::D => KeyKind::D,
-        KeyBinding::E => KeyKind::E,
-        KeyBinding::F => KeyKind::F,
-        KeyBinding::G => KeyKind::G,
-        KeyBinding::H => KeyKind::H,
-        KeyBinding::I => KeyKind::I,
-        KeyBinding::J => KeyKind::J,
-        KeyBinding::K => KeyKind::K,
-        KeyBinding::L => KeyKind::L,
-        KeyBinding::M => KeyKind::M,
-        KeyBinding::N => KeyKind::N,
-        KeyBinding::O => KeyKind::O,
-        KeyBinding::P => KeyKind::P,
-        KeyBinding::Q => KeyKind::Q,
-        KeyBinding::R => KeyKind::R,
-        KeyBinding::S => KeyKind::S,
-        KeyBinding::T => KeyKind::T,
-        KeyBinding::U => KeyKind::U,
-        KeyBinding::V => KeyKind::V,
-        KeyBinding::W => KeyKind::W,
-        KeyBinding::X => KeyKind::X,
-        KeyBinding::Y => KeyKind::Y,
-        KeyBinding::Z => KeyKind::Z,
-        KeyBinding::Zero => KeyKind::Zero,
-        KeyBinding::One => KeyKind::One,
-        KeyBinding::Two => KeyKind::Two,
-        KeyBinding::Three => KeyKind::Three,
-        KeyBinding::Four => KeyKind::Four,
-        KeyBinding::Five => KeyKind::Five,
-        KeyBinding::Six => KeyKind::Six,
-        KeyBinding::Seven => KeyKind::Seven,
-        KeyBinding::Eight => KeyKind::Eight,
-        KeyBinding::Nine => KeyKind::Nine,
-        KeyBinding::F1 => KeyKind::F1,
-        KeyBinding::F2 => KeyKind::F2,
-        KeyBinding::F3 => KeyKind::F3,
-        KeyBinding::F4 => KeyKind::F4,
-        KeyBinding::F5 => KeyKind::F5,
-        KeyBinding::F6 => KeyKind::F6,
-        KeyBinding::F7 => KeyKind::F7,
-        KeyBinding::F8 => KeyKind::F8,
-        KeyBinding::F9 => KeyKind::F9,
-        KeyBinding::F10 => KeyKind::F10,
-        KeyBinding::F11 => KeyKind::F11,
-        KeyBinding::F12 => KeyKind::F12,
-        KeyBinding::Up => KeyKind::Up,
-        KeyBinding::Home => KeyKind::Home,
-        KeyBinding::End => KeyKind::End,
-        KeyBinding::PageUp => KeyKind::PageUp,
-        KeyBinding::PageDown => KeyKind::PageDown,
-        KeyBinding::Insert => KeyKind::Insert,
-        KeyBinding::Delete => KeyKind::Delete,
-        KeyBinding::Enter => KeyKind::Enter,
-        KeyBinding::Space => KeyKind::Space,
-        KeyBinding::Tilde => KeyKind::Tilde,
-        KeyBinding::Quote => KeyKind::Quote,
-        KeyBinding::Semicolon => KeyKind::Semicolon,
-        KeyBinding::Comma => KeyKind::Comma,
-        KeyBinding::Period => KeyKind::Period,
-        KeyBinding::Slash => KeyKind::Slash,
-        KeyBinding::Esc => KeyKind::Esc,
-        KeyBinding::Shift => KeyKind::Shift,
-        KeyBinding::Ctrl => KeyKind::Ctrl,
-        KeyBinding::Alt => KeyKind::Alt,
     }
 }
 

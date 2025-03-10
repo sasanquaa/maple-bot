@@ -92,7 +92,9 @@ fn update_context(contextual: Buff, detector: &mut impl Detector, state: &mut Bu
             }
         })
         .unwrap_or(state.fail_count);
-    debug!(target: "buff", "{contextual:?} {state:?}");
+    if has_buff.is_some() {
+        debug!(target: "buff", "{contextual:?} {state:?}");
+    }
     match (has_buff, contextual) {
         (None, contextual) => contextual,
         (Some(has_buff), Buff::NoBuff) => {
