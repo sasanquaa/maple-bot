@@ -66,6 +66,7 @@ pub struct PlayerState {
     pub state: String,
     pub normal_action: Option<String>,
     pub priority_action: Option<String>,
+    pub erda_shower_state: String,
 }
 
 pub async fn rotate_actions(halting: bool) {

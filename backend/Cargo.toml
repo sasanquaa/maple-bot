@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-tokio = { version = "1.43.0", default-features = false, features = ["sync"] }
+tokio = { workspace = true }
 platforms = { workspace = true }
 ort = { version = "2.0.0-rc.9", default-features = false, features = [
     "load-dynamic",
@@ -19,7 +19,7 @@ anyhow = "1.0.95"
 log = "0.4.25"
 rand = "0.9.0"
 rusqlite = { version = "0.33.0", features = ["bundled"] }
-serde = { version = "1.0.138", features = ["derive"] }
+serde = { workspace = true }
 serde_json = { version = "1.0.138" }
 strsim = "0.11.1"
 strum = { version = "0.27", features = ["derive"] }

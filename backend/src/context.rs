@@ -267,6 +267,7 @@ pub fn start_update_loop() {
                         state: context.player.to_string(),
                         normal_action: player_state.normal_action_name(),
                         priority_action: player_state.priority_action_name(),
+                        erda_shower_state: context.skills[ERDA_SHOWER_SKILL_POSITION].to_string(),
                     }),
                     Request::UpdateMinimap(preset, updated_minimap) => {
                         if matches!(context.player, Player::CashShopThenExit(_, _, _)) {

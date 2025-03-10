@@ -1,10 +1,19 @@
 use dioxus::{document::EvalError, prelude::*};
 
 use backend::{
-    Configuration, Minimap as MinimapData, PlayerState, delete_map, minimap_data, minimap_frame,
-    player_state, redetect_minimap, rotate_actions, update_configuration, update_minimap,
+    Action, ActionKey, ActionMove, Configuration, Minimap as MinimapData, PlayerState, delete_map,
+    minimap_data, minimap_frame, player_state, redetect_minimap, rotate_actions,
+    update_configuration, update_minimap,
 };
+use serde::Serialize;
 use tokio::task::spawn_blocking;
+
+#[derive(Clone, PartialEq, Serialize)]
+struct ActionView {
+    x: i32,
+    y: i32,
+    condition: String,
+}
 
 #[component]
 pub fn Minimap(
@@ -14,28 +23,109 @@ pub fn Minimap(
     config: ReadOnlySignal<Option<Configuration>, SyncStorage>,
 ) -> Element {
     const MINIMAP_JS: &str = r#"
-        let minimap = document.getElementById("canvas-minimap");
-        let minimapCtx = minimap.getContext("2d");
-        let lastWidth = minimap.width;
-        let lastHeight = minimap.height;
+        const canvas = document.getElementById("canvas-minimap");
+        const canvasCtx = canvas.getContext("2d");
+        let lastWidth = canvas.width;
+        let lastHeight = canvas.height;
 
         while (true) {
-            let [buffer, width, height] = await dioxus.recv();
-            let data = new ImageData(new Uint8ClampedArray(buffer), width, height);
-            let bitmap = await createImageBitmap(data);
-            minimapCtx.drawImage(bitmap, 0, 0);
+            const [buffer, width, height] = await dioxus.recv();
+            const data = new ImageData(new Uint8ClampedArray(buffer), width, height);
+            const bitmap = await createImageBitmap(data);
+            canvasCtx.drawImage(bitmap, 0, 0);
             if (lastWidth != width || lastHeight != height) {
                 lastWidth = width;
                 lastHeight = height;
-                minimap.width = width;
-                minimap.height = height;
+                canvas.width = width;
+                canvas.height = height;
             }
+        }
+    "#;
+    const MINIMAP_ACTIONS_JS: &str = r#"
+        const canvas = document.getElementById("canvas-minimap-actions");
+        const canvasCtx = canvas.getContext("2d");
+        const [width, height, actions] = await dioxus.recv();
+        canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+        const anyActions = actions.filter((action) => action.condition === "Any");
+        const erdaActions = actions.filter((action) => action.condition === "ErdaShowerOffCooldown");
+        const millisActions = actions.filter((action) => action.condition === "EveryMillis");
+
+        canvasCtx.fillStyle = "rgb(255, 153, 128)";
+        canvasCtx.strokeStyle = "rgb(255, 153, 128)";
+        drawActions(canvas, canvasCtx, anyActions, true);
+
+        canvasCtx.fillStyle = "rgb(179, 198, 255)";
+        canvasCtx.strokeStyle = "rgb(179, 198, 255)";
+        drawActions(canvas, canvasCtx, erdaActions, true);
+
+        canvasCtx.fillStyle = "rgb(128, 255, 204)";
+        canvasCtx.strokeStyle = "rgb(128, 255, 204)";
+        drawActions(canvas, canvasCtx, millisActions, false);
+
+        function drawActions(canvas, ctx, actions, hasArc) {
+            const rectSize = 4;
+            const rectHalf = rectSize / 2;
+            let lastAction = null;
+            for (const action of actions) {
+                let x = (action.x / width) * canvas.width;
+                let y = ((height - action.y) / height) * canvas.height;
+                ctx.fillRect(x, y, rectSize, rectSize);
+                if (!hasArc) {
+                    continue;
+                }
+                if (lastAction !== null) {
+                    let [fromX, fromY] = lastAction;
+                    drawArc(ctx, fromX + rectHalf, fromY + rectHalf, x + rectHalf, y + rectHalf);
+                }
+                lastAction = [x, y];
+            }
+        }
+        function drawArc(ctx, fromX, fromY, toX, toY) {
+            const cx = (fromX + toX) / 2;
+            const cy = (fromY + toY) / 2;
+            const dx = cx - fromX;
+            const dy = cy - fromY;
+            const radius = Math.sqrt(dx * dx + dy * dy);
+            const startAngle = Math.atan2(fromY - cy, fromX - cx);
+            const endAngle = Math.atan2(toY - cy, toX - cx);
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, startAngle, endAngle, false);
+            ctx.stroke();
         }
     "#;
     let mut halting = use_signal(|| true);
     let mut state = use_signal::<Option<PlayerState>>(|| None);
     let reset = use_callback(move |_| {
         minimap.set(None);
+    });
+    let actions = use_memo::<Vec<ActionView>>(move || {
+        minimap()
+            .zip(preset())
+            .and_then(|(minimap, preset)| minimap.actions.get(&preset).cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|action| match action {
+                Action::Move(ActionMove {
+                    position,
+                    condition,
+                    ..
+                }) => Some(ActionView {
+                    x: position.x,
+                    y: position.y,
+                    condition: condition.to_string(),
+                }),
+                Action::Key(ActionKey {
+                    position: Some(position),
+                    condition,
+                    ..
+                }) => Some(ActionView {
+                    x: position.x,
+                    y: position.y,
+                    condition: condition.to_string(),
+                }),
+                Action::Key(ActionKey { position: None, .. }) => None,
+            })
+            .collect()
     });
 
     use_effect(move || {
@@ -66,6 +156,17 @@ pub fn Minimap(
             }
         } else {
             preset.set(None);
+        }
+    });
+    use_effect(move || {
+        let size = minimap().map(|minimap| (minimap.width, minimap.height));
+        let actions = actions();
+        if let Some((width, height)) = size {
+            spawn(async move {
+                document::eval(MINIMAP_ACTIONS_JS)
+                    .send((width, height, actions))
+                    .unwrap();
+            });
         }
     });
     use_future(move || async move {
@@ -99,11 +200,13 @@ pub fn Minimap(
             p { class: "text-gray-700 text-sm",
                 {minimap().map(|minimap| minimap.name).unwrap_or("Detecting...".to_string())}
             }
-            canvas {
-                class: "h-36 p-3 border border-gray-300 rounded-md",
-                id: "canvas-minimap",
+            div { class: "relative p-3 h-36 border border-gray-300 rounded-md",
+                canvas { class: "w-full h-full", id: "canvas-minimap" }
+                div { class: "absolute inset-3",
+                    canvas { class: "w-full h-full", id: "canvas-minimap-actions" }
+                }
             }
-            div { class: "flex flex-col text-gray-700 text-xs space-y-1",
+            div { class: "flex flex-col text-gray-700 text-xs space-y-1 font-mono",
                 p { class: "text-center",
                     {
                         state()
@@ -142,6 +245,13 @@ pub fn Minimap(
                                     )
                                 })
                                 .unwrap_or("Normal Action: Unknown".to_string())
+                        }
+                    }
+                    p {
+                        {
+                            state()
+                                .map(|state| { format!("Erda Shower: {}", state.erda_shower_state) })
+                                .unwrap_or("Erda Shower: Unknown".to_string())
                         }
                     }
                 }

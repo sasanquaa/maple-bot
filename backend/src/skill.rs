@@ -1,5 +1,6 @@
 use log::debug;
 use opencv::core::{Mat, MatTraitConst, Point, Rect, Vec4b};
+use strum::Display;
 
 use crate::{
     context::{Context, Contextual, ControlFlow, Timeout, update_with_timeout},
@@ -20,10 +21,11 @@ impl SkillState {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Display)]
 pub enum Skill {
     Detecting(Timeout),
     Idle(Point, Vec4b),
+    #[strum(to_string = "Cooldown (Can be wrong)")]
     Cooldown(Timeout),
 }
 

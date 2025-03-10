@@ -4885,6 +4885,7 @@ version = "0.1.0"
 dependencies = [
  "backend",
  "dioxus",
+ "serde",
  "tokio",
  "tracing-log",
 ]

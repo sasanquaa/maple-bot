@@ -3,6 +3,8 @@ resolver = "2"
 members = ["ui", "backend", "platforms"]
 
 [workspace.dependencies]
+serde = { version = "1.0.138", features = ["derive"] }
+tokio = { version = "1.43.0", default-features = false, features = ["sync"] }
 platforms = { path = "platforms" }
 backend = { path = "backend" }
 
