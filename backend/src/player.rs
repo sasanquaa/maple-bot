@@ -1170,7 +1170,7 @@ fn update_falling_context(
     moving: PlayerMoving,
     anchor: Point,
 ) -> Player {
-    const TIMEOUT_EARLY_THRESHOLD: i32 = -2;
+    const TIMEOUT_EARLY_THRESHOLD: i32 = -3;
 
     let y_changed = cur_pos.y - anchor.y;
     let (x_distance, _) = x_distance_direction(&moving.dest, &cur_pos);

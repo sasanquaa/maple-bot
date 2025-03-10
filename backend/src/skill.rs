@@ -4,7 +4,6 @@ use opencv::core::{Mat, MatTraitConst, Point, Rect, Vec4b};
 use crate::{
     context::{Context, Contextual, ControlFlow, Timeout, update_with_timeout},
     detect::Detector,
-    minimap::Minimap,
 };
 
 const SKILL_OFF_COOLDOWN_MAX_TIMEOUT: u32 = 1800;
@@ -23,7 +22,7 @@ impl SkillState {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Skill {
-    Detecting,
+    Detecting(Timeout),
     Idle(Point, Vec4b),
     Cooldown(Timeout),
 }
@@ -38,37 +37,40 @@ impl Contextual for Skill {
 
     fn update(
         self,
-        context: &Context,
+        _: &Context,
         detector: &mut impl Detector,
         state: &mut SkillState,
     ) -> ControlFlow<Self> {
-        ControlFlow::Next(update_context(self, context, detector, state))
+        ControlFlow::Next(update_context(self, detector, state))
     }
 }
 
 fn update_context(
     contextual: Skill,
-    context: &Context,
     detector: &mut impl Detector,
     state: &mut SkillState,
 ) -> Skill {
     match contextual {
-        Skill::Detecting => {
-            if !matches!(context.minimap, Minimap::Idle(_)) {
-                return Skill::Detecting;
-            }
-            match state.kind {
-                SkillKind::ErdaShower => detector.detect_erda_shower(),
-            }
-            .map(|bbox| {
-                let (point, pixel) = get_anchor(detector.mat(), bbox);
-                Skill::Idle(point, pixel)
-            })
-            .unwrap_or(Skill::Detecting)
-        }
+        Skill::Detecting(timeout) => update_with_timeout(
+            timeout,
+            SKILL_OFF_COOLDOWN_DETECT_EVERY * 2,
+            (),
+            |_, timeout| {
+                match state.kind {
+                    SkillKind::ErdaShower => detector.detect_erda_shower(),
+                }
+                .map(|bbox| {
+                    let (point, pixel) = get_anchor(detector.mat(), bbox);
+                    Skill::Idle(point, pixel)
+                })
+                .unwrap_or(Skill::Detecting(timeout))
+            },
+            |_| Skill::Detecting(Timeout::default()),
+            |_, timeout| Skill::Detecting(timeout),
+        ),
         Skill::Idle(anchor_point, anchor_pixel) => {
             let Ok(pixel) = detector.mat().at_pt::<Vec4b>(anchor_point) else {
-                return Skill::Detecting;
+                return Skill::Detecting(Timeout::default());
             };
             if *pixel != anchor_pixel {
                 debug!(target: "skill", "assume skill to be on cooldown {:?} != {:?}, could be false positive", (anchor_point, anchor_pixel), pixel);
@@ -103,7 +105,7 @@ fn update_context(
                 SKILL_OFF_COOLDOWN_MAX_TIMEOUT,
                 (state, detector),
                 |(state, detector), timeout| on_next(state, detector, timeout),
-                |_| Skill::Detecting,
+                |_| Skill::Detecting(Timeout::default()),
                 |(state, detector), timeout| on_next(state, detector, timeout),
             )
         }
@@ -121,10 +123,7 @@ fn get_anchor(mat: &Mat, bbox: Rect) -> (Point, Vec4b) {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        detect::MockDetector,
-        minimap::{Minimap, MinimapIdle},
-    };
+    use crate::detect::MockDetector;
 
     use super::*;
     use anyhow::anyhow;
@@ -140,10 +139,6 @@ mod tests {
 
     #[test]
     fn skill_detecting_to_idle() {
-        let context = Context {
-            minimap: Minimap::Idle(MinimapIdle::default()),
-            ..Context::default()
-        };
         let mut state = SkillState::new(SkillKind::ErdaShower);
         let mut detector = MockDetector::new();
         let (mat, rect) = create_test_mat_bbox(255);
@@ -152,7 +147,11 @@ mod tests {
             .expect_detect_erda_shower()
             .returning(move || Ok(rect));
 
-        let skill = update_context(Skill::Detecting, &context, &mut detector, &mut state);
+        let skill = update_context(
+            Skill::Detecting(Timeout::default()),
+            &mut detector,
+            &mut state,
+        );
         assert!(matches!(skill, Skill::Idle(_, _)));
         match skill {
             Skill::Idle(point, pixel) => {
@@ -165,10 +164,6 @@ mod tests {
 
     #[test]
     fn skill_idle_to_cooldown() {
-        let context = Context {
-            minimap: Minimap::Idle(MinimapIdle::default()),
-            ..Context::default()
-        };
         let (mat, rect) = create_test_mat_bbox(254);
         let mut state = SkillState::new(SkillKind::ErdaShower);
         let mut detector = MockDetector::new();
@@ -176,7 +171,6 @@ mod tests {
 
         let skill = update_context(
             Skill::Idle((rect.tl() + rect.br()) / 2, Vec4b::all(255)),
-            &context,
             &mut detector,
             &mut state,
         );
@@ -184,10 +178,6 @@ mod tests {
     }
     #[test]
     fn skill_cooldown_to_detecting() {
-        let context = Context {
-            minimap: Minimap::Idle(MinimapIdle::default()),
-            ..Context::default()
-        };
         let mut state = SkillState::new(SkillKind::ErdaShower);
         let mut detector = MockDetector::new();
         let timeout = Timeout {
@@ -195,16 +185,12 @@ mod tests {
             current: SKILL_OFF_COOLDOWN_MAX_TIMEOUT,
         };
         let skill = Skill::Cooldown(timeout);
-        let skill = update_context(skill, &context, &mut detector, &mut state);
-        assert!(matches!(skill, Skill::Detecting));
+        let skill = update_context(skill, &mut detector, &mut state);
+        assert!(matches!(skill, Skill::Detecting(_)));
     }
 
     #[test]
     fn skill_cooldown_recheck_ok() {
-        let context = Context {
-            minimap: Minimap::Idle(MinimapIdle::default()),
-            ..Context::default()
-        };
         let mut state = SkillState::new(SkillKind::ErdaShower);
         let mut detector = MockDetector::new();
         let (mat, rect) = create_test_mat_bbox(255);
@@ -218,7 +204,7 @@ mod tests {
             current: SKILL_OFF_COOLDOWN_DETECT_EVERY - 1,
         };
         let skill = Skill::Cooldown(timeout);
-        let skill = update_context(skill, &context, &mut detector, &mut state);
+        let skill = update_context(skill, &mut detector, &mut state);
         assert!(matches!(skill, Skill::Idle(_, _)));
         match skill {
             Skill::Idle(point, pixel) => {
@@ -231,10 +217,6 @@ mod tests {
 
     #[test]
     fn skill_cooldown_recheck_err() {
-        let context = Context {
-            minimap: Minimap::Idle(MinimapIdle::default()),
-            ..Context::default()
-        };
         let mut state = SkillState::new(SkillKind::ErdaShower);
         let mut detector = MockDetector::new();
         detector
@@ -246,7 +228,7 @@ mod tests {
             current: SKILL_OFF_COOLDOWN_MAX_TIMEOUT - 1,
         };
         let skill = Skill::Cooldown(timeout);
-        let skill = update_context(skill, &context, &mut detector, &mut state);
+        let skill = update_context(skill, &mut detector, &mut state);
         assert!(matches!(skill, Skill::Cooldown(_)));
     }
 }

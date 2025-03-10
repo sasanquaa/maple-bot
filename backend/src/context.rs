@@ -118,7 +118,7 @@ impl Default for Context {
             keys: Keys::new(Handle::new(Some("Class"), Some("Title")).unwrap()),
             minimap: Minimap::Detecting,
             player: Player::Detecting,
-            skills: [Skill::Detecting; mem::variant_count::<SkillKind>()],
+            skills: [Skill::Detecting(Timeout::default()); mem::variant_count::<SkillKind>()],
             buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
             halting: true,
         }
@@ -166,7 +166,7 @@ pub fn start_update_loop() {
                 keys,
                 minimap: Minimap::Detecting,
                 player: Player::Detecting,
-                skills: [Skill::Detecting],
+                skills: [Skill::Detecting(Timeout::default())],
                 buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
                 halting: true,
             };
@@ -244,9 +244,6 @@ pub fn start_update_loop() {
                 if !context.halting {
                     rotator.rotate_action(&context, &mut player_state);
                 }
-                if ignore_update_action && matches!(context.minimap, Minimap::Idle(_)) {
-                    ignore_update_action = false;
-                }
                 poll_request(|request| match request {
                     Request::RotateActions(halted) => {
                         context.halting = halted;
@@ -286,6 +283,9 @@ pub fn start_update_loop() {
                                 &mut rotator,
                             );
                         }
+                        if ignore_update_action && matches!(context.minimap, Minimap::Idle(_)) {
+                            ignore_update_action = false;
+                        }
                         Box::new(())
                     }
                     Request::UpdateConfiguration(updated_config) => {
@@ -301,6 +301,9 @@ pub fn start_update_loop() {
                                 &mut player_state,
                                 &mut rotator,
                             );
+                        }
+                        if ignore_update_action && matches!(context.minimap, Minimap::Idle(_)) {
+                            ignore_update_action = false;
                         }
                         Box::new(())
                     }
