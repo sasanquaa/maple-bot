@@ -9,6 +9,7 @@ use tokio::task::spawn_blocking;
 
 use crate::{
     icons::XMark,
+    input::MillisInput,
     key::KeyInput,
     select::{Select, TextSelect},
 };
@@ -20,6 +21,7 @@ const CASH_SHOP: &str = "Cash Shop";
 const FEED_PET: &str = "Feed Pet";
 const POTION: &str = "Potion";
 const SAYRAM_ELIXIR: &str = "Sayram's Elixir";
+const AURELIA_ELIXIR: &str = "Aurelia's Elixir";
 const EXP_X3: &str = "3x EXP Coupon";
 const BONUS_EXP: &str = "50% Bonus EXP Coupon";
 const LEGION_WEALTH: &str = "Legion's Wealth";
@@ -32,7 +34,19 @@ pub fn Configuration(
 ) -> Element {
     let config_names =
         use_memo(move || configs().iter().map(|config| config.name.clone()).collect());
-    let config_view = use_memo(move || config().unwrap_or_default());
+    let config_view = use_memo(move || {
+        config().unwrap_or(ConfigurationData {
+            feed_pet_key: KeyBindingConfiguration {
+                millis: 120000,
+                ..KeyBindingConfiguration::default()
+            },
+            potion_key: KeyBindingConfiguration {
+                millis: 120000,
+                ..KeyBindingConfiguration::default()
+            },
+            ..ConfigurationData::default()
+        })
+    });
     let mut active = use_signal(|| None);
     let on_config = use_callback(move |new_config: ConfigurationData| {
         if config.peek().is_some() {
@@ -172,6 +186,7 @@ pub fn Configuration(
                         active.set(value.then_some(FEED_PET));
                     },
                     can_disable: true,
+                    has_millis: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             feed_pet_key: key.unwrap(),
@@ -189,6 +204,7 @@ pub fn Configuration(
                         active.set(value.then_some(POTION));
                     },
                     can_disable: true,
+                    has_millis: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             potion_key: key.unwrap(),
@@ -213,6 +229,23 @@ pub fn Configuration(
                         });
                     },
                     value: Some(config_view().sayram_elixir_key),
+                }
+                KeyBindingConfigurationInput {
+                    label: AURELIA_ELIXIR,
+                    input_disabled: disabled(),
+                    is_optional: false,
+                    is_active: matches!(active(), Some(AURELIA_ELIXIR)),
+                    on_active: move |value: bool| {
+                        active.set(value.then_some(AURELIA_ELIXIR));
+                    },
+                    can_disable: true,
+                    on_input: move |key: Option<KeyBindingConfiguration>| {
+                        on_config(ConfigurationData {
+                            aurelia_elixir_key: key.unwrap(),
+                            ..config_view.peek().clone()
+                        });
+                    },
+                    value: Some(config_view().aurelia_elixir_key),
                 }
                 KeyBindingConfigurationInput {
                     label: EXP_X3,
@@ -287,6 +320,9 @@ pub fn Configuration(
                 class: "text-sm font-medium text-gray-700 mt-4 mb-2 data-[disabled]:text-gray-400",
                 "data-disabled": data_disabled,
                 "Other"
+                span { class: "font-normal text-xs text-gray-400 ml-1",
+                    "(Only for Any condition actions)"
+                }
             }
             RotationModeInput {
                 on_input: move |mode| {
@@ -337,6 +373,8 @@ struct KeyBindingConfigurationInputProps {
     is_active: bool,
     on_active: EventHandler<bool>,
     can_disable: bool,
+    #[props(default = false)]
+    has_millis: bool,
     on_input: EventHandler<Option<KeyBindingConfiguration>>,
     value: Option<KeyBindingConfiguration>,
 }
@@ -359,67 +397,82 @@ fn KeyBindingConfigurationInput(props: KeyBindingConfigurationInputProps) -> Ele
             ..props.value.unwrap_or_default()
         }));
     });
+    let on_millis_input = use_callback(move |millis: u64| {
+        (props.on_input)(
+            props
+                .value
+                .map(|config| KeyBindingConfiguration { millis, ..config }),
+        );
+    });
     let input_width = if props.can_disable { "w-24" } else { "w-44" };
 
     rsx! {
-        div { class: "flex items-center space-x-4 py-2 border-b border-gray-100",
-            div { class: "flex-1",
-                span {
-                    class: "text-xs text-gray-700 data-[disabled]:text-gray-400",
-                    "data-disabled": props.input_disabled.then_some(true),
-                    {props.label}
-                    if props.is_optional {
-                        span { class: "text-xs text-gray-400 ml-1", "(Optional)" }
+        div { class: "flex flex-col space-y-3 py-2 border-b border-gray-100",
+            div { class: "flex items-center space-x-4",
+                div { class: "flex-1",
+                    span {
+                        class: "text-xs text-gray-700 data-[disabled]:text-gray-400",
+                        "data-disabled": props.input_disabled.then_some(true),
+                        {props.label}
+                        if props.is_optional {
+                            span { class: "text-xs text-gray-400 ml-1", "(Optional)" }
+                        }
+                    }
+                }
+                div { class: "flex items-center space-x-2",
+                    div { class: "relative",
+                        KeyInput {
+                            class: "border rounded border-gray-300 h-7 {input_width} disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400",
+                            disabled: props.input_disabled,
+                            is_active: props.is_active,
+                            on_active: props.on_active,
+                            on_input: move |key| {
+                                on_key_input(Some(key));
+                            },
+                            value: props.value.map(|key| key.key),
+                        }
+                        if props.is_optional && !props.is_active && props.value.is_some() {
+                            button {
+                                class: "absolute right-0 top-0 flex items-center h-full w-4",
+                                onclick: move |_| {
+                                    on_key_input(None);
+                                },
+                                XMark { class: "w-2 h-2 text-red-400 fill-current" }
+                            }
+                        }
+                    }
+                    if props.can_disable {
+                        button {
+                            r#type: "button",
+                            disabled: props.input_disabled || props.value.is_none(),
+                            class: {
+                                let color = if is_enabled { "button-primary" } else { "button-danger" };
+                                format!("w-18 h-7 {color}")
+                            },
+                            onclick: move |_| {
+                                if let Some(config) = props.value {
+                                    on_enabled_input(!config.enabled);
+                                }
+                            },
+                            if is_enabled {
+                                "Enabled"
+                            } else {
+                                "Disabled"
+                            }
+                        }
                     }
                 }
             }
-            div { class: "flex items-center space-x-2",
-                div { class: "relative",
-                    KeyInput {
-                        class: "border rounded border-gray-300 h-7 {input_width} disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400",
-                        disabled: props.input_disabled,
-                        is_active: props.is_active,
-                        on_active: props.on_active,
-                        on_input: move |key| {
-                            on_key_input(Some(key));
-                        },
-                        value: props.value.map(|key| key.key),
-                    }
-                    if props.is_optional && !props.is_active && props.value.is_some() {
-                        button {
-                            class: "absolute right-0 top-0 flex items-center h-full w-4",
-                            onclick: move |_| {
-                                on_key_input(None);
-                            },
-                            XMark { class: "w-2 h-2 text-red-400 fill-current" }
-                        }
-                    }
-                }
-                if props.can_disable {
-                    button {
-                        r#type: "button",
-                        disabled: props.input_disabled || props.value.is_none(),
-                        class: {
-                            let color = if is_enabled {
-                                "bg-blue-100 text-blue-700 enabled:hover:bg-blue-200"
-                            } else {
-                                "bg-red-100 text-red-500 enabled:hover:bg-red-200"
-                            };
-                            let disabled = "disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed";
-                            let class = "px-3 py-1.5 rounded w-18 text-xs font-medium";
-                            format!("{class} {disabled} {color}")
-                        },
-                        onclick: move |_| {
-                            if let Some(config) = props.value {
-                                on_enabled_input(!config.enabled);
-                            }
-                        },
-                        if is_enabled {
-                            "Enabled"
-                        } else {
-                            "Disabled"
-                        }
-                    }
+            if props.has_millis {
+                MillisInput {
+                    label: "Every Milliseconds",
+                    div_class: "flex items-center space-x-4 text-xs text-gray-700",
+                    label_class: "flex-1",
+                    input_class: "w-44 rounded border border-gray-300 px-1 text-gray-700 h-6 outline-none",
+                    on_input: move |value| {
+                        on_millis_input(value);
+                    },
+                    value: props.value.map(|key| key.millis).unwrap_or_default(),
                 }
             }
         }

@@ -8,11 +8,12 @@ fn main() {
     let erda_shower = dir.join("erda_shower_ideal_ratio.png");
     let rune = dir.join("rune_ideal_ratio.png");
     let rune_buff = dir.join("rune_buff_ideal_ratio.png");
+    let sayram_elixir_buff = dir.join("sayram_elixir_buff_ideal_ratio.png");
+    let aurelia_elixir_buff = dir.join("aurelia_elixir_buff_ideal_ratio.png");
     let exp_coupon_x3_buff = dir.join("exp_coupon_x3_buff_ideal_ratio.png");
     let bonus_exp_coupon_buff = dir.join("bonus_exp_coupon_buff_ideal_ratio.png");
     let legion_wealth_buff = dir.join("legion_wealth_buff_ideal_ratio.png");
     let legion_luck_buff = dir.join("legion_luck_buff_ideal_ratio.png");
-    let sayram_elixir_buff = dir.join("sayram_elixir_buff_ideal_ratio.png");
     let cash_shop = dir.join("cash_shop.png");
 
     let rune_model = dir.join("rune.onnx");
@@ -43,6 +44,14 @@ fn main() {
         rune_buff.to_str().unwrap()
     );
     println!(
+        "cargo:rustc-env=SAYRAM_ELIXIR_BUFF_TEMPLATE={}",
+        sayram_elixir_buff.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=AURELIA_ELIXIR_BUFF_TEMPLATE={}",
+        aurelia_elixir_buff.to_str().unwrap()
+    );
+    println!(
         "cargo:rustc-env=EXP_COUPON_X3_BUFF_TEMPLATE={}",
         exp_coupon_x3_buff.to_str().unwrap()
     );
@@ -57,10 +66,6 @@ fn main() {
     println!(
         "cargo:rustc-env=LEGION_LUCK_BUFF_TEMPLATE={}",
         legion_luck_buff.to_str().unwrap()
-    );
-    println!(
-        "cargo:rustc-env=SAYRAM_ELIXIR_BUFF_TEMPLATE={}",
-        sayram_elixir_buff.to_str().unwrap()
     );
     println!(
         "cargo:rustc-env=CASH_SHOP_TEMPLATE={}",

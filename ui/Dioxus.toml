@@ -10,6 +10,6 @@ watch_path = ["src", "assets"]
 
 [web.resource]
 style = ["public/tailwind.css"]
-script = []
+script = ["assets/autoNumeric.min.js"]
 
 [web.resource.dev]

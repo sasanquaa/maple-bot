@@ -8,7 +8,10 @@ use strum::Display;
 use crate::{
     Position,
     buff::Buff,
-    context::{Context, Contextual, ControlFlow, RUNE_BUFF_POSITION, Timeout, update_with_timeout},
+    context::{
+        Context, Contextual, ControlFlow, MS_PER_TICK, RUNE_BUFF_POSITION, Timeout,
+        update_with_timeout,
+    },
     database::{Action, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, KeyBinding},
     detect::Detector,
     minimap::Minimap,
@@ -95,8 +98,8 @@ impl From<ActionKey> for PlayerActionKey {
             position,
             direction,
             with,
-            wait_before_use_ticks,
-            wait_after_use_ticks,
+            wait_before_use_millis,
+            wait_after_use_millis,
             ..
         }: ActionKey,
     ) -> Self {
@@ -105,8 +108,8 @@ impl From<ActionKey> for PlayerActionKey {
             position,
             direction,
             with,
-            wait_before_use_ticks,
-            wait_after_use_ticks,
+            wait_before_use_ticks: (wait_before_use_millis / MS_PER_TICK) as u32,
+            wait_after_use_ticks: (wait_after_use_millis / MS_PER_TICK) as u32,
         }
     }
 }
@@ -122,13 +125,13 @@ impl From<ActionMove> for PlayerActionMove {
     fn from(
         ActionMove {
             position,
-            wait_after_move_ticks,
+            wait_after_move_millis,
             ..
         }: ActionMove,
     ) -> Self {
         Self {
             position,
-            wait_after_move_ticks,
+            wait_after_move_ticks: (wait_after_move_millis / MS_PER_TICK) as u32,
         }
     }
 }
@@ -1170,7 +1173,7 @@ fn update_falling_context(
     moving: PlayerMoving,
     anchor: Point,
 ) -> Player {
-    const TIMEOUT_EARLY_THRESHOLD: i32 = -3;
+    const TIMEOUT_EARLY_THRESHOLD: i32 = -4;
 
     let y_changed = cur_pos.y - anchor.y;
     let (x_distance, _) = x_distance_direction(&moving.dest, &cur_pos);

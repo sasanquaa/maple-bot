@@ -11,6 +11,7 @@ use std::{
 use log::info;
 use opencv::core::{Mat, MatTraitConst, MatTraitConstManual, Vec4b};
 use platforms::windows::{self, Capture, Handle, Keys};
+use strum::IntoEnumIterator;
 
 use crate::{
     Action, ActionCondition, ActionKey, KeyBindingConfiguration, Request,
@@ -25,13 +26,17 @@ use crate::{
     skill::{Skill, SkillKind, SkillState},
 };
 
+// TODO: fix this later...
 pub const ERDA_SHOWER_SKILL_POSITION: usize = 0;
 pub const RUNE_BUFF_POSITION: usize = 0;
+const FPS: u32 = 30;
+pub const MS_PER_TICK: u64 = 1000 / FPS as u64;
 const SAYRAM_ELIXIR_BUFF_POSITION: usize = 1;
-const EXP_X3_BUFF_POSITION: usize = 2;
-const BONUS_EXP_BUFF_POSITION: usize = 3;
-const LEGION_WEALTH_BUFF_POSITION: usize = 4;
-const LEGION_LUCK_BUFF_POSITION: usize = 5;
+const AURELIA_ELIXIR_BUFF_POSITION: usize = 2;
+const EXP_X3_BUFF_POSITION: usize = 3;
+const BONUS_EXP_BUFF_POSITION: usize = 4;
+const LEGION_WEALTH_BUFF_POSITION: usize = 5;
+const LEGION_LUCK_BUFF_POSITION: usize = 6;
 
 /// A struct that stores the current tick before timing out.
 ///
@@ -149,15 +154,12 @@ pub fn start_update_loop() {
             let mut capture = Capture::new(handle);
             let mut player_state = PlayerState::default();
             let mut minimap_state = MinimapState::default();
-            let mut skill_states = [SkillState::new(SkillKind::ErdaShower)];
-            let mut buff_states = [
-                BuffState::new(BuffKind::Rune),
-                BuffState::new(BuffKind::SayramElixir),
-                BuffState::new(BuffKind::ExpCouponX3),
-                BuffState::new(BuffKind::BonusExpCoupon),
-                BuffState::new(BuffKind::LegionWealth),
-                BuffState::new(BuffKind::LegionLuck),
-            ];
+            let mut skill_states = SkillKind::iter()
+                .map(SkillState::new)
+                .collect::<Vec<SkillState>>();
+            let mut buff_states = BuffKind::iter()
+                .map(BuffState::new)
+                .collect::<Vec<BuffState>>();
             let mut rotator = Rotator::default();
             let mut actions = Vec::<Action>::new();
             let mut config = query_configs().unwrap().into_iter().next().unwrap();
@@ -216,7 +218,7 @@ pub fn start_update_loop() {
                 );
             };
 
-            loop_with_fps(30, || {
+            loop_with_fps(FPS, || {
                 let Ok(mat) = capture.grab().map(OwnedMat::new) else {
                     return;
                 };
@@ -373,23 +375,27 @@ fn loop_with_fps(fps: u32, mut on_tick: impl FnMut()) {
 
 fn config_buffs(config: &Configuration) -> Vec<(usize, KeyBinding)> {
     let mut buffs = Vec::<(usize, KeyBinding)>::new();
-    let KeyBindingConfiguration { key, enabled } = config.sayram_elixir_key;
+    let KeyBindingConfiguration { key, enabled, .. } = config.sayram_elixir_key;
     if enabled {
         buffs.push((SAYRAM_ELIXIR_BUFF_POSITION, key));
     }
-    let KeyBindingConfiguration { key, enabled } = config.exp_x3_key;
+    let KeyBindingConfiguration { key, enabled, .. } = config.aurelia_elixir_key;
+    if enabled {
+        buffs.push((AURELIA_ELIXIR_BUFF_POSITION, key));
+    }
+    let KeyBindingConfiguration { key, enabled, .. } = config.exp_x3_key;
     if enabled {
         buffs.push((EXP_X3_BUFF_POSITION, key));
     }
-    let KeyBindingConfiguration { key, enabled } = config.bonus_exp_key;
+    let KeyBindingConfiguration { key, enabled, .. } = config.bonus_exp_key;
     if enabled {
         buffs.push((BONUS_EXP_BUFF_POSITION, key));
     }
-    let KeyBindingConfiguration { key, enabled } = config.legion_luck_key;
+    let KeyBindingConfiguration { key, enabled, .. } = config.legion_luck_key;
     if enabled {
         buffs.push((LEGION_LUCK_BUFF_POSITION, key));
     }
-    let KeyBindingConfiguration { key, enabled } = config.legion_wealth_key;
+    let KeyBindingConfiguration { key, enabled, .. } = config.legion_wealth_key;
     if enabled {
         buffs.push((LEGION_WEALTH_BUFF_POSITION, key));
     }
@@ -398,24 +404,34 @@ fn config_buffs(config: &Configuration) -> Vec<(usize, KeyBinding)> {
 
 fn config_actions(config: &Configuration) -> Vec<Action> {
     let mut vec = Vec::new();
-    if config.feed_pet_key.enabled {
+    let KeyBindingConfiguration {
+        key,
+        enabled,
+        millis,
+    } = config.feed_pet_key;
+    if enabled {
         let feed_pet_action = Action::Key(ActionKey {
-            key: config.feed_pet_key.key,
-            condition: ActionCondition::EveryMillis(120000),
-            wait_before_use_ticks: 10,
-            wait_after_use_ticks: 10,
+            key,
+            condition: ActionCondition::EveryMillis(millis),
+            wait_before_use_millis: 350,
+            wait_after_use_millis: 350,
             ..ActionKey::default()
         });
         vec.push(feed_pet_action);
         vec.push(feed_pet_action);
         vec.push(feed_pet_action);
     }
-    if config.potion_key.enabled {
+    let KeyBindingConfiguration {
+        key,
+        enabled,
+        millis,
+    } = config.potion_key;
+    if enabled {
         vec.push(Action::Key(ActionKey {
-            key: config.potion_key.key,
-            condition: ActionCondition::EveryMillis(120000),
-            wait_before_use_ticks: 10,
-            wait_after_use_ticks: 10,
+            key,
+            condition: ActionCondition::EveryMillis(millis),
+            wait_before_use_millis: 350,
+            wait_after_use_millis: 350,
             ..ActionKey::default()
         }));
     }

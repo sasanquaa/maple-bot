@@ -75,6 +75,12 @@ pub trait Detector {
     /// Detects whether the player has a rune buff.
     fn detect_player_rune_buff(&mut self) -> bool;
 
+    /// Detects whether the player has a sayram's elixir buff.
+    fn detect_player_sayram_elixir_buff(&mut self) -> bool;
+
+    /// Detects whether the player has a aurelia's elixir buff.
+    fn detect_player_aurelia_elixir_buff(&mut self) -> bool;
+
     /// Detects whether the player has a x3 exp coupon buff.
     fn detect_player_exp_coupon_x3_buff(&mut self) -> bool;
 
@@ -86,9 +92,6 @@ pub trait Detector {
 
     /// Detects whether the player has a legion luck buff.
     fn detect_player_legion_luck_buff(&mut self) -> bool;
-
-    /// Detects whether the player has a sayram elixir buff.
-    fn detect_player_sayram_elixir_buff(&mut self) -> bool;
 
     /// Detects rune arrows from the given RGBA image `Mat`.
     fn detect_rune_arrows(&mut self) -> Result<[KeyKind; 4]>;
@@ -167,6 +170,14 @@ impl Detector for CachedDetector<'_> {
         detect_player_rune_buff(&crop_to_buffs_region(self.grayscale()))
     }
 
+    fn detect_player_sayram_elixir_buff(&mut self) -> bool {
+        detect_player_sayram_elixir_buff(&crop_to_buffs_region(self.grayscale()))
+    }
+
+    fn detect_player_aurelia_elixir_buff(&mut self) -> bool {
+        detect_player_aurelia_elixir_buff(&crop_to_buffs_region(self.grayscale()))
+    }
+
     fn detect_player_exp_coupon_x3_buff(&mut self) -> bool {
         detect_player_exp_coupon_x3_buff(&crop_to_buffs_region(self.grayscale()))
     }
@@ -181,10 +192,6 @@ impl Detector for CachedDetector<'_> {
 
     fn detect_player_legion_luck_buff(&mut self) -> bool {
         detect_player_legion_luck_buff(&to_bgr(&crop_to_buffs_region(self.mat)))
-    }
-
-    fn detect_player_sayram_elixir_buff(&mut self) -> bool {
-        detect_player_sayram_elixir_buff(&crop_to_buffs_region(self.grayscale()))
     }
 
     fn detect_rune_arrows(&mut self) -> Result<[KeyKind; 4]> {
@@ -242,6 +249,46 @@ fn detect_player_rune_buff(mat: &impl ToInputArray) -> bool {
         Point::default(),
         0.75,
         Some("rune buff"),
+    )
+    .is_ok()
+}
+
+fn detect_player_sayram_elixir_buff(mat: &impl ToInputArray) -> bool {
+    /// TODO: Support default ratio
+    static SAYRAM_ELIXIR_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("SAYRAM_ELIXIR_BUFF_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+
+    detect_template(
+        mat,
+        LazyLock::force(&SAYRAM_ELIXIR_BUFF),
+        Point::default(),
+        0.75,
+        Some("sayram's elixir buff"),
+    )
+    .is_ok()
+}
+
+fn detect_player_aurelia_elixir_buff(mat: &impl ToInputArray) -> bool {
+    /// TODO: Support default ratio
+    static AURELIA_ELIXIR_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("AURELIA_ELIXIR_BUFF_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+
+    detect_template(
+        mat,
+        LazyLock::force(&AURELIA_ELIXIR_BUFF),
+        Point::default(),
+        0.9,
+        Some("aurelia's elixir buff"),
     )
     .is_ok()
 }
@@ -322,26 +369,6 @@ fn detect_player_legion_luck_buff(mat: &impl ToInputArray) -> bool {
         Point::default(),
         0.75,
         Some("legion luck buff"),
-    )
-    .is_ok()
-}
-
-fn detect_player_sayram_elixir_buff(mat: &impl ToInputArray) -> bool {
-    /// TODO: Support default ratio
-    static SAYRAM_ELIXIR_BUFF: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("SAYRAM_ELIXIR_BUFF_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-
-    detect_template(
-        mat,
-        LazyLock::force(&SAYRAM_ELIXIR_BUFF),
-        Point::default(),
-        0.75,
-        Some("sayram elixir buff"),
     )
     .is_ok()
 }

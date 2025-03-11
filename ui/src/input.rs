@@ -1,7 +1,9 @@
-use std::str::FromStr;
+use std::{fmt::Display, str::FromStr};
 
 use backend::KeyBinding;
 use dioxus::prelude::*;
+use num_traits::PrimInt;
+use rand::distr::{Alphanumeric, SampleString};
 
 use crate::key::KeyInput;
 
@@ -107,28 +109,7 @@ pub fn Checkbox(
 }
 
 #[component]
-pub fn NumberInputU32(props: GenericInputProps<u32>) -> Element {
-    rsx! {
-        NumberInput { ..props }
-    }
-}
-
-#[component]
-pub fn NumberInputU64(props: GenericInputProps<u64>) -> Element {
-    rsx! {
-        NumberInput { ..props }
-    }
-}
-
-#[component]
-pub fn NumberInputI32(props: GenericInputProps<i32>) -> Element {
-    rsx! {
-        NumberInput { ..props }
-    }
-}
-
-#[component]
-fn NumberInput<T: 'static + Copy + Clone + PartialEq + FromStr + IntoAttributeValue>(
+pub fn MillisInput(
     GenericInputProps {
         label,
         label_class,
@@ -137,24 +118,123 @@ fn NumberInput<T: 'static + Copy + Clone + PartialEq + FromStr + IntoAttributeVa
         disabled,
         on_input,
         value,
-    }: GenericInputProps<T>,
+    }: GenericInputProps<u64>,
 ) -> Element {
+    rsx! {
+        NumberInput {
+            label,
+            label_class,
+            div_class,
+            input_class,
+            disabled,
+            on_input,
+            value,
+            suffix: "ms"
+        }
+    }
+}
+
+#[component]
+pub fn NumberInputI32(
+    GenericInputProps {
+        label,
+        label_class,
+        div_class,
+        input_class,
+        disabled,
+        on_input,
+        value,
+    }: GenericInputProps<i32>,
+) -> Element {
+    rsx! {
+        NumberInput {
+            label,
+            label_class,
+            div_class,
+            input_class,
+            disabled,
+            on_input,
+            value,
+        }
+    }
+}
+
+#[component]
+fn NumberInput<T: 'static + IntoAttributeValue + PrimInt + FromStr + Display>(
+    label: String,
+    #[props(default = String::default())] label_class: String,
+    #[props(default = String::default())] div_class: String,
+    #[props(default = String::default())] input_class: String,
+    #[props(default = String::default())] suffix: String,
+    #[props(default = false)] disabled: bool,
+    on_input: EventHandler<T>,
+    value: T,
+) -> Element {
+    let input_id = use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
+
+    use_future(move || {
+        let suffix = suffix.clone();
+        async move {
+            let js = format!(
+                r#"
+                const input = document.getElementById("{}");
+                if (input === null) {{
+                    return;
+                }}
+                const autoNumeric = new AutoNumeric(input, {{
+                    decimalPlaces: 0,
+                    emptyInputBehavior: "zero",
+                    maximumValue: "{}",
+                    minimumValue: "0",
+                    suffixText: "{}",
+                    defaultValueOverride: "{}"
+                }});
+                input.addEventListener("autoNumeric:rawValueModified", async (e) => {{
+                    await dioxus.send(e.detail.newRawValue);
+                }});
+                input.addEventListener("autoNumeric:set", (e) => {{
+                    autoNumeric.set(e.detail.value);
+                }});
+                "#,
+                input_id(),
+                T::max_value(),
+                suffix,
+                value
+            );
+            let mut input = document::eval(js.as_str());
+            loop {
+                let Ok(value) = input.recv::<String>().await.unwrap().parse::<T>() else {
+                    continue;
+                };
+                on_input(value);
+            }
+        }
+    });
+    use_effect(use_reactive!(|value| {
+        document::eval(
+            format!(
+                r#"
+                const input = document.getElementById("{}");
+                input.dispatchEvent(new CustomEvent("autoNumeric:set", {{
+                    detail: {{
+                        value: {}
+                    }}
+                }}));
+                "#,
+                input_id(),
+                value
+            )
+            .as_str(),
+        );
+    }));
+
     rsx! {
         LabeledInput {
             label,
             label_class,
             div_class,
             disabled,
-            input {
-                disabled,
-                r#type: "number",
-                class: input_class,
-                min: "0",
-                onchange: move |e| {
-                    on_input(e.parsed::<T>().unwrap_or(value));
-                },
-                value,
-            }
+            input { id: input_id(), disabled, class: input_class }
         }
     }
 }

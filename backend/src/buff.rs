@@ -1,5 +1,4 @@
 use log::debug;
-#[cfg(test)]
 use strum::EnumIter;
 
 use crate::{
@@ -36,11 +35,11 @@ pub enum Buff {
     HasBuff,
 }
 
-#[derive(Clone, Copy, Debug)]
-#[cfg_attr(test, derive(EnumIter))]
+#[derive(Clone, Copy, Debug, EnumIter)]
 pub enum BuffKind {
     Rune,
     SayramElixir,
+    AureliaElixir,
     ExpCouponX3,
     BonusExpCoupon,
     LegionWealth,
@@ -71,6 +70,7 @@ fn update_context(contextual: Buff, detector: &mut impl Detector, state: &mut Bu
                 Some(match state.kind {
                     BuffKind::Rune => detector.detect_player_rune_buff(),
                     BuffKind::SayramElixir => detector.detect_player_sayram_elixir_buff(),
+                    BuffKind::AureliaElixir => detector.detect_player_aurelia_elixir_buff(),
                     BuffKind::ExpCouponX3 => detector.detect_player_exp_coupon_x3_buff(),
                     BuffKind::BonusExpCoupon => detector.detect_player_bonus_exp_coupon_buff(),
                     BuffKind::LegionWealth => detector.detect_player_legion_wealth_buff(),
@@ -133,6 +133,12 @@ mod tests {
             BuffKind::SayramElixir => {
                 detector
                     .expect_detect_player_sayram_elixir_buff()
+                    .times(1)
+                    .return_const(result);
+            }
+            BuffKind::AureliaElixir => {
+                detector
+                    .expect_detect_player_aurelia_elixir_buff()
                     .times(1)
                     .return_const(result);
             }

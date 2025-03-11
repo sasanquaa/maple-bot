@@ -54,6 +54,7 @@ pub struct Configuration {
     pub potion_key: KeyBindingConfiguration,
     pub rotation_mode: RotationMode,
     pub sayram_elixir_key: KeyBindingConfiguration,
+    pub aurelia_elixir_key: KeyBindingConfiguration,
     pub exp_x3_key: KeyBindingConfiguration,
     pub bonus_exp_key: KeyBindingConfiguration,
     pub legion_wealth_key: KeyBindingConfiguration,
@@ -64,6 +65,9 @@ pub struct Configuration {
 pub struct KeyBindingConfiguration {
     pub key: KeyBinding,
     pub enabled: bool,
+    /// Only for feed pet and potion
+    #[serde(default)]
+    pub millis: u64,
 }
 
 impl Default for KeyBindingConfiguration {
@@ -71,6 +75,7 @@ impl Default for KeyBindingConfiguration {
         Self {
             key: KeyBinding::default(),
             enabled: true,
+            millis: 0,
         }
     }
 }
@@ -126,7 +131,8 @@ pub struct Position {
 pub struct ActionMove {
     pub position: Position,
     pub condition: ActionCondition,
-    pub wait_after_move_ticks: u32,
+    #[serde(alias = "wait_after_move_ticks")]
+    pub wait_after_move_millis: u64,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize)]
@@ -136,8 +142,10 @@ pub struct ActionKey {
     pub condition: ActionCondition,
     pub direction: ActionKeyDirection,
     pub with: ActionKeyWith,
-    pub wait_before_use_ticks: u32,
-    pub wait_after_use_ticks: u32,
+    #[serde(alias = "wait_before_use_ticks")]
+    pub wait_before_use_millis: u64,
+    #[serde(alias = "wait_after_use_ticks")]
+    pub wait_after_use_millis: u64,
     pub queue_to_front: Option<bool>,
 }
 
@@ -331,6 +339,14 @@ pub fn query_configs() -> Result<Vec<Configuration>> {
         if vec.is_empty() {
             let mut config = Configuration {
                 name: "default".to_string(),
+                feed_pet_key: KeyBindingConfiguration {
+                    millis: 120000,
+                    ..KeyBindingConfiguration::default()
+                },
+                potion_key: KeyBindingConfiguration {
+                    millis: 120000,
+                    ..KeyBindingConfiguration::default()
+                },
                 ..Configuration::default()
             };
             upsert_config(&mut config).unwrap();

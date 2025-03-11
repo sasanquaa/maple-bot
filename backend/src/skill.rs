@@ -1,6 +1,6 @@
 use log::debug;
 use opencv::core::{Mat, MatTraitConst, Point, Rect, Vec4b};
-use strum::Display;
+use strum::{Display, EnumIter};
 
 use crate::{
     context::{Context, Contextual, ControlFlow, Timeout, update_with_timeout},
@@ -29,7 +29,7 @@ pub enum Skill {
     Cooldown(Timeout),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, EnumIter)]
 pub enum SkillKind {
     ErdaShower,
 }

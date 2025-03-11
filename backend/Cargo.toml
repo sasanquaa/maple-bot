@@ -17,7 +17,7 @@ opencv = { version = "0.94.2", default-features = false, features = [
 ] }
 anyhow = "1.0.95"
 log = "0.4.25"
-rand = "0.9.0"
+rand = { workspace = true }
 rusqlite = { version = "0.33.0", features = ["bundled"] }
 serde = { workspace = true }
 serde_json = { version = "1.0.138" }

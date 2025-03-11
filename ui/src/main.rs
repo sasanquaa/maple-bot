@@ -21,7 +21,7 @@ use dioxus::{
     prelude::*,
 };
 use icons::XMark;
-use input::{Checkbox, KeyBindingInput, NumberInputI32, NumberInputU32, NumberInputU64};
+use input::{Checkbox, KeyBindingInput, MillisInput, NumberInputI32};
 use minimap::Minimap;
 use select::{Select, TextSelect};
 use tokio::task::spawn_blocking;
@@ -38,6 +38,7 @@ const DIV_CLASS: &str = "flex h-6 items-center space-x-2";
 const LABEL_CLASS: &str = "flex-1 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400";
 const INPUT_CLASS: &str = "w-22 h-full border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
 const TAILWIND_CSS: Asset = asset!("public/tailwind.css");
+const AUTO_NUMERIC_JS: Asset = asset!("assets/autoNumeric.min.js");
 
 fn main() {
     LogTracer::init().unwrap();
@@ -65,32 +66,53 @@ fn App() -> Element {
     let configs = use_signal_sync(Vec::<ConfigurationData>::new);
     let config = use_signal_sync::<Option<ConfigurationData>>(|| None);
     let mut active_tab = use_signal(|| TAB_CONFIGURATION.to_string());
+    let mut script_loaded = use_signal(|| false);
+
+    // Thanks dioxus
+    use_future(move || async move {
+        let mut eval = document::eval(
+            r#"
+            const scriptInterval = setInterval(async () => {
+                try {
+                    AutoNumeric;
+                    await dioxus.send(true);
+                    clearInterval(scriptInterval);
+                } catch(_) { }
+            }, 10);
+        "#,
+        );
+        eval.recv::<bool>().await.unwrap();
+        script_loaded.set(true);
+    });
 
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
-        div { class: "flex flex-col w-md h-screen space-y-2",
-            Minimap {
-                minimap,
-                preset,
-                last_preset,
-                config,
-            }
-            Tab {
-                tabs: vec![TAB_CONFIGURATION.to_string(), TAB_ACTIONS.to_string()],
-                on_tab: move |tab| {
-                    active_tab.set(tab);
-                },
-                tab: active_tab(),
-            }
-            div { class: "px-2 pb-2 pt-2 overflow-y-auto scrollbar h-full",
-                match active_tab().as_str() {
-                    TAB_CONFIGURATION => rsx! {
-                        Configuration { configs, config }
+        document::Script { src: AUTO_NUMERIC_JS }
+        if script_loaded() {
+            div { class: "flex flex-col w-md h-screen space-y-2",
+                Minimap {
+                    minimap,
+                    preset,
+                    last_preset,
+                    config,
+                }
+                Tab {
+                    tabs: vec![TAB_CONFIGURATION.to_string(), TAB_ACTIONS.to_string()],
+                    on_tab: move |tab| {
+                        active_tab.set(tab);
                     },
-                    TAB_ACTIONS => rsx! {
-                        ActionInput { minimap, preset }
-                    },
-                    _ => unreachable!(),
+                    tab: active_tab(),
+                }
+                div { class: "px-2 pb-2 pt-2 overflow-y-auto scrollbar h-full",
+                    match active_tab().as_str() {
+                        TAB_CONFIGURATION => rsx! {
+                            Configuration { configs, config }
+                        },
+                        TAB_ACTIONS => rsx! {
+                            ActionInput { minimap, preset }
+                        },
+                        _ => unreachable!(),
+                    }
                 }
             }
         }
@@ -224,7 +246,7 @@ fn ActionItem(
                         ActionMove {
                             position: Position { x, y, allow_adjusting },
                             condition,
-                            wait_after_move_ticks,
+                            wait_after_move_millis,
                         },
                     ) => rsx! {
                         div { class: DIV,
@@ -241,7 +263,7 @@ fn ActionItem(
                         }
                         div { class: DIV,
                             span { class: KEY, "Wait after" }
-                            span { class: VALUE, {wait_after_move_ticks.to_string()} }
+                            span { class: VALUE, {wait_after_move_millis.to_string()} }
                         }
                     },
                     Action::Key(
@@ -251,8 +273,8 @@ fn ActionItem(
                             condition,
                             direction,
                             with,
-                            wait_before_use_ticks,
-                            wait_after_use_ticks,
+                            wait_before_use_millis,
+                            wait_after_use_millis,
                             queue_to_front,
                         },
                     ) => rsx! {
@@ -284,11 +306,11 @@ fn ActionItem(
                         }
                         div { class: DIV,
                             span { class: KEY, "Wait before" }
-                            span { class: VALUE, {wait_before_use_ticks.to_string()} }
+                            span { class: VALUE, {wait_before_use_millis.to_string()} }
                         }
                         div { class: DIV,
                             span { class: KEY, "Wait after" }
-                            span { class: VALUE, {wait_after_use_ticks.to_string()} }
+                            span { class: VALUE, {wait_after_use_millis.to_string()} }
                         }
                         if let Some(queue_to_front) = queue_to_front {
                             div { class: DIV,
@@ -574,15 +596,15 @@ fn ActionMoveInput(props: InputConfigProps<Action>) -> Element {
     let ActionMove {
         position,
         condition,
-        wait_after_move_ticks,
+        wait_after_move_millis,
     } = value;
     let submit =
         use_callback(move |action_move: ActionMove| (props.on_input)(Action::Move(action_move)));
     let set_position = use_callback(move |position| submit(ActionMove { position, ..value }));
     let set_condition = use_callback(move |condition| submit(ActionMove { condition, ..value }));
-    let set_wait_after_move_ticks = use_callback(move |wait_after_move_ticks| {
+    let set_wait_after_move_millis = use_callback(move |wait_after_move_millis| {
         submit(ActionMove {
-            wait_after_move_ticks,
+            wait_after_move_millis,
             ..value
         })
     });
@@ -603,16 +625,16 @@ fn ActionMoveInput(props: InputConfigProps<Action>) -> Element {
                 disabled: props.disabled,
                 value: condition,
             }
-            NumberInputU32 {
+            MillisInput {
                 label: "Wait after action",
                 label_class: LABEL_CLASS,
                 div_class: DIV_CLASS,
                 input_class: "{INPUT_CLASS} p-1",
                 disabled: props.disabled,
                 on_input: move |value| {
-                    set_wait_after_move_ticks(value);
+                    set_wait_after_move_millis(value);
                 },
-                value: wait_after_move_ticks,
+                value: wait_after_move_millis,
             }
         }
     }
@@ -629,8 +651,8 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
         condition,
         direction,
         with,
-        wait_before_use_ticks,
-        wait_after_use_ticks,
+        wait_before_use_millis,
+        wait_after_use_millis,
         queue_to_front,
     } = value;
     let submit =
@@ -640,15 +662,15 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
     let set_condition = use_callback(move |condition| submit(ActionKey { condition, ..value }));
     let set_direction = use_callback(move |direction| submit(ActionKey { direction, ..value }));
     let set_with = use_callback(move |with| submit(ActionKey { with, ..value }));
-    let set_wait_before_use_ticks = use_callback(move |wait_before_use_ticks| {
+    let set_wait_before_use_millis = use_callback(move |wait_before_use_millis| {
         submit(ActionKey {
-            wait_before_use_ticks,
+            wait_before_use_millis,
             ..value
         })
     });
-    let set_wait_after_use_ticks = use_callback(move |wait_after_use_ticks| {
+    let set_wait_after_use_millis = use_callback(move |wait_after_use_millis| {
         submit(ActionKey {
-            wait_after_use_ticks,
+            wait_after_use_millis,
             ..value
         })
     });
@@ -734,27 +756,27 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
                 disabled: props.disabled,
                 value: with,
             }
-            NumberInputU32 {
+            MillisInput {
                 label: "Wait before action",
                 label_class: LABEL_CLASS,
                 div_class: DIV_CLASS,
                 input_class: "{INPUT_CLASS} p-1",
                 on_input: move |value| {
-                    set_wait_before_use_ticks(value);
+                    set_wait_before_use_millis(value);
                 },
                 disabled: props.disabled,
-                value: wait_before_use_ticks,
+                value: wait_before_use_millis,
             }
-            NumberInputU32 {
+            MillisInput {
                 label: "Wait after action",
                 label_class: LABEL_CLASS,
                 div_class: DIV_CLASS,
                 input_class: "{INPUT_CLASS} p-1",
                 on_input: move |value| {
-                    set_wait_after_use_ticks(value);
+                    set_wait_after_use_millis(value);
                 },
                 disabled: props.disabled,
-                value: wait_after_use_ticks,
+                value: wait_after_use_millis,
             }
         }
     }
@@ -830,7 +852,7 @@ fn ActionConditionInput(
             value,
         }
         if let ActionCondition::EveryMillis(millis) = value {
-            NumberInputU64 {
+            MillisInput {
                 label: "Milliseconds",
                 label_class: LABEL_CLASS,
                 div_class: DIV_CLASS,

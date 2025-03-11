@@ -363,7 +363,7 @@ mod tests {
             allow_adjusting: false,
         },
         condition: ActionCondition::Any,
-        wait_after_move_ticks: 0,
+        wait_after_move_millis: 0,
     });
     const PRIORITY_ACTION: Action = Action::Move(ActionMove {
         position: Position {
@@ -372,7 +372,7 @@ mod tests {
             allow_adjusting: false,
         },
         condition: ActionCondition::ErdaShowerOffCooldown,
-        wait_after_move_ticks: 0,
+        wait_after_move_millis: 0,
     });
 
     #[test]
