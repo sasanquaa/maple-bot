@@ -154,6 +154,9 @@ impl Rotator {
     }
 
     pub fn rotate_action(&mut self, context: &Context, player: &mut PlayerState) {
+        if matches!(context.player, Player::CashShopThenExit(_, _, _)) {
+            return;
+        }
         // what a mess
         let has_erda_action = self.has_erda_action_in_queue(player);
         for (id, action) in self.priority_actions.iter_mut() {

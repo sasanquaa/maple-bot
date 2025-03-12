@@ -206,6 +206,7 @@ pub fn start_update_loop() {
                 player_state.grappling_key = config.ropelift_key.key.into();
                 player_state.upjump_key = config.up_jump_key.map(|key| key.key.into());
                 player_state.cash_shop_key = config.cash_shop_key.key.into();
+                player_state.potion_key = config.potion_key.key.into();
                 rotator.rotator_mode(config.rotation_mode.into());
                 rotator.build_actions(
                     config_actions(config)

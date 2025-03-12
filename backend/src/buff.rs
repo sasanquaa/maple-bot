@@ -4,9 +4,10 @@ use strum::EnumIter;
 use crate::{
     context::{Context, Contextual, ControlFlow, Timeout, update_with_timeout},
     detect::Detector,
+    player::Player,
 };
 
-const BUFF_CHECK_EVERY_TICKS: u32 = 215; // around 7 seconds
+pub const BUFF_CHECK_EVERY_TICKS: u32 = 215; // around 7 seconds
 const BUFF_FAIL_MAX_COUNT: u32 = 3;
 
 #[derive(Debug)]
@@ -37,6 +38,8 @@ pub enum Buff {
 
 #[derive(Clone, Copy, Debug, EnumIter)]
 pub enum BuffKind {
+    /// NOTE: Upon failing to solving rune, there is a cooldown
+    /// that looks exactly like the normal rune buff
     Rune,
     SayramElixir,
     AureliaElixir,
@@ -51,11 +54,16 @@ impl Contextual for Buff {
 
     fn update(
         self,
-        _: &Context,
+        context: &Context,
         detector: &mut impl Detector,
         state: &mut BuffState,
     ) -> ControlFlow<Self> {
-        ControlFlow::Next(update_context(self, detector, state))
+        let next = if matches!(context.player, Player::CashShopThenExit(_, _, _)) {
+            self
+        } else {
+            update_context(self, detector, state)
+        };
+        ControlFlow::Next(next)
     }
 }
 
@@ -189,10 +197,10 @@ mod tests {
         for kind in BuffKind::iter() {
             let mut detector = detector_with_kind(kind, false);
             let mut state = BuffState::new(kind);
-            state.fail_count = 2;
+            state.fail_count = BUFF_FAIL_MAX_COUNT - 1;
 
             let buff = update_context(Buff::HasBuff, &mut detector, &mut state);
-            assert_eq!(state.fail_count, 3);
+            assert_eq!(state.fail_count, BUFF_FAIL_MAX_COUNT);
             assert_eq!(state.timeout, Timeout {
                 started: true,
                 ..Timeout::default()

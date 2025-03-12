@@ -5,6 +5,7 @@ use strum::{Display, EnumIter};
 use crate::{
     context::{Context, Contextual, ControlFlow, Timeout, update_with_timeout},
     detect::Detector,
+    player::Player,
 };
 
 const SKILL_OFF_COOLDOWN_MAX_TIMEOUT: u32 = 1800;
@@ -39,11 +40,16 @@ impl Contextual for Skill {
 
     fn update(
         self,
-        _: &Context,
+        context: &Context,
         detector: &mut impl Detector,
         state: &mut SkillState,
     ) -> ControlFlow<Self> {
-        ControlFlow::Next(update_context(self, detector, state))
+        let next = if matches!(context.player, Player::CashShopThenExit(_, _, _)) {
+            self
+        } else {
+            update_context(self, detector, state)
+        };
+        ControlFlow::Next(next)
     }
 }
 

@@ -7,7 +7,7 @@ use strum::Display;
 
 use crate::{
     Position,
-    buff::Buff,
+    buff::{BUFF_CHECK_EVERY_TICKS, Buff},
     context::{
         Context, Contextual, ControlFlow, MS_PER_TICK, RUNE_BUFF_POSITION, Timeout,
         update_with_timeout,
@@ -51,6 +51,10 @@ pub struct PlayerState {
     pub upjump_key: Option<KeyKind>,
     /// The cash shop key
     pub cash_shop_key: KeyKind,
+    pub potion_key: KeyKind,
+    /// Uses when potion should be used in a specific contextual state.
+    /// Currently only used by 'Player::SolveRune' to avoid dying.
+    potion_timeout: Timeout,
     /// Tracks if the player moved within a specified ticks to determine if the player is stationary
     is_stationary_timeout: Timeout,
     /// Whether the player is stationary
@@ -314,9 +318,10 @@ impl PlayerUseKey {
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct PlayerSolvingRune {
-    timeout: Timeout,
-    key_index: usize,
+    solve_timeout: Timeout,
+    validate_timeout: Timeout,
     keys: Option<[KeyKind; 4]>,
+    key_index: usize,
     validating: bool,
     failed_count: usize,
 }
@@ -871,6 +876,7 @@ fn update_adjusting_context(
     }
     if y_direction < 0
         && y_distance >= ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD
+        && x_distance >= ADJUSTING_MEDIUM_THRESHOLD
         && state.is_stationary
         && !matches!(
             state.last_moving_state,
@@ -1209,7 +1215,7 @@ fn update_unstucking_context(
     timeout: Timeout,
     to_right: bool,
 ) -> Player {
-    const Y_IGNORE_THRESHOLD: i32 = 15;
+    const Y_IGNORE_THRESHOLD: i32 = 18;
 
     let Minimap::Idle(idle) = context.minimap else {
         return Player::Detecting;
@@ -1252,102 +1258,116 @@ fn update_solving_rune_context(
     state: &mut PlayerState,
     solving_rune: PlayerSolvingRune,
 ) -> Player {
-    const RUNE_COOLDOWN_TIMEOUT: u32 = 305; // around 10 secs (cooldown or redetect)
-    const SOLVE_RUNE_TIMEOUT: u32 = RUNE_COOLDOWN_TIMEOUT + 100;
-    const DETECT_RUNE_ARROWS_INTERVAL: u32 = 35;
+    const RUNE_COOLDOWN_TIMEOUT: u32 = BUFF_CHECK_EVERY_TICKS + 60; // around 9 secs
+    const SOLVE_RUNE_TIMEOUT: u32 = RUNE_COOLDOWN_TIMEOUT;
+    const DETECT_RUNE_ARROWS_INTERVAL: u32 = 30;
     const PRESS_KEY_INTERVAL: u32 = 10;
     const MAX_FAILED_COUNT: usize = 2;
 
-    fn validate_rune_solved(
-        context: &Context,
-        solving_rune: PlayerSolvingRune,
-        timeout: Timeout,
-    ) -> Player {
-        if timeout.current == 0 || timeout.current % RUNE_COOLDOWN_TIMEOUT != 0 {
-            return Player::SolvingRune(PlayerSolvingRune {
-                timeout,
-                ..solving_rune
-            });
-        }
-        if matches!(context.buffs[RUNE_BUFF_POSITION], Buff::HasBuff) {
-            Player::Idle
-        } else {
-            let failed_count = solving_rune.failed_count + 1;
-            Player::SolvingRune(PlayerSolvingRune {
-                timeout: Timeout {
-                    current: 0,
-                    started: failed_count >= MAX_FAILED_COUNT,
-                },
-                failed_count,
-                ..PlayerSolvingRune::default()
-            })
-        }
+    if solving_rune.failed_count >= MAX_FAILED_COUNT {
+        return Player::CashShopThenExit(Timeout::default(), false, false);
     }
-
-    let next = update_with_timeout(
-        solving_rune.timeout,
-        SOLVE_RUNE_TIMEOUT,
-        (),
-        |_, timeout| {
-            let _ = context.keys.send(state.interact_key);
-            Player::SolvingRune(PlayerSolvingRune {
-                timeout,
-                ..solving_rune
-            })
-        },
-        |_| {
-            // likely a spinning rune if the bot can't detect and timeout
-            if solving_rune.failed_count < MAX_FAILED_COUNT {
+    let next = if solving_rune.validating {
+        debug_assert!(
+            solving_rune
+                .keys
+                .is_some_and(|keys| solving_rune.key_index >= keys.len())
+        );
+        update_use_potion(context, state);
+        update_with_timeout(
+            solving_rune.validate_timeout,
+            RUNE_COOLDOWN_TIMEOUT,
+            (),
+            |_, timeout| {
+                Player::SolvingRune(PlayerSolvingRune {
+                    validate_timeout: timeout,
+                    ..solving_rune
+                })
+            },
+            |_| {
+                if matches!(context.buffs[RUNE_BUFF_POSITION], Buff::HasBuff) {
+                    Player::Idle
+                } else {
+                    Player::SolvingRune(PlayerSolvingRune {
+                        failed_count: solving_rune.failed_count + 1,
+                        ..PlayerSolvingRune::default()
+                    })
+                }
+            },
+            |_, timeout| {
+                Player::SolvingRune(PlayerSolvingRune {
+                    validate_timeout: timeout,
+                    ..solving_rune
+                })
+            },
+        )
+    } else {
+        update_with_timeout(
+            solving_rune.solve_timeout,
+            SOLVE_RUNE_TIMEOUT,
+            (),
+            |_, timeout| {
+                let _ = context.keys.send(state.interact_key);
+                Player::SolvingRune(PlayerSolvingRune {
+                    solve_timeout: timeout,
+                    ..solving_rune
+                })
+            },
+            |_| {
+                // likely a spinning rune if the bot can't detect and timeout
                 Player::SolvingRune(PlayerSolvingRune {
                     failed_count: solving_rune.failed_count + 1,
                     ..PlayerSolvingRune::default()
                 })
-            } else {
-                Player::Idle
-            }
-        },
-        |_, mut timeout| {
-            if solving_rune.failed_count >= MAX_FAILED_COUNT {
-                return Player::CashShopThenExit(Timeout::default(), false, false);
-            }
-            if solving_rune.validating {
-                return validate_rune_solved(context, solving_rune, timeout);
-            }
-            if matches!(context.buffs[RUNE_BUFF_POSITION], Buff::HasBuff) {
-                return Player::Idle;
-            }
-            if solving_rune.keys.is_none() {
-                let keys = if timeout.current % DETECT_RUNE_ARROWS_INTERVAL == 0 {
-                    detector.detect_rune_arrows().ok()
-                } else {
-                    None
-                };
-                return Player::SolvingRune(PlayerSolvingRune {
-                    timeout,
-                    keys,
+            },
+            |_, timeout| {
+                if solving_rune.keys.is_none() {
+                    let keys = if timeout.current % DETECT_RUNE_ARROWS_INTERVAL == 0 {
+                        detector.detect_rune_arrows().ok()
+                    } else {
+                        None
+                    };
+                    let timeout = if keys.is_some() {
+                        // reset current timeout for pressing keys
+                        Timeout {
+                            current: 1, // starts at 1 instead of 0 to avoid immediate key press
+                            started: true,
+                        }
+                    } else {
+                        timeout
+                    };
+                    return Player::SolvingRune(PlayerSolvingRune {
+                        solve_timeout: timeout,
+                        keys,
+                        ..solving_rune
+                    });
+                }
+                if timeout.current % PRESS_KEY_INTERVAL != 0 {
+                    return Player::SolvingRune(PlayerSolvingRune {
+                        solve_timeout: timeout,
+                        ..solving_rune
+                    });
+                }
+                debug_assert!(solving_rune.key_index != 0 || timeout.current == PRESS_KEY_INTERVAL);
+                debug_assert!(
+                    solving_rune
+                        .keys
+                        .is_some_and(|keys| solving_rune.key_index < keys.len())
+                );
+                let keys = solving_rune.keys.unwrap();
+                let key_index = solving_rune.key_index;
+                let _ = context.keys.send(keys[key_index]);
+                let key_index = solving_rune.key_index + 1;
+                Player::SolvingRune(PlayerSolvingRune {
+                    solve_timeout: timeout,
+                    validating: key_index >= keys.len(),
+                    key_index,
                     ..solving_rune
-                });
-            }
-            if timeout.current % PRESS_KEY_INTERVAL != 0 {
-                return Player::SolvingRune(PlayerSolvingRune {
-                    timeout,
-                    ..solving_rune
-                });
-            }
-            let keys = solving_rune.keys.unwrap();
-            let _ = context.keys.send(keys[solving_rune.key_index]);
-            let need_validate = solving_rune.key_index >= keys.len() - 1;
-            if need_validate {
-                timeout.current = 0;
-            }
-            Player::SolvingRune(PlayerSolvingRune {
-                timeout,
-                validating: need_validate,
-                key_index: solving_rune.key_index + 1,
-                ..solving_rune
-            })
-        },
-    );
+                })
+            },
+        )
+    };
+
     on_action(
         state,
         |action| match action {
@@ -1438,6 +1458,21 @@ fn update_moving_axis_context(
             Player::Moving(moving.dest, moving.exact)
         },
         |_, timeout| on_update(moving.pos(cur_pos).timeout(timeout)),
+    )
+}
+
+#[inline]
+fn update_use_potion(context: &Context, state: &mut PlayerState) {
+    state.potion_timeout = update_with_timeout(
+        state.potion_timeout,
+        30, // every second
+        (),
+        |_, timeout| {
+            let _ = context.keys.send(state.potion_key);
+            timeout
+        },
+        |_| Timeout::default(),
+        |_, timeout| timeout,
     )
 }
 
