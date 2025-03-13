@@ -1,7 +1,7 @@
 use std::ops::Range;
 
-use log::debug;
-use opencv::core::Point;
+use log::{debug, info};
+use opencv::core::{Point, Rect};
 use platforms::windows::KeyKind;
 use strum::Display;
 
@@ -52,9 +52,9 @@ pub struct PlayerState {
     /// The cash shop key
     pub cash_shop_key: KeyKind,
     pub potion_key: KeyKind,
-    /// Uses when potion should be used in a specific contextual state.
-    /// Currently only used by 'Player::SolveRune' to avoid dying.
-    potion_timeout: Timeout,
+    /// The player health bar
+    health_bar: Option<Rect>,
+    health_under_half: bool,
     /// Tracks if the player moved within a specified ticks to determine if the player is stationary
     is_stationary_timeout: Timeout,
     /// Whether the player is stationary
@@ -1273,7 +1273,6 @@ fn update_solving_rune_context(
                 .keys
                 .is_some_and(|keys| solving_rune.key_index >= keys.len())
         );
-        update_use_potion(context, state);
         update_with_timeout(
             solving_rune.validate_timeout,
             RUNE_COOLDOWN_TIMEOUT,
@@ -1462,21 +1461,6 @@ fn update_moving_axis_context(
 }
 
 #[inline]
-fn update_use_potion(context: &Context, state: &mut PlayerState) {
-    state.potion_timeout = update_with_timeout(
-        state.potion_timeout,
-        30, // every second
-        (),
-        |_, timeout| {
-            let _ = context.keys.send(state.potion_key);
-            timeout
-        },
-        |_| Timeout::default(),
-        |_, timeout| timeout,
-    )
-}
-
-#[inline]
 fn update_state(
     context: &Context,
     detector: &mut impl Detector,
@@ -1487,6 +1471,8 @@ fn update_state(
     };
     let minimap_bbox = idle.bbox;
     let Ok(bbox) = detector.detect_player(minimap_bbox) else {
+        state.health_bar = None;
+        state.health_under_half = false;
         return None;
     };
     let tl = bbox.tl() - minimap_bbox.tl();
@@ -1499,6 +1485,19 @@ fn update_state(
         && (state.last_known_pos.is_none() || state.last_known_pos.unwrap() != pos)
     {
         debug!(target: "player", "position updated in minimap: {:?} in {:?}", pos, minimap_bbox);
+    }
+    if state.health_bar.is_none() {
+        state.health_bar = detector.detect_player_health_bar().ok();
+    }
+    if let Some(health_bar) = state.health_bar {
+        let health_under_half = detector.detect_player_health_under_half(health_bar);
+        if health_under_half && !state.health_under_half {
+            info!(target: "player", "below 50% health detected, healing...");
+        }
+        state.health_under_half = health_under_half;
+        if health_under_half {
+            let _ = context.keys.send(state.potion_key);
+        }
     }
     if last_known_pos != pos {
         state.unstuck_counter = 0;

@@ -296,10 +296,10 @@ fn to_vkey(kind: KeyKind) -> VIRTUAL_KEY {
 fn to_scan_code(key: VIRTUAL_KEY) -> (u16, bool) {
     let scan_code = unsafe { MapVirtualKeyW(key.0 as u32, MAPVK_VK_TO_VSC_EX) } as u16;
     let code = scan_code & 0xFF;
-    let is_extended = match key {
-        // I don't know why, please help
-        key if key == VK_INSERT => true,
-        _ => (scan_code & 0xFF00) != 0,
+    let is_extended = if VK_INSERT == key {
+        true
+    } else {
+        (scan_code & 0xFF00) != 0
     };
     (code, is_extended)
 }

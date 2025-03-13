@@ -72,6 +72,12 @@ pub trait Detector {
     /// Detects whether the player is in cash shop.
     fn detect_player_in_cash_shop(&mut self) -> bool;
 
+    /// Detects the player health bar.
+    fn detect_player_health_bar(&mut self) -> Result<Rect>;
+
+    /// Detects whether the player health is under 50%.
+    fn detect_player_health_under_half(&mut self, health_bar: Rect) -> bool;
+
     /// Detects whether the player has a rune buff.
     fn detect_player_rune_buff(&mut self) -> bool;
 
@@ -107,6 +113,7 @@ pub trait Detector {
 pub struct CachedDetector<'a> {
     mat: &'a Mat,
     grayscale: Option<Mat>,
+    buffs_grayscale: Option<Mat>,
 }
 
 impl<'a> CachedDetector<'a> {
@@ -114,6 +121,7 @@ impl<'a> CachedDetector<'a> {
         Self {
             mat,
             grayscale: None,
+            buffs_grayscale: None,
         }
     }
 
@@ -123,6 +131,14 @@ impl<'a> CachedDetector<'a> {
             self.grayscale = Some(to_grayscale(self.mat, true));
         }
         self.grayscale.as_ref().unwrap()
+    }
+
+    #[inline]
+    fn buffs_grayscale(&mut self) -> &Mat {
+        if self.buffs_grayscale.is_none() {
+            self.buffs_grayscale = Some(crop_to_buffs_region(self.grayscale()).clone_pointee());
+        }
+        self.buffs_grayscale.as_ref().unwrap()
     }
 }
 
@@ -166,24 +182,32 @@ impl Detector for CachedDetector<'_> {
         detect_cash_shop(self.grayscale())
     }
 
+    fn detect_player_health_bar(&mut self) -> Result<Rect> {
+        detect_player_health_bar(self.grayscale())
+    }
+
+    fn detect_player_health_under_half(&mut self, health_bar: Rect) -> bool {
+        detect_player_health_under_half(&self.grayscale().roi(health_bar).unwrap())
+    }
+
     fn detect_player_rune_buff(&mut self) -> bool {
-        detect_player_rune_buff(&crop_to_buffs_region(self.grayscale()))
+        detect_player_rune_buff(self.buffs_grayscale())
     }
 
     fn detect_player_sayram_elixir_buff(&mut self) -> bool {
-        detect_player_sayram_elixir_buff(&crop_to_buffs_region(self.grayscale()))
+        detect_player_sayram_elixir_buff(self.buffs_grayscale())
     }
 
     fn detect_player_aurelia_elixir_buff(&mut self) -> bool {
-        detect_player_aurelia_elixir_buff(&crop_to_buffs_region(self.grayscale()))
+        detect_player_aurelia_elixir_buff(self.buffs_grayscale())
     }
 
     fn detect_player_exp_coupon_x3_buff(&mut self) -> bool {
-        detect_player_exp_coupon_x3_buff(&crop_to_buffs_region(self.grayscale()))
+        detect_player_exp_coupon_x3_buff(self.buffs_grayscale())
     }
 
     fn detect_player_bonus_exp_coupon_buff(&mut self) -> bool {
-        detect_player_bonus_exp_coupon_buff(&crop_to_buffs_region(self.grayscale()))
+        detect_player_bonus_exp_coupon_buff(self.buffs_grayscale())
     }
 
     fn detect_player_legion_wealth_buff(&mut self) -> bool {
@@ -235,6 +259,46 @@ fn detect_cash_shop(mat: &impl ToInputArray) -> bool {
         Some("cash shop"),
     )
     .is_ok()
+}
+
+fn detect_player_health_bar(mat: &Mat) -> Result<Rect> {
+    /// TODO: Support default ratio
+    static HP_START: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("HP_START_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
+    static HP_END: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("HP_END_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
+
+    let hp_start = detect_template(mat, LazyLock::force(&HP_START), Point::default(), 0.9, None)?;
+    let hp_start_to_edge_x = hp_start.x + hp_start.width;
+    let hp_end = detect_template(mat, LazyLock::force(&HP_END), Point::default(), 0.9, None)?;
+    Ok(Rect::new(
+        hp_start_to_edge_x,
+        hp_start.y,
+        hp_end.x - hp_start_to_edge_x,
+        hp_start.height,
+    ))
+}
+
+fn detect_player_health_under_half(mat: &impl ToInputArray) -> bool {
+    /// TODO: Support default ratio
+    static HP_SEPARATOR: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("HP_SEPARATOR_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+
+    detect_template(
+        mat,
+        LazyLock::force(&HP_SEPARATOR),
+        Point::default(),
+        0.99, // guys it is peak
+        None,
+    )
+    .is_err()
 }
 
 fn detect_player_rune_buff(mat: &impl ToInputArray) -> bool {
@@ -392,7 +456,7 @@ fn detect_erda_shower(mat: &Mat) -> Result<Rect> {
     let skill_bar = mat.roi(crop_bbox).unwrap();
     #[cfg(debug_assertions)]
     {
-        debug_mat("Skill bar", &skill_bar, 1, &[], &[]);
+        debug_mat("Skill bar", &skill_bar, 1, &[], &[""; 0]);
     }
     detect_template(
         &skill_bar,
@@ -679,203 +743,8 @@ fn detect_minimap(mat: &Mat, border_threshold: u8) -> Result<Rect> {
 }
 
 fn detect_minimap_name(mat: &Mat, minimap: Rect) -> Result<String> {
-    const TEXT_SCORE_THRESHOLD: f64 = 0.7;
-    const LINK_SCORE_THRESHOLD: f64 = 0.4;
-    static TEXT_RECOGNITION_MODEL: LazyLock<Mutex<TextRecognitionModel>> = LazyLock::new(|| {
-        let model = read_net_from_onnx_buffer(&Vector::from_slice(include_bytes!(env!(
-            "TEXT_RECOGNITION_MODEL"
-        ))))
-        .unwrap();
-        Mutex::new(
-            TextRecognitionModel::new(&model)
-                .and_then(|mut m| {
-                    m.set_input_params(
-                        1.0 / 127.5,
-                        Size::new(100, 32),
-                        Scalar::new(127.5, 127.5, 127.5, 0.0),
-                        false,
-                        false,
-                    )?;
-                    m.set_decode_type("CTC-greedy")?.set_vocabulary(
-                        &include_str!(env!("TEXT_RECOGNITION_ALPHABET"))
-                            .lines()
-                            .collect::<Vector<String>>(),
-                    )
-                })
-                .expect("unable to build text recognition model"),
-        )
-    });
-    static TEXT_DETECTION_MODEL: LazyLock<Session> = LazyLock::new(|| {
-        Session::builder()
-            .and_then(|b| b.commit_from_memory(include_bytes!(env!("TEXT_DETECTION_MODEL"))))
-            .expect("unable to build minimap name detection session")
-    });
-
-    // this function is adapted from
-    // https://github.com/clovaai/CRAFT-pytorch/blob/e332dd8b718e291f51b66ff8f9ef2c98ee4474c8/craft_utils.py#L19
-    // with minor changes
-    fn extract_bboxes(
-        mat: &BoxedRef<Mat>,
-        w_ratio: f32,
-        h_ratio: f32,
-        x_offset: i32,
-        y_offset: i32,
-    ) -> Vec<Rect> {
-        let text_score = mat
-            .ranges(&Vector::from_iter([
-                Range::all().unwrap(),
-                Range::all().unwrap(),
-                Range::new(0, 1).unwrap(),
-            ]))
-            .unwrap()
-            .clone_pointee();
-        // remove last channel (not sure what other way to do it without clone_pointee first)
-        let text_score = text_score
-            .reshape_nd(1, &text_score.mat_size().as_slice()[..2])
-            .unwrap();
-
-        let mut text_low_score = Mat::default();
-        threshold(
-            &text_score,
-            &mut text_low_score,
-            LINK_SCORE_THRESHOLD,
-            1.0,
-            0,
-        )
-        .unwrap();
-
-        let mut link_score = mat
-            .ranges(&Vector::from_iter([
-                Range::all().unwrap(),
-                Range::all().unwrap(),
-                Range::new(1, 2).unwrap(),
-            ]))
-            .unwrap()
-            .clone_pointee();
-        // remove last channel (not sure what other way to do it without clone_pointee first)
-        let mut link_score = link_score
-            .reshape_nd_mut(1, &link_score.mat_size().as_slice()[..2])
-            .unwrap();
-        // SAFETY: can be modified in place
-        unsafe {
-            link_score.modify_inplace(|mat, mat_mut| {
-                threshold(mat, mat_mut, LINK_SCORE_THRESHOLD, 1.0, 0).unwrap();
-            });
-        }
-
-        let mut combined_score = Mat::default();
-        let mut gt_one_mask = Mat::default();
-        add(
-            &text_low_score,
-            &link_score,
-            &mut combined_score,
-            &no_array(),
-            CV_8U,
-        )
-        .unwrap();
-        compare(&combined_score, &Scalar::all(1.0), &mut gt_one_mask, CMP_GT).unwrap();
-        combined_score
-            .set_to(&Scalar::all(1.0), &gt_one_mask)
-            .unwrap();
-
-        let mut bboxes = Vec::<Rect>::new();
-        let mut labels = Mat::default();
-        let mut stats = Mat::default();
-        let labels_count = connected_components_with_stats(
-            &combined_score,
-            &mut labels,
-            &mut stats,
-            &mut Mat::default(),
-            4,
-            CV_32S,
-        )
-        .unwrap();
-        for i in 1..labels_count {
-            let area = *stats.at_2d::<i32>(i, CC_STAT_AREA).unwrap();
-            if area < 210 {
-                // skip too small single character (number)
-                // and later re-detect afterward
-                continue;
-            }
-
-            let mut mask = Mat::default();
-            let mut max_score = 0.0f64;
-            compare(&labels, &Scalar::all(i as f64), &mut mask, CMP_EQ).unwrap();
-            min_max_loc(&text_score, None, Some(&mut max_score), None, None, &mask).unwrap();
-            if max_score < TEXT_SCORE_THRESHOLD {
-                continue;
-            }
-
-            let shape = mask.size().unwrap();
-            // SAFETY: The position (row, col) is guaranteed by OpenCV
-            let x = unsafe { *stats.at_2d_unchecked::<i32>(i, CC_STAT_LEFT).unwrap() };
-            let y = unsafe { *stats.at_2d_unchecked::<i32>(i, CC_STAT_TOP).unwrap() };
-            let w = unsafe { *stats.at_2d_unchecked::<i32>(i, CC_STAT_WIDTH).unwrap() };
-            let h = unsafe { *stats.at_2d_unchecked::<i32>(i, CC_STAT_HEIGHT).unwrap() };
-            let size = area as f64 * w.min(h) as f64 / (w as f64 * h as f64);
-            let size = ((size).sqrt() * 2.0) as i32;
-            let sx = (x - size + 1).max(0);
-            let sy = (y - size + 1).max(0);
-            let ex = (x + w + size + 1).min(shape.width);
-            let ey = (y + h + size + 1).min(shape.height);
-            let kernel_pad = if area < 250 { 6 } else { 4 };
-            let kernel = get_structuring_element_def(
-                MORPH_RECT,
-                Size::new(size + kernel_pad, size + kernel_pad),
-            )
-            .unwrap();
-
-            let mut link_mask = Mat::default();
-            let mut text_mask = Mat::default();
-            let mut and_mask = Mat::default();
-            let mut seg_map = Mat::zeros(shape.height, shape.width, CV_8U)
-                .unwrap()
-                .to_mat()
-                .unwrap();
-            compare(&link_score, &Scalar::all(1.0), &mut link_mask, CMP_EQ).unwrap();
-            compare(&text_score, &Scalar::all(0.0), &mut text_mask, CMP_EQ).unwrap();
-            bitwise_and_def(&link_mask, &text_mask, &mut and_mask).unwrap();
-            seg_map.set_to(&Scalar::all(255.0), &mask).unwrap();
-            seg_map.set_to(&Scalar::all(0.0), &and_mask).unwrap();
-
-            let mut seg_contours = Vector::<Point>::new();
-            let mut seg_roi = seg_map
-                .roi_mut(Rect::from_points(Point::new(sx, sy), Point::new(ex, ey)))
-                .unwrap();
-            // SAFETY: all of the functions below can be called in place.
-            unsafe {
-                seg_roi.modify_inplace(|mat, mat_mut| {
-                    dilate_def(mat, mat_mut, &kernel).unwrap();
-                    mat.copy_to(mat_mut).unwrap();
-                });
-            }
-            find_non_zero(&seg_map, &mut seg_contours).unwrap();
-
-            let contour = min_area_rect(&seg_contours)
-                .unwrap()
-                .bounding_rect2f()
-                .unwrap();
-            let tl = contour.tl();
-            let tl = Point::new(
-                (tl.x * w_ratio * 2.0) as i32 + x_offset,
-                (tl.y * h_ratio * 2.0) as i32 + y_offset,
-            );
-            let br = contour.br();
-            let br = Point::new(
-                (br.x * w_ratio * 2.0) as i32 + x_offset,
-                (br.y * h_ratio * 2.0) as i32 + y_offset,
-            );
-            bboxes.push(Rect::from_points(tl, br));
-        }
-        bboxes
-    }
-
     let (mat_in, w_ratio, h_ratio, x_offset, y_offset) = preprocess_for_minimap_name(mat, minimap);
-    let result = TEXT_DETECTION_MODEL
-        .run([norm_rgb_to_input_value(&mat_in)])
-        .unwrap();
-    let mat_out = from_output_value(&result);
-    let bboxes = extract_bboxes(&mat_out, w_ratio, h_ratio, x_offset, y_offset);
+    let bboxes = extract_text_bboxes(&mat_in, w_ratio, h_ratio, x_offset, y_offset);
     // find the text boxes with y
     // closes to the minimap
     let mut bbox_match_y = None::<i32>;
@@ -933,9 +802,44 @@ fn detect_minimap_name(mat: &Mat, minimap: Rect) -> Result<String> {
         bboxes.push(bbox);
     }
 
-    let recognizier = TEXT_RECOGNITION_MODEL.lock().unwrap();
-    let name = bboxes
+    let name = extract_texts(mat, &bboxes)
         .into_iter()
+        .reduce(|a, b| a + &b);
+    debug!(target: "minimap", "name detection result {name:?}");
+    name.ok_or(anyhow!("minimap name not found"))
+}
+
+/// Extracts texts from the non-preprocessed `Mat` and detected text bounding boxes.
+fn extract_texts(mat: &impl MatTraitConst, bboxes: &[Rect]) -> Vec<String> {
+    static TEXT_RECOGNITION_MODEL: LazyLock<Mutex<TextRecognitionModel>> = LazyLock::new(|| {
+        let model = read_net_from_onnx_buffer(&Vector::from_slice(include_bytes!(env!(
+            "TEXT_RECOGNITION_MODEL"
+        ))))
+        .unwrap();
+        Mutex::new(
+            TextRecognitionModel::new(&model)
+                .and_then(|mut m| {
+                    m.set_input_params(
+                        1.0 / 127.5,
+                        Size::new(100, 32),
+                        Scalar::new(127.5, 127.5, 127.5, 0.0),
+                        false,
+                        false,
+                    )?;
+                    m.set_decode_type("CTC-greedy")?.set_vocabulary(
+                        &include_str!(env!("TEXT_RECOGNITION_ALPHABET"))
+                            .lines()
+                            .collect::<Vector<String>>(),
+                    )
+                })
+                .expect("unable to build text recognition model"),
+        )
+    });
+
+    let recognizier = TEXT_RECOGNITION_MODEL.lock().unwrap();
+    bboxes
+        .iter()
+        .copied()
         .filter_map(|word| {
             let mut mat = mat.roi(word).unwrap().clone_pointee();
             unsafe {
@@ -945,9 +849,180 @@ fn detect_minimap_name(mat: &Mat, minimap: Rect) -> Result<String> {
             }
             recognizier.recognize(&mat).ok()
         })
-        .reduce(|a, b| a + &b);
-    debug!(target: "minimap", "name detection result {name:?}");
-    name.ok_or(anyhow!("minimap name not found"))
+        .collect()
+}
+
+/// Extracts text bounding boxes from the preprocessed `Mat`.
+///
+/// This function is adapted from
+/// https://github.com/clovaai/CRAFT-pytorch/blob/e332dd8b718e291f51b66ff8f9ef2c98ee4474c8/craft_utils.py#L19
+/// with minor changes
+fn extract_text_bboxes(
+    mat_in: &Mat,
+    w_ratio: f32,
+    h_ratio: f32,
+    x_offset: i32,
+    y_offset: i32,
+) -> Vec<Rect> {
+    const TEXT_SCORE_THRESHOLD: f64 = 0.7;
+    const LINK_SCORE_THRESHOLD: f64 = 0.4;
+    static TEXT_DETECTION_MODEL: LazyLock<Session> = LazyLock::new(|| {
+        Session::builder()
+            .and_then(|b| b.commit_from_memory(include_bytes!(env!("TEXT_DETECTION_MODEL"))))
+            .expect("unable to build minimap name detection session")
+    });
+
+    let result = TEXT_DETECTION_MODEL
+        .run([norm_rgb_to_input_value(mat_in)])
+        .unwrap();
+    let mat = from_output_value(&result);
+    let text_score = mat
+        .ranges(&Vector::from_iter([
+            Range::all().unwrap(),
+            Range::all().unwrap(),
+            Range::new(0, 1).unwrap(),
+        ]))
+        .unwrap()
+        .clone_pointee();
+    // remove last channel (not sure what other way to do it without clone_pointee first)
+    let text_score = text_score
+        .reshape_nd(1, &text_score.mat_size().as_slice()[..2])
+        .unwrap();
+
+    let mut text_low_score = Mat::default();
+    threshold(
+        &text_score,
+        &mut text_low_score,
+        LINK_SCORE_THRESHOLD,
+        1.0,
+        0,
+    )
+    .unwrap();
+
+    let mut link_score = mat
+        .ranges(&Vector::from_iter([
+            Range::all().unwrap(),
+            Range::all().unwrap(),
+            Range::new(1, 2).unwrap(),
+        ]))
+        .unwrap()
+        .clone_pointee();
+    // remove last channel (not sure what other way to do it without clone_pointee first)
+    let mut link_score = link_score
+        .reshape_nd_mut(1, &link_score.mat_size().as_slice()[..2])
+        .unwrap();
+    // SAFETY: can be modified in place
+    unsafe {
+        link_score.modify_inplace(|mat, mat_mut| {
+            threshold(mat, mat_mut, LINK_SCORE_THRESHOLD, 1.0, 0).unwrap();
+        });
+    }
+
+    let mut combined_score = Mat::default();
+    let mut gt_one_mask = Mat::default();
+    add(
+        &text_low_score,
+        &link_score,
+        &mut combined_score,
+        &no_array(),
+        CV_8U,
+    )
+    .unwrap();
+    compare(&combined_score, &Scalar::all(1.0), &mut gt_one_mask, CMP_GT).unwrap();
+    combined_score
+        .set_to(&Scalar::all(1.0), &gt_one_mask)
+        .unwrap();
+
+    let mut bboxes = Vec::<Rect>::new();
+    let mut labels = Mat::default();
+    let mut stats = Mat::default();
+    let labels_count = connected_components_with_stats(
+        &combined_score,
+        &mut labels,
+        &mut stats,
+        &mut Mat::default(),
+        4,
+        CV_32S,
+    )
+    .unwrap();
+    for i in 1..labels_count {
+        let area = *stats.at_2d::<i32>(i, CC_STAT_AREA).unwrap();
+        if area < 210 {
+            // skip too small single character (number)
+            // and later re-detect afterward
+            continue;
+        }
+
+        let mut mask = Mat::default();
+        let mut max_score = 0.0f64;
+        compare(&labels, &Scalar::all(i as f64), &mut mask, CMP_EQ).unwrap();
+        min_max_loc(&text_score, None, Some(&mut max_score), None, None, &mask).unwrap();
+        if max_score < TEXT_SCORE_THRESHOLD {
+            continue;
+        }
+
+        let shape = mask.size().unwrap();
+        // SAFETY: The position (row, col) is guaranteed by OpenCV
+        let x = unsafe { *stats.at_2d_unchecked::<i32>(i, CC_STAT_LEFT).unwrap() };
+        let y = unsafe { *stats.at_2d_unchecked::<i32>(i, CC_STAT_TOP).unwrap() };
+        let w = unsafe { *stats.at_2d_unchecked::<i32>(i, CC_STAT_WIDTH).unwrap() };
+        let h = unsafe { *stats.at_2d_unchecked::<i32>(i, CC_STAT_HEIGHT).unwrap() };
+        let size = area as f64 * w.min(h) as f64 / (w as f64 * h as f64);
+        let size = ((size).sqrt() * 2.0) as i32;
+        let sx = (x - size + 1).max(0);
+        let sy = (y - size + 1).max(0);
+        let ex = (x + w + size + 1).min(shape.width);
+        let ey = (y + h + size + 1).min(shape.height);
+        let kernel_pad = if area < 250 { 6 } else { 4 };
+        let kernel = get_structuring_element_def(
+            MORPH_RECT,
+            Size::new(size + kernel_pad, size + kernel_pad),
+        )
+        .unwrap();
+
+        let mut link_mask = Mat::default();
+        let mut text_mask = Mat::default();
+        let mut and_mask = Mat::default();
+        let mut seg_map = Mat::zeros(shape.height, shape.width, CV_8U)
+            .unwrap()
+            .to_mat()
+            .unwrap();
+        compare(&link_score, &Scalar::all(1.0), &mut link_mask, CMP_EQ).unwrap();
+        compare(&text_score, &Scalar::all(0.0), &mut text_mask, CMP_EQ).unwrap();
+        bitwise_and_def(&link_mask, &text_mask, &mut and_mask).unwrap();
+        seg_map.set_to(&Scalar::all(255.0), &mask).unwrap();
+        seg_map.set_to(&Scalar::all(0.0), &and_mask).unwrap();
+
+        let mut seg_contours = Vector::<Point>::new();
+        let mut seg_roi = seg_map
+            .roi_mut(Rect::from_points(Point::new(sx, sy), Point::new(ex, ey)))
+            .unwrap();
+        // SAFETY: all of the functions below can be called in place.
+        unsafe {
+            seg_roi.modify_inplace(|mat, mat_mut| {
+                dilate_def(mat, mat_mut, &kernel).unwrap();
+                mat.copy_to(mat_mut).unwrap();
+            });
+        }
+        find_non_zero(&seg_map, &mut seg_contours).unwrap();
+
+        let contour = min_area_rect(&seg_contours)
+            .unwrap()
+            .bounding_rect2f()
+            .unwrap();
+        let tl = contour.tl();
+        let tl = Point::new(
+            (tl.x * w_ratio * 2.0) as i32 + x_offset,
+            (tl.y * h_ratio * 2.0) as i32 + y_offset,
+        );
+        let br = contour.br();
+        let br = Point::new(
+            (br.x * w_ratio * 2.0) as i32 + x_offset,
+            (br.y * h_ratio * 2.0) as i32 + y_offset,
+        );
+        bboxes.push(Rect::from_points(tl, br));
+    }
+    bboxes
 }
 
 /// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32` for YOLO detection.
@@ -971,8 +1046,6 @@ fn preprocess_for_yolo(mat: &Mat) -> (Mat, f32, f32) {
 
 /// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32` for minimap name detection.
 ///
-/// The preprocess is adapted from: https://github.com/clovaai/CRAFT-pytorch/blob/master/imgproc.py.
-///
 /// Returns a `(Mat, width_ratio, height_ratio, x_offset, y_offset)`.
 #[inline]
 fn preprocess_for_minimap_name(mat: &Mat, minimap: Rect) -> (Mat, f32, f32, i32, i32) {
@@ -982,7 +1055,18 @@ fn preprocess_for_minimap_name(mat: &Mat, minimap: Rect) -> (Mat, f32, f32, i32,
         Point::new(x_offset, y_offset),
         Point::new(minimap.x + minimap.width, minimap.y),
     );
-    let mut mat = mat.roi(bbox).unwrap().clone_pointee();
+    let (mat, w_ratio, h_ratio) = preprocess_for_text_bboxes(&mat.roi(bbox).unwrap());
+    (mat, w_ratio, h_ratio, x_offset, y_offset)
+}
+
+/// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32` for text bounding boxes detection.
+///
+/// The preprocess is adapted from: https://github.com/clovaai/CRAFT-pytorch/blob/master/imgproc.py.
+///
+/// Returns a `(Mat, width_ratio, height_ratio)`.
+#[inline]
+fn preprocess_for_text_bboxes(mat: &BoxedRef<Mat>) -> (Mat, f32, f32) {
+    let mut mat = mat.clone_pointee();
     let size = mat.size().unwrap();
     let size_w = size.width as f32;
     let size_h = size.height as f32;
@@ -1016,7 +1100,7 @@ fn preprocess_for_minimap_name(mat: &Mat, minimap: Rect) -> (Mat, f32, f32, i32,
             divide2_def(&mat, &Scalar::new(58.395, 57.12, 57.375, 1.0), mat_mut).unwrap();
         });
     }
-    (mat, resize_w_ratio, resize_h_ratio, x_offset, y_offset)
+    (mat, resize_w_ratio, resize_h_ratio)
 }
 
 /// Retrieves `(width, height)` ratios for resizing.

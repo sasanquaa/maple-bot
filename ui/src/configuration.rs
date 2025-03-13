@@ -34,19 +34,7 @@ pub fn Configuration(
 ) -> Element {
     let config_names =
         use_memo(move || configs().iter().map(|config| config.name.clone()).collect());
-    let config_view = use_memo(move || {
-        config().unwrap_or(ConfigurationData {
-            feed_pet_key: KeyBindingConfiguration {
-                millis: 120000,
-                ..KeyBindingConfiguration::default()
-            },
-            potion_key: KeyBindingConfiguration {
-                millis: 120000,
-                ..KeyBindingConfiguration::default()
-            },
-            ..ConfigurationData::default()
-        })
-    });
+    let config_view = use_memo(move || config().unwrap_or_default());
     let mut active = use_signal(|| None);
     let on_config = use_callback(move |new_config: ConfigurationData| {
         if config.peek().is_some() {

@@ -31,13 +31,19 @@ static DATASET_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 });
 
 #[allow(unused)]
-pub fn debug_mat(name: &str, mat: &impl MatTraitConst, wait: i32, bboxes: &[Rect], text: &[&str]) {
+pub fn debug_mat<T: AsRef<str>>(
+    name: &str,
+    mat: &impl MatTraitConst,
+    wait: i32,
+    bboxes: &[Rect],
+    text: &[T],
+) {
     let mut mat = mat.try_clone().unwrap();
-    for (bbox, &text) in bboxes.iter().zip(text) {
+    for (bbox, text) in bboxes.iter().zip(text) {
         let _ = rectangle_def(&mut mat, *bbox, Scalar::new(255.0, 0.0, 0.0, 0.0));
         let _ = put_text_def(
             &mut mat,
-            text,
+            text.as_ref(),
             bbox.tl() - Point::new(0, 10),
             FONT_HERSHEY_SIMPLEX,
             0.9,
@@ -54,7 +60,7 @@ pub fn save_image_for_training(mat: &Mat) {
     let mat = to_grayscale(mat);
     let image = LazyLock::force(&DATASET_DIR).join(format!("{name}.png"));
 
-    debug_mat("Image", &mat, 0, &[], &[]);
+    debug_mat("Image", &mat, 0, &[], &[""; 0]);
 
     imwrite_def(image.to_str().unwrap(), &mat).unwrap();
 }
@@ -136,7 +142,7 @@ fn save_minimap_for_training(mat: &Mat, minimap: &Rect) {
     let label = dataset.join(format!("{name}.txt"));
     let image = dataset.join(format!("{name}.png"));
 
-    debug_mat("Training", &mat.roi(*minimap).unwrap(), 0, &[], &[]);
+    debug_mat("Training", &mat.roi(*minimap).unwrap(), 0, &[], &[""; 0]);
 
     imwrite_def(image.to_str().unwrap(), mat).unwrap();
     fs::write(label, to_yolo_format(0, mat.size().unwrap(), minimap)).unwrap();

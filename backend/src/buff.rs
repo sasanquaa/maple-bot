@@ -68,10 +68,22 @@ impl Contextual for Buff {
 }
 
 #[inline]
+fn detect_offset_ticks_for(kind: BuffKind) -> u32 {
+    match kind {
+        BuffKind::Rune => 0,
+        BuffKind::SayramElixir | BuffKind::AureliaElixir => 1,
+        BuffKind::ExpCouponX3 | BuffKind::BonusExpCoupon => 2,
+        BuffKind::LegionWealth => 3,
+        BuffKind::LegionLuck => 4,
+    }
+}
+
+#[inline]
 fn update_context(contextual: Buff, detector: &mut impl Detector, state: &mut BuffState) -> Buff {
+    let offset_ticks = detect_offset_ticks_for(state.kind);
     let (has_buff, timeout) = update_with_timeout(
         state.timeout,
-        BUFF_CHECK_EVERY_TICKS,
+        BUFF_CHECK_EVERY_TICKS + offset_ticks,
         (),
         |_, timeout| {
             (
@@ -91,15 +103,15 @@ fn update_context(contextual: Buff, detector: &mut impl Detector, state: &mut Bu
         |_, timeout| (None, timeout),
     );
     state.timeout = timeout;
-    state.fail_count = has_buff
-        .map(|has_buff| {
-            if matches!(contextual, Buff::HasBuff) && !has_buff {
-                state.fail_count + 1
-            } else {
-                0
-            }
-        })
-        .unwrap_or(state.fail_count);
+    state.fail_count = if let Some(has_buff) = has_buff {
+        if matches!(contextual, Buff::HasBuff) && !has_buff {
+            state.fail_count + 1
+        } else {
+            0
+        }
+    } else {
+        state.fail_count
+    };
     if has_buff.is_some() {
         debug!(target: "buff", "{contextual:?} {state:?}");
     }
@@ -195,12 +207,13 @@ mod tests {
     #[test]
     fn buff_has_buff_to_no_buff() {
         for kind in BuffKind::iter() {
+            let offset_ticks = detect_offset_ticks_for(kind);
             let mut detector = detector_with_kind(kind, false);
             let mut state = BuffState::new(kind);
-            state.fail_count = BUFF_FAIL_MAX_COUNT - 1;
+            state.fail_count = BUFF_FAIL_MAX_COUNT + offset_ticks - 1;
 
             let buff = update_context(Buff::HasBuff, &mut detector, &mut state);
-            assert_eq!(state.fail_count, BUFF_FAIL_MAX_COUNT);
+            assert_eq!(state.fail_count, BUFF_FAIL_MAX_COUNT + offset_ticks);
             assert_eq!(state.timeout, Timeout {
                 started: true,
                 ..Timeout::default()
@@ -220,7 +233,8 @@ mod tests {
             }; // skip initial check
 
             let mut buff = Buff::NoBuff;
-            for _ in 0..BUFF_CHECK_EVERY_TICKS {
+            let offset_ticks = detect_offset_ticks_for(kind);
+            for _ in 0..BUFF_CHECK_EVERY_TICKS + offset_ticks {
                 buff = update_context(buff, &mut detector, &mut state);
                 assert!(matches!(buff, Buff::NoBuff));
             }

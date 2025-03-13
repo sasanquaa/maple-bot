@@ -15,6 +15,9 @@ fn main() {
     let legion_wealth_buff = dir.join("legion_wealth_buff_ideal_ratio.png");
     let legion_luck_buff = dir.join("legion_luck_buff_ideal_ratio.png");
     let cash_shop = dir.join("cash_shop.png");
+    let hp_start = dir.join("hp_start_ideal_ratio.png");
+    let hp_separator = dir.join("hp_separator_ideal_ratio.png");
+    let hp_end = dir.join("hp_end_ideal_ratio.png");
 
     let rune_model = dir.join("rune.onnx");
     let minimap_model = dir.join("minimap_nms.onnx");
@@ -70,6 +73,18 @@ fn main() {
     println!(
         "cargo:rustc-env=CASH_SHOP_TEMPLATE={}",
         cash_shop.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=HP_START_TEMPLATE={}",
+        hp_start.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=HP_SEPARATOR_TEMPLATE={}",
+        hp_separator.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=HP_END_TEMPLATE={}",
+        hp_end.to_str().unwrap()
     );
 
     println!(
