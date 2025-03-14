@@ -1,20 +1,19 @@
 use std::ops::Range;
 
-use log::{debug, info};
+use anyhow::Result;
+use log::debug;
 use opencv::core::{Point, Rect};
 use platforms::windows::KeyKind;
 use strum::Display;
 
 use crate::{
     Position,
-    buff::{BUFF_CHECK_EVERY_TICKS, Buff},
-    context::{
-        Context, Contextual, ControlFlow, MS_PER_TICK, RUNE_BUFF_POSITION, Timeout,
-        update_with_timeout,
-    },
+    buff::Buff,
+    context::{Context, Contextual, ControlFlow, MS_PER_TICK, RUNE_BUFF_POSITION},
     database::{Action, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, KeyBinding},
     detect::Detector,
     minimap::Minimap,
+    task::{Task, Update, update_task_repeatable},
 };
 
 /// Maximum number of times adjusting or double jump states can be transitioned to without changing position
@@ -52,9 +51,15 @@ pub struct PlayerState {
     /// The cash shop key
     pub cash_shop_key: KeyKind,
     pub potion_key: KeyKind,
-    /// The player health bar
+    /// The player current health and max health
+    pub health: Option<(u32, u32)>,
+    pub use_potion_below_percent: Option<f32>,
+    pub update_health_millis: Option<u64>,
+    /// The task to update health
+    health_task: Option<Task<Result<(u32, u32)>>>,
     health_bar: Option<Rect>,
-    health_under_half: bool,
+    /// The task for the health bar
+    health_bar_task: Option<Task<Result<Rect>>>,
     /// Tracks if the player moved within a specified ticks to determine if the player is stationary
     is_stationary_timeout: Timeout,
     /// Whether the player is stationary
@@ -76,6 +81,8 @@ pub struct PlayerState {
     /// Tracks whether movement-related actions do not change the player position after a while.
     /// Resets when a limit is reached (for unstucking), in `Player::Idle` or position did change.
     unstuck_counter: u32,
+    /// Rune solving task
+    keys_task: Option<Task<Result<[KeyKind; 4]>>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -354,7 +361,7 @@ impl Contextual for Player {
     fn update(
         self,
         context: &Context,
-        detector: &mut impl Detector,
+        detector: &impl Detector,
         state: &mut PlayerState,
     ) -> ControlFlow<Self> {
         let cur_pos = if state.ignore_pos_update {
@@ -411,7 +418,7 @@ impl Contextual for Player {
 fn update_non_positional_context(
     contextual: Player,
     context: &Context,
-    detector: &mut impl Detector,
+    detector: &impl Detector,
     state: &mut PlayerState,
 ) -> Option<Player> {
     match contextual {
@@ -424,14 +431,7 @@ fn update_non_positional_context(
         )),
         Player::Stalling(timeout, max_timeout) => {
             let update = |timeout| Player::Stalling(timeout, max_timeout);
-            let next = update_with_timeout(
-                timeout,
-                max_timeout,
-                (),
-                |_, timeout| update(timeout),
-                |_| Player::Idle,
-                |_, timeout| update(timeout),
-            );
+            let next = update_with_timeout(timeout, max_timeout, update, || Player::Idle, update);
             Some(on_action(
                 state,
                 |_| Some((next, matches!(next, Player::Idle))),
@@ -458,10 +458,9 @@ fn update_non_positional_context(
                     update_with_timeout(
                         timeout,
                         305, // exits after 10 secs
-                        (),
-                        |_, timeout| Player::CashShopThenExit(timeout, in_cash_shop, exitting),
-                        |_| Player::CashShopThenExit(timeout, in_cash_shop, true),
-                        |_, timeout| Player::CashShopThenExit(timeout, in_cash_shop, exitting),
+                        |timeout| Player::CashShopThenExit(timeout, in_cash_shop, exitting),
+                        || Player::CashShopThenExit(timeout, in_cash_shop, true),
+                        |timeout| Player::CashShopThenExit(timeout, in_cash_shop, exitting),
                     )
                 }
                 (true, true) => {
@@ -655,10 +654,9 @@ fn update_use_key_context(
     let next = update_with_timeout(
         use_key.timeout,
         USE_KEY_TIMEOUT + use_key.wait_before_use_ticks,
-        (),
-        |_, timeout| update(timeout),
-        |_| Player::Idle,
-        |_, timeout| {
+        update,
+        || Player::Idle,
+        |timeout| {
             if !update_direction(context, state, timeout, use_key.direction) {
                 return update(timeout);
             }
@@ -1225,8 +1223,7 @@ fn update_unstucking_context(
     update_with_timeout(
         timeout,
         PLAYER_MOVE_TIMEOUT,
-        (),
-        |_, timeout| {
+        |timeout| {
             if y <= Y_IGNORE_THRESHOLD {
                 return Player::Unstucking(timeout);
             }
@@ -1238,12 +1235,12 @@ fn update_unstucking_context(
             let _ = context.keys.send(KeyKind::Esc);
             Player::Unstucking(timeout)
         },
-        |_| {
+        || {
             let _ = context.keys.send_up(KeyKind::Right);
             let _ = context.keys.send_up(KeyKind::Left);
             Player::Detecting
         },
-        |_, timeout| {
+        |timeout| {
             if y > Y_IGNORE_THRESHOLD {
                 let _ = context.keys.send(KeyKind::Space);
             }
@@ -1254,18 +1251,20 @@ fn update_unstucking_context(
 
 fn update_solving_rune_context(
     context: &Context,
-    detector: &mut impl Detector,
+    detector: &impl Detector,
     state: &mut PlayerState,
     solving_rune: PlayerSolvingRune,
 ) -> Player {
-    const RUNE_COOLDOWN_TIMEOUT: u32 = BUFF_CHECK_EVERY_TICKS + 60; // around 9 secs
+    const RUNE_COOLDOWN_TIMEOUT: u32 = 370; // around 11 secs
     const SOLVE_RUNE_TIMEOUT: u32 = RUNE_COOLDOWN_TIMEOUT;
-    const DETECT_RUNE_ARROWS_INTERVAL: u32 = 30;
     const PRESS_KEY_INTERVAL: u32 = 10;
     const MAX_FAILED_COUNT: usize = 2;
 
     if solving_rune.failed_count >= MAX_FAILED_COUNT {
         return Player::CashShopThenExit(Timeout::default(), false, false);
+    }
+    if !solving_rune.validating && !solving_rune.solve_timeout.started {
+        state.keys_task = None;
     }
     let next = if solving_rune.validating {
         debug_assert!(
@@ -1276,14 +1275,13 @@ fn update_solving_rune_context(
         update_with_timeout(
             solving_rune.validate_timeout,
             RUNE_COOLDOWN_TIMEOUT,
-            (),
-            |_, timeout| {
+            |timeout| {
                 Player::SolvingRune(PlayerSolvingRune {
                     validate_timeout: timeout,
                     ..solving_rune
                 })
             },
-            |_| {
+            || {
                 if matches!(context.buffs[RUNE_BUFF_POSITION], Buff::HasBuff) {
                     Player::Idle
                 } else {
@@ -1293,7 +1291,7 @@ fn update_solving_rune_context(
                     })
                 }
             },
-            |_, timeout| {
+            |timeout| {
                 Player::SolvingRune(PlayerSolvingRune {
                     validate_timeout: timeout,
                     ..solving_rune
@@ -1301,45 +1299,53 @@ fn update_solving_rune_context(
             },
         )
     } else {
+        let detector = detector.clone();
+        let state: &mut PlayerState = state;
         update_with_timeout(
             solving_rune.solve_timeout,
             SOLVE_RUNE_TIMEOUT,
-            (),
-            |_, timeout| {
+            |timeout| {
                 let _ = context.keys.send(state.interact_key);
                 Player::SolvingRune(PlayerSolvingRune {
                     solve_timeout: timeout,
                     ..solving_rune
                 })
             },
-            |_| {
+            || {
                 // likely a spinning rune if the bot can't detect and timeout
                 Player::SolvingRune(PlayerSolvingRune {
                     failed_count: solving_rune.failed_count + 1,
                     ..PlayerSolvingRune::default()
                 })
             },
-            |_, timeout| {
+            |timeout| {
                 if solving_rune.keys.is_none() {
-                    let keys = if timeout.current % DETECT_RUNE_ARROWS_INTERVAL == 0 {
-                        detector.detect_rune_arrows().ok()
-                    } else {
-                        None
+                    let Update::Complete(keys) =
+                        update_task_repeatable(1000, &mut state.keys_task, move || {
+                            detector.detect_rune_arrows()
+                        })
+                    else {
+                        return Player::SolvingRune(PlayerSolvingRune {
+                            solve_timeout: timeout,
+                            ..solving_rune
+                        });
                     };
-                    let timeout = if keys.is_some() {
-                        // reset current timeout for pressing keys
-                        Timeout {
-                            current: 1, // starts at 1 instead of 0 to avoid immediate key press
-                            started: true,
-                        }
+                    return if let Ok(keys) = keys {
+                        return Player::SolvingRune(PlayerSolvingRune {
+                            // reset current timeout for pressing keys
+                            solve_timeout: Timeout {
+                                current: 1, // starts at 1 instead of 0 to avoid immediate key press
+                                started: true,
+                            },
+                            keys: Some(keys),
+                            ..solving_rune
+                        });
                     } else {
-                        timeout
+                        Player::SolvingRune(PlayerSolvingRune {
+                            solve_timeout: timeout,
+                            ..solving_rune
+                        })
                     };
-                    return Player::SolvingRune(PlayerSolvingRune {
-                        solve_timeout: timeout,
-                        keys,
-                        ..solving_rune
-                    });
                 }
                 if timeout.current % PRESS_KEY_INTERVAL != 0 {
                     return Player::SolvingRune(PlayerSolvingRune {
@@ -1414,6 +1420,49 @@ fn y_distance_direction(dest: &Point, cur_pos: &Point) -> (i32, i32) {
     (distance, direction)
 }
 
+/// A struct that stores the current tick before timing out.
+///
+/// Most contextual state can be timed out as there is no guaranteed
+/// an action will be performed or state can be transitioned. So timeout is used to retry
+/// such action/state and to avoid looping in a single state forever. Or
+/// for some contextual states to perform an action only after timing out.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Timeout {
+    current: u32,
+    started: bool,
+}
+
+#[inline]
+fn update_with_timeout<T>(
+    timeout: Timeout,
+    max_timeout: u32,
+    on_started: impl FnOnce(Timeout) -> T,
+    on_timeout: impl FnOnce() -> T,
+    on_update: impl FnOnce(Timeout) -> T,
+) -> T {
+    debug_assert!(max_timeout > 0, "max_timeout must be positive");
+    debug_assert!(
+        timeout.started || timeout == Timeout::default(),
+        "started timeout in non-default state"
+    );
+    debug_assert!(
+        timeout.current <= max_timeout,
+        "current timeout tick larger than max_timeout"
+    );
+
+    match timeout {
+        Timeout { started: false, .. } => on_started(Timeout {
+            started: true,
+            ..timeout
+        }),
+        Timeout { current, .. } if current >= max_timeout => on_timeout(),
+        timeout => on_update(Timeout {
+            current: timeout.current + 1,
+            ..timeout
+        }),
+    }
+}
+
 #[inline]
 fn update_moving_axis_timeout(
     prev_pos: Point,
@@ -1448,31 +1497,77 @@ fn update_moving_axis_context(
     update_with_timeout(
         update_moving_axis_timeout(moving.pos, cur_pos, moving.timeout, max_timeout, axis),
         max_timeout,
-        (),
-        |_, timeout| on_started(moving.pos(cur_pos).timeout(timeout)),
-        |_| {
+        |timeout| on_started(moving.pos(cur_pos).timeout(timeout)),
+        || {
             if let Some(callback) = on_timeout {
                 callback();
             }
             Player::Moving(moving.dest, moving.exact)
         },
-        |_, timeout| on_update(moving.pos(cur_pos).timeout(timeout)),
+        |timeout| on_update(moving.pos(cur_pos).timeout(timeout)),
     )
+}
+
+#[inline]
+fn reset_health(state: &mut PlayerState) {
+    state.health = None;
+    state.health_task = None;
+    state.health_bar = None;
+    state.health_bar_task = None;
+}
+
+#[inline]
+fn update_health_state(context: &Context, detector: &impl Detector, state: &mut PlayerState) {
+    if state.use_potion_below_percent.is_none() {
+        reset_health(state);
+        return;
+    }
+    let percentage = state.use_potion_below_percent.unwrap();
+    let detector = detector.clone();
+    let Some(health_bar) = state.health_bar else {
+        let update = update_task_repeatable(1000, &mut state.health_bar_task, move || {
+            detector.detect_player_health_bar()
+        });
+        if let Update::Complete(Ok(health_bar)) = update {
+            state.health_bar = Some(health_bar);
+        }
+        return;
+    };
+    let Update::Complete(health) = update_task_repeatable(
+        state.update_health_millis.unwrap_or(1000),
+        &mut state.health_task,
+        move || {
+            let (current_bar, max_bar) =
+                detector.detect_player_current_max_health_bars(health_bar)?;
+            let health = detector.detect_player_health(current_bar, max_bar)?;
+            debug!(target: "player", "health updated {:?}", health);
+            Ok(health)
+        },
+    ) else {
+        return;
+    };
+    state.health = health.ok();
+    if let Some((current, max)) = state.health {
+        let ratio = current as f32 / max as f32;
+        if ratio <= percentage {
+            let _ = context.keys.send(state.potion_key);
+        }
+    }
 }
 
 #[inline]
 fn update_state(
     context: &Context,
-    detector: &mut impl Detector,
+    detector: &impl Detector,
     state: &mut PlayerState,
 ) -> Option<Point> {
     let Minimap::Idle(idle) = &context.minimap else {
+        reset_health(state);
         return None;
     };
     let minimap_bbox = idle.bbox;
     let Ok(bbox) = detector.detect_player(minimap_bbox) else {
-        state.health_bar = None;
-        state.health_under_half = false;
+        reset_health(state);
         return None;
     };
     let tl = bbox.tl() - minimap_bbox.tl();
@@ -1486,19 +1581,6 @@ fn update_state(
     {
         debug!(target: "player", "position updated in minimap: {:?} in {:?}", pos, minimap_bbox);
     }
-    if state.health_bar.is_none() {
-        state.health_bar = detector.detect_player_health_bar().ok();
-    }
-    if let Some(health_bar) = state.health_bar {
-        let health_under_half = detector.detect_player_health_under_half(health_bar);
-        if health_under_half && !state.health_under_half {
-            info!(target: "player", "below 50% health detected, healing...");
-        }
-        state.health_under_half = health_under_half;
-        if health_under_half {
-            let _ = context.keys.send(state.potion_key);
-        }
-    }
     if last_known_pos != pos {
         state.unstuck_counter = 0;
         state.is_stationary_timeout = Timeout::default();
@@ -1506,13 +1588,13 @@ fn update_state(
     let (is_stationary, is_stationary_timeout) = update_with_timeout(
         state.is_stationary_timeout,
         PLAYER_MOVE_TIMEOUT,
-        (),
-        |_, timeout| (false, timeout),
-        |_| (true, state.is_stationary_timeout),
-        |_, timeout| (false, timeout),
+        |timeout| (false, timeout),
+        || (true, state.is_stationary_timeout),
+        |timeout| (false, timeout),
     );
     state.is_stationary = is_stationary;
     state.is_stationary_timeout = is_stationary_timeout;
     state.last_known_pos = Some(pos);
+    update_health_state(context, detector, state);
     Some(pos)
 }

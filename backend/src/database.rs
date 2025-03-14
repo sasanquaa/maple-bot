@@ -51,7 +51,10 @@ pub struct Configuration {
     pub interact_key: KeyBindingConfiguration,
     pub cash_shop_key: KeyBindingConfiguration,
     pub feed_pet_key: KeyBindingConfiguration,
+    pub feed_pet_millis: u64,
     pub potion_key: KeyBindingConfiguration,
+    pub potion_mode: PotionMode,
+    pub health_update_millis: u64,
     pub rotation_mode: RotationMode,
     pub sayram_elixir_key: KeyBindingConfiguration,
     pub aurelia_elixir_key: KeyBindingConfiguration,
@@ -61,13 +64,22 @@ pub struct Configuration {
     pub legion_luck_key: KeyBindingConfiguration,
 }
 
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, EnumIter, Display, EnumString)]
+pub enum PotionMode {
+    EveryMillis(u64),
+    Percentage(f32),
+}
+
+impl Default for PotionMode {
+    fn default() -> Self {
+        Self::EveryMillis(0)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 pub struct KeyBindingConfiguration {
     pub key: KeyBinding,
     pub enabled: bool,
-    /// Only for feed pet and potion
-    #[serde(default)]
-    pub millis: u64,
 }
 
 impl Default for KeyBindingConfiguration {
@@ -75,7 +87,6 @@ impl Default for KeyBindingConfiguration {
         Self {
             key: KeyBinding::default(),
             enabled: true,
-            millis: 0,
         }
     }
 }
@@ -339,14 +350,6 @@ pub fn query_configs() -> Result<Vec<Configuration>> {
         if vec.is_empty() {
             let mut config = Configuration {
                 name: "default".to_string(),
-                feed_pet_key: KeyBindingConfiguration {
-                    millis: 120000,
-                    ..KeyBindingConfiguration::default()
-                },
-                potion_key: KeyBindingConfiguration {
-                    millis: 120000,
-                    ..KeyBindingConfiguration::default()
-                },
                 ..Configuration::default()
             };
             upsert_config(&mut config).unwrap();

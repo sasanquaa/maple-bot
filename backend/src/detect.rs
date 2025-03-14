@@ -3,13 +3,15 @@ use std::{
     collections::HashMap,
     env,
     sync::{
-        LazyLock, Mutex,
+        Arc, LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use log::{debug, info};
+#[cfg(test)]
+use mockall::mock;
 use opencv::{
     boxed_ref::BoxedRef,
     core::{
@@ -41,131 +43,158 @@ use platforms::windows::KeyKind;
 
 #[cfg(debug_assertions)]
 use crate::debug::debug_mat;
-#[cfg(test)]
-use mockall::automock;
+use crate::mat::OwnedMat;
 
-#[cfg_attr(test, automock)]
-pub trait Detector {
+pub trait Detector: 'static + Send + Sync + Clone {
     fn mat(&self) -> &Mat;
 
     /// Detects whether there is a elite boss bar.
-    fn detect_elite_boss_bar(&mut self) -> bool;
+    fn detect_elite_boss_bar(&self) -> bool;
 
     /// Detects the minimap.
     ///
     /// `confidence_threshold` determines the threshold for the detection to consider a match.
     /// And the `border_threshold` determines the "whiteness" of the minimap's white border.
-    fn detect_minimap(&mut self, border_threshold: u8) -> Result<Rect>;
+    fn detect_minimap(&self, border_threshold: u8) -> Result<Rect>;
 
     /// Detects the minimap name from the given `minimap` rectangle.
     ///
     /// `minimap` provides the previously detected minimap region so it can be cropped into.
     /// `score_threshold` determines the threshold for selecting text from the minimap region.
-    fn detect_minimap_name(&mut self, minimap: Rect) -> Result<String>;
+    fn detect_minimap_name(&self, minimap: Rect) -> Result<String>;
 
     /// Detects the rune from the given `minimap` rectangle.
-    fn detect_minimap_rune(&mut self, minimap: Rect) -> Result<Rect>;
+    fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect>;
 
     /// Detects whether the player in the provided `minimap` rectangle.
-    fn detect_player(&mut self, minimap: Rect) -> Result<Rect>;
+    fn detect_player(&self, minimap: Rect) -> Result<Rect>;
 
     /// Detects whether the player is in cash shop.
-    fn detect_player_in_cash_shop(&mut self) -> bool;
+    fn detect_player_in_cash_shop(&self) -> bool;
 
     /// Detects the player health bar.
-    fn detect_player_health_bar(&mut self) -> Result<Rect>;
+    fn detect_player_health_bar(&self) -> Result<Rect>;
 
-    /// Detects whether the player health is under 50%.
-    fn detect_player_health_under_half(&mut self, health_bar: Rect) -> bool;
+    /// Detects the player current and max health bars.
+    fn detect_player_current_max_health_bars(&self, health_bar: Rect) -> Result<(Rect, Rect)>;
+
+    /// Detects the player current health and max health.
+    fn detect_player_health(&self, current_bar: Rect, max_bar: Rect) -> Result<(u32, u32)>;
 
     /// Detects whether the player has a rune buff.
-    fn detect_player_rune_buff(&mut self) -> bool;
+    fn detect_player_rune_buff(&self) -> bool;
 
     /// Detects whether the player has a sayram's elixir buff.
-    fn detect_player_sayram_elixir_buff(&mut self) -> bool;
+    fn detect_player_sayram_elixir_buff(&self) -> bool;
 
     /// Detects whether the player has a aurelia's elixir buff.
-    fn detect_player_aurelia_elixir_buff(&mut self) -> bool;
+    fn detect_player_aurelia_elixir_buff(&self) -> bool;
 
     /// Detects whether the player has a x3 exp coupon buff.
-    fn detect_player_exp_coupon_x3_buff(&mut self) -> bool;
+    fn detect_player_exp_coupon_x3_buff(&self) -> bool;
 
     /// Detects whether the player has a bonus exp coupon buff.
-    fn detect_player_bonus_exp_coupon_buff(&mut self) -> bool;
+    fn detect_player_bonus_exp_coupon_buff(&self) -> bool;
 
     /// Detects whether the player has a legion wealth buff.
-    fn detect_player_legion_wealth_buff(&mut self) -> bool;
+    fn detect_player_legion_wealth_buff(&self) -> bool;
 
     /// Detects whether the player has a legion luck buff.
-    fn detect_player_legion_luck_buff(&mut self) -> bool;
+    fn detect_player_legion_luck_buff(&self) -> bool;
 
     /// Detects rune arrows from the given RGBA image `Mat`.
-    fn detect_rune_arrows(&mut self) -> Result<[KeyKind; 4]>;
+    fn detect_rune_arrows(&self) -> Result<[KeyKind; 4]>;
 
     /// Detects the Erda Shower skill from the given BGRA `Mat` image.
-    fn detect_erda_shower(&mut self) -> Result<Rect>;
+    fn detect_erda_shower(&self) -> Result<Rect>;
 }
+
+#[cfg(test)]
+mock! {
+    pub Detector {}
+
+    impl Detector for Detector {
+        fn mat(&self) -> &Mat;
+        fn detect_elite_boss_bar(&self) -> bool;
+        fn detect_minimap(&self, border_threshold: u8) -> Result<Rect>;
+        fn detect_minimap_name(&self, minimap: Rect) -> Result<String>;
+        fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect>;
+        fn detect_player(&self, minimap: Rect) -> Result<Rect>;
+        fn detect_player_in_cash_shop(&self) -> bool;
+        fn detect_player_health_bar(&self) -> Result<Rect>;
+        fn detect_player_current_max_health_bars(&self, health_bar: Rect) -> Result<(Rect, Rect)>;
+        fn detect_player_health(&self, current_bar: Rect, max_bar: Rect) -> Result<(u32, u32)>;
+        fn detect_player_rune_buff(&self) -> bool;
+        fn detect_player_sayram_elixir_buff(&self) -> bool;
+        fn detect_player_aurelia_elixir_buff(&self) -> bool;
+        fn detect_player_exp_coupon_x3_buff(&self) -> bool;
+        fn detect_player_bonus_exp_coupon_buff(&self) -> bool;
+        fn detect_player_legion_wealth_buff(&self) -> bool;
+        fn detect_player_legion_luck_buff(&self) -> bool;
+        fn detect_rune_arrows(&self) -> Result<[KeyKind; 4]>;
+        fn detect_erda_shower(&self) -> Result<Rect>;
+    }
+
+    impl Clone for Detector {
+        fn clone(&self) -> Self;
+    }
+}
+
+type MatFn = Box<dyn FnOnce() -> Mat + Send>;
 
 /// A detector that temporary caches the transformed `Mat`.
 ///
 /// It is useful when there are multiple detections in a single tick that rely on grayscale (e.g. buffs).
-#[derive(Debug)]
-pub struct CachedDetector<'a> {
-    mat: &'a Mat,
-    grayscale: Option<Mat>,
-    buffs_grayscale: Option<Mat>,
+#[derive(Clone, Debug)]
+pub struct CachedDetector {
+    mat: Arc<OwnedMat>,
+    grayscale: Arc<LazyLock<Mat, MatFn>>,
+    buffs_grayscale: Arc<LazyLock<Mat, MatFn>>,
 }
 
-impl<'a> CachedDetector<'a> {
-    pub fn new(mat: &'a Mat) -> CachedDetector<'a> {
+impl CachedDetector {
+    pub fn new(mat: OwnedMat) -> CachedDetector {
+        let mat = Arc::new(mat);
+        let grayscale = mat.clone();
+        let grayscale = Arc::new(LazyLock::<Mat, MatFn>::new(Box::new(move || {
+            to_grayscale(&*grayscale, true)
+        })));
+        let buffs_grayscale = grayscale.clone();
+        let buffs_grayscale = Arc::new(LazyLock::<Mat, MatFn>::new(Box::new(move || {
+            crop_to_buffs_region(&buffs_grayscale).clone_pointee()
+        })));
         Self {
             mat,
-            grayscale: None,
-            buffs_grayscale: None,
+            grayscale,
+            buffs_grayscale,
         }
-    }
-
-    #[inline]
-    fn grayscale(&mut self) -> &Mat {
-        if self.grayscale.is_none() {
-            self.grayscale = Some(to_grayscale(self.mat, true));
-        }
-        self.grayscale.as_ref().unwrap()
-    }
-
-    #[inline]
-    fn buffs_grayscale(&mut self) -> &Mat {
-        if self.buffs_grayscale.is_none() {
-            self.buffs_grayscale = Some(crop_to_buffs_region(self.grayscale()).clone_pointee());
-        }
-        self.buffs_grayscale.as_ref().unwrap()
     }
 }
 
-impl Detector for CachedDetector<'_> {
+impl Detector for CachedDetector {
     fn mat(&self) -> &Mat {
-        self.mat
+        &self.mat
     }
 
-    fn detect_elite_boss_bar(&mut self) -> bool {
-        detect_elite_boss_bar(self.grayscale())
+    fn detect_elite_boss_bar(&self) -> bool {
+        detect_elite_boss_bar(&self.grayscale)
     }
 
-    fn detect_minimap(&mut self, border_threshold: u8) -> Result<Rect> {
-        detect_minimap(self.mat, border_threshold)
+    fn detect_minimap(&self, border_threshold: u8) -> Result<Rect> {
+        detect_minimap(&self.mat, border_threshold)
     }
 
-    fn detect_minimap_name(&mut self, minimap: Rect) -> Result<String> {
-        detect_minimap_name(self.mat, minimap)
+    fn detect_minimap_name(&self, minimap: Rect) -> Result<String> {
+        detect_minimap_name(&self.mat, minimap)
     }
 
-    fn detect_minimap_rune(&mut self, minimap: Rect) -> Result<Rect> {
-        let minimap_grayscale = self.grayscale().roi(minimap).unwrap();
+    fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect> {
+        let minimap_grayscale = self.grayscale.roi(minimap).unwrap();
         detect_minimap_rune(&minimap_grayscale, minimap.tl())
     }
 
-    fn detect_player(&mut self, minimap: Rect) -> Result<Rect> {
-        let minimap_grayscale = self.grayscale().roi(minimap).unwrap();
+    fn detect_player(&self, minimap: Rect) -> Result<Rect> {
+        let minimap_grayscale = self.grayscale.roi(minimap).unwrap();
         let result = detect_player(&minimap_grayscale, minimap.tl());
         #[cfg(debug_assertions)]
         {
@@ -178,52 +207,56 @@ impl Detector for CachedDetector<'_> {
         result
     }
 
-    fn detect_player_in_cash_shop(&mut self) -> bool {
-        detect_cash_shop(self.grayscale())
+    fn detect_player_in_cash_shop(&self) -> bool {
+        detect_cash_shop(&**self.grayscale)
     }
 
-    fn detect_player_health_bar(&mut self) -> Result<Rect> {
-        detect_player_health_bar(self.grayscale())
+    fn detect_player_health_bar(&self) -> Result<Rect> {
+        detect_player_health_bar(&**self.grayscale)
     }
 
-    fn detect_player_health_under_half(&mut self, health_bar: Rect) -> bool {
-        detect_player_health_under_half(&self.grayscale().roi(health_bar).unwrap())
+    fn detect_player_current_max_health_bars(&self, health_bar: Rect) -> Result<(Rect, Rect)> {
+        detect_player_health_bars(&self.mat, &self.grayscale, health_bar)
     }
 
-    fn detect_player_rune_buff(&mut self) -> bool {
-        detect_player_rune_buff(self.buffs_grayscale())
+    fn detect_player_health(&self, current_bar: Rect, max_bar: Rect) -> Result<(u32, u32)> {
+        detect_player_health(&*self.mat, current_bar, max_bar)
     }
 
-    fn detect_player_sayram_elixir_buff(&mut self) -> bool {
-        detect_player_sayram_elixir_buff(self.buffs_grayscale())
+    fn detect_player_rune_buff(&self) -> bool {
+        detect_player_rune_buff(&**self.buffs_grayscale)
     }
 
-    fn detect_player_aurelia_elixir_buff(&mut self) -> bool {
-        detect_player_aurelia_elixir_buff(self.buffs_grayscale())
+    fn detect_player_sayram_elixir_buff(&self) -> bool {
+        detect_player_sayram_elixir_buff(&**self.buffs_grayscale)
     }
 
-    fn detect_player_exp_coupon_x3_buff(&mut self) -> bool {
-        detect_player_exp_coupon_x3_buff(self.buffs_grayscale())
+    fn detect_player_aurelia_elixir_buff(&self) -> bool {
+        detect_player_aurelia_elixir_buff(&**self.buffs_grayscale)
     }
 
-    fn detect_player_bonus_exp_coupon_buff(&mut self) -> bool {
-        detect_player_bonus_exp_coupon_buff(self.buffs_grayscale())
+    fn detect_player_exp_coupon_x3_buff(&self) -> bool {
+        detect_player_exp_coupon_x3_buff(&**self.buffs_grayscale)
     }
 
-    fn detect_player_legion_wealth_buff(&mut self) -> bool {
-        detect_player_legion_wealth_buff(&to_bgr(&crop_to_buffs_region(self.mat)))
+    fn detect_player_bonus_exp_coupon_buff(&self) -> bool {
+        detect_player_bonus_exp_coupon_buff(&**self.buffs_grayscale)
     }
 
-    fn detect_player_legion_luck_buff(&mut self) -> bool {
-        detect_player_legion_luck_buff(&to_bgr(&crop_to_buffs_region(self.mat)))
+    fn detect_player_legion_wealth_buff(&self) -> bool {
+        detect_player_legion_wealth_buff(&to_bgr(&crop_to_buffs_region(&self.mat)))
     }
 
-    fn detect_rune_arrows(&mut self) -> Result<[KeyKind; 4]> {
-        detect_rune_arrows(self.mat)
+    fn detect_player_legion_luck_buff(&self) -> bool {
+        detect_player_legion_luck_buff(&to_bgr(&crop_to_buffs_region(&self.mat)))
     }
 
-    fn detect_erda_shower(&mut self) -> Result<Rect> {
-        detect_erda_shower(self.grayscale())
+    fn detect_rune_arrows(&self) -> Result<[KeyKind; 4]> {
+        detect_rune_arrows(&self.mat)
+    }
+
+    fn detect_erda_shower(&self) -> Result<Rect> {
+        detect_erda_shower(&self.grayscale)
     }
 }
 
@@ -261,7 +294,7 @@ fn detect_cash_shop(mat: &impl ToInputArray) -> bool {
     .is_ok()
 }
 
-fn detect_player_health_bar(mat: &Mat) -> Result<Rect> {
+fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
     /// TODO: Support default ratio
     static HP_START: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("HP_START_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
@@ -281,7 +314,7 @@ fn detect_player_health_bar(mat: &Mat) -> Result<Rect> {
     ))
 }
 
-fn detect_player_health_under_half(mat: &impl ToInputArray) -> bool {
+fn detect_player_health_bars(mat: &Mat, grayscale: &Mat, hp_bar: Rect) -> Result<(Rect, Rect)> {
     /// TODO: Support default ratio
     static HP_SEPARATOR: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
@@ -291,14 +324,84 @@ fn detect_player_health_under_half(mat: &impl ToInputArray) -> bool {
         .unwrap()
     });
 
-    detect_template(
-        mat,
+    let hp_separator = detect_template(
+        &grayscale.roi(hp_bar).unwrap(),
         LazyLock::force(&HP_SEPARATOR),
-        Point::default(),
-        0.99, // guys it is peak
+        hp_bar.tl(),
+        0.9,
         None,
+    )?;
+    let left = mat
+        .roi(Rect::new(
+            hp_bar.x,
+            hp_bar.y,
+            hp_separator.x - hp_bar.x,
+            hp_bar.height,
+        ))
+        .unwrap();
+    let (left_in, left_w_ratio, left_h_ratio) = preprocess_for_text_bboxes(&left);
+    let left_bbox = extract_text_bboxes(&left_in, left_w_ratio, left_h_ratio, hp_bar.x, hp_bar.y)
+        .into_iter()
+        .next()
+        .ok_or(anyhow!("failed to detect current health bar"))?;
+    let right = mat
+        .roi(Rect::new(
+            hp_separator.x + hp_separator.width,
+            hp_bar.y,
+            (hp_bar.x + hp_bar.width) - (hp_separator.x + hp_separator.width),
+            hp_bar.height,
+        ))
+        .unwrap();
+    let (right_in, right_w_ratio, right_h_ratio) = preprocess_for_text_bboxes(&right);
+    let right_bbox = extract_text_bboxes(
+        &right_in,
+        right_w_ratio,
+        right_h_ratio,
+        hp_separator.x + hp_separator.width,
+        hp_bar.y,
     )
-    .is_err()
+    .into_iter()
+    .next()
+    .ok_or(anyhow!("failed to detect max health bar"))?;
+    #[cfg(debug_assertions)]
+    {
+        debug_mat(
+            "Current Health",
+            &mat.roi(left_bbox).unwrap(),
+            1,
+            &[],
+            &[""; 0],
+        );
+        debug_mat(
+            "Max Health",
+            &mat.roi(right_bbox).unwrap(),
+            1,
+            &[],
+            &[""; 0],
+        );
+    }
+    Ok((left_bbox, right_bbox))
+}
+
+fn detect_player_health(
+    mat: &impl MatTraitConst,
+    current_bar: Rect,
+    max_bar: Rect,
+) -> Result<(u32, u32)> {
+    let current_health = extract_texts(mat, &[current_bar]);
+    let current_health = current_health
+        .first()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or(anyhow!("cannot detect current health"))?;
+    let max_health = extract_texts(mat, &[max_bar]);
+    let max_health = max_health
+        .first()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or(anyhow!("cannot detect max health"))?;
+    if current_health > max_health {
+        bail!("failed to detect player's health");
+    }
+    Ok((current_health, max_health))
 }
 
 fn detect_player_rune_buff(mat: &impl ToInputArray) -> bool {
@@ -562,7 +665,7 @@ fn detect_template(
     if score >= threshold {
         Ok(Rect::from_points(tl, br))
     } else {
-        Err(anyhow!("template not found"))
+        Err(anyhow!("template not found").context(score))
     }
 }
 
@@ -696,8 +799,9 @@ fn detect_minimap(mat: &Mat, border_threshold: u8) -> Result<Rect> {
             contour.area()
         );
         // the detected contour should be contained inside the detected yolo minimap when expanded
-        // 1500 is a fixed value for ensuring the contour is tight to the minimap white border
-        if (bbox & contour) == contour && (bbox.area() - contour.area()) >= 1500 {
+        // <some value that i will change probably change again the future> is a
+        // fixed value for ensuring the contour is tight to the minimap white border
+        if (bbox & contour) == contour && (bbox.area() - contour.area()) >= 1100 {
             Some(contour)
         } else {
             None

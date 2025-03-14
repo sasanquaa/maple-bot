@@ -1,9 +1,12 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    ffi::c_void,
+    ops::{Deref, DerefMut},
+};
 
 use opencv::{
     boxed_ref::{BoxedRef, BoxedRefMut},
     core::{
-        _InputArray, _InputOutputArray, _OutputArray, CV_8UC4, Mat, ToInputArray,
+        _InputArray, _InputOutputArray, _OutputArray, CV_8UC4, Mat, MatTraitConst, ToInputArray,
         ToInputOutputArray, ToOutputArray,
     },
 };
@@ -47,6 +50,12 @@ impl ToOutputArray for OwnedMat {
 impl ToInputOutputArray for OwnedMat {
     fn input_output_array(&mut self) -> opencv::Result<BoxedRefMut<_InputOutputArray>> {
         self.mat.input_output_array()
+    }
+}
+
+impl MatTraitConst for OwnedMat {
+    fn as_raw_Mat(&self) -> *const c_void {
+        self.mat.as_raw_Mat()
     }
 }
 

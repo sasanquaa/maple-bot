@@ -356,7 +356,7 @@ mod tests {
     use opencv::core::{Point, Vec4b};
 
     use super::*;
-    use crate::{Position, context::Timeout, minimap::MinimapIdle};
+    use crate::{Position, minimap::MinimapIdle};
     use std::time::{Duration, Instant};
 
     const NORMAL_ACTION: Action = Action::Move(ActionMove {
@@ -427,7 +427,7 @@ mod tests {
             ActionCondition::ErdaShowerOffCooldown
         ));
 
-        context.skills[ERDA_SHOWER_SKILL_POSITION] = Skill::Detecting(Timeout::default());
+        context.skills[ERDA_SHOWER_SKILL_POSITION] = Skill::Detecting;
         assert!(!should_queue_fixed_action(
             &context,
             Some(now - Duration::from_millis(COOLDOWN_BETWEEN_QUEUE_MILLIS as u64)),

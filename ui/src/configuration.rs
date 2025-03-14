@@ -1,19 +1,22 @@
-use std::str::FromStr;
+use std::{fmt::Display, str::FromStr};
 
 use backend::{
     Configuration as ConfigurationData, IntoEnumIterator, KeyBinding, KeyBindingConfiguration,
-    RotationMode, query_configs, upsert_config,
+    PotionMode, RotationMode, query_configs, upsert_config,
 };
 use dioxus::prelude::*;
 use tokio::task::spawn_blocking;
 
 use crate::{
     icons::XMark,
-    input::MillisInput,
+    input::{MillisInput, PercentageInput},
     key::KeyInput,
     select::{Select, TextSelect},
 };
 
+const DIV_CLASS: &str = "flex items-center space-x-4 text-xs text-gray-700";
+const LABEL_CLASS: &str = "flex-1";
+const INPUT_CLASS: &str = "w-44 rounded border border-gray-300 px-1 text-gray-700 h-6 outline-none";
 const ROPE_LIFT: &str = "Rope Lift";
 const UP_JUMP: &str = "Up Jump";
 const INTERACT: &str = "Interact";
@@ -174,7 +177,6 @@ pub fn Configuration(
                         active.set(value.then_some(FEED_PET));
                     },
                     can_disable: true,
-                    has_millis: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             feed_pet_key: key.unwrap(),
@@ -182,6 +184,19 @@ pub fn Configuration(
                         });
                     },
                     value: Some(config_view().feed_pet_key),
+                    MillisInput {
+                        label: "Every Milliseconds",
+                        div_class: DIV_CLASS,
+                        label_class: LABEL_CLASS,
+                        input_class: INPUT_CLASS,
+                        on_input: move |value| {
+                            on_config(ConfigurationData {
+                                feed_pet_millis: value,
+                                ..config_view.peek().clone()
+                            });
+                        },
+                        value: config_view().feed_pet_millis,
+                    }
                 }
                 KeyBindingConfigurationInput {
                     label: POTION,
@@ -192,7 +207,6 @@ pub fn Configuration(
                         active.set(value.then_some(POTION));
                     },
                     can_disable: true,
-                    has_millis: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             potion_key: key.unwrap(),
@@ -200,6 +214,62 @@ pub fn Configuration(
                         });
                     },
                     value: Some(config_view().potion_key),
+                    EnumInput::<PotionMode> {
+                        label: "Potion Mode",
+                        on_input: move |mode| {
+                            on_config(ConfigurationData {
+                                potion_mode: mode,
+                                ..config_view.peek().clone()
+                            });
+                        },
+                        disabled: disabled(),
+                        value: config_view().potion_mode,
+                    }
+                    match config_view().potion_mode {
+                        PotionMode::EveryMillis(value) => rsx! {
+                            MillisInput {
+                                label: "Every Milliseconds",
+                                div_class: DIV_CLASS,
+                                label_class: LABEL_CLASS,
+                                input_class: INPUT_CLASS,
+                                on_input: move |value| {
+                                    on_config(ConfigurationData {
+                                        potion_mode: PotionMode::EveryMillis(value),
+                                        ..config_view.peek().clone()
+                                    });
+                                },
+                                value,
+                            }
+                        },
+                        PotionMode::Percentage(value) => rsx! {
+                            PercentageInput {
+                                label: "Below Health Percentage",
+                                div_class: DIV_CLASS,
+                                label_class: LABEL_CLASS,
+                                input_class: INPUT_CLASS,
+                                on_input: move |value| {
+                                    on_config(ConfigurationData {
+                                        potion_mode: PotionMode::Percentage(value),
+                                        ..config_view.peek().clone()
+                                    });
+                                },
+                                value,
+                            }
+                            MillisInput {
+                                label: "Health Update Milliseconds",
+                                div_class: DIV_CLASS,
+                                label_class: LABEL_CLASS,
+                                input_class: INPUT_CLASS,
+                                on_input: move |value| {
+                                    on_config(ConfigurationData {
+                                        health_update_millis: value,
+                                        ..config_view.peek().clone()
+                                    });
+                                },
+                                value: config_view().health_update_millis,
+                            }
+                        },
+                    }
                 }
                 KeyBindingConfigurationInput {
                     label: SAYRAM_ELIXIR,
@@ -312,7 +382,8 @@ pub fn Configuration(
                     "(Only for Any condition actions)"
                 }
             }
-            RotationModeInput {
+            EnumInput::<RotationMode> {
+                label: "Rotation Mode",
                 on_input: move |mode| {
                     on_config(ConfigurationData {
                         rotation_mode: mode,
@@ -327,26 +398,29 @@ pub fn Configuration(
 }
 
 #[component]
-fn RotationModeInput(
-    on_input: EventHandler<RotationMode>,
+fn EnumInput<T: 'static + Clone + Copy + PartialEq + Display + FromStr + IntoEnumIterator>(
+    label: String,
+    on_input: EventHandler<T>,
     disabled: bool,
-    value: RotationMode,
+    value: T,
 ) -> Element {
-    let options = RotationMode::iter()
+    let options = T::iter()
         .map(|variant| (variant.to_string(), variant.to_string()))
         .collect::<Vec<_>>();
     let selected = value.to_string();
 
     rsx! {
         Select {
-            label: "Rotation Mode",
+            label,
             disabled,
             div_class: "flex items-center space-x-4",
             label_class: "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400",
             select_class: "w-44 text-xs text-gray-700 text-ellipsis rounded outline-none disabled:cursor-not-allowed disabled:text-gray-400",
             options,
             on_select: move |variant: String| {
-                on_input(RotationMode::from_str(variant.as_str()).unwrap());
+                if let Ok(value) = T::from_str(variant.as_str()) {
+                    on_input(value);
+                }
             },
             selected,
         }
@@ -361,10 +435,9 @@ struct KeyBindingConfigurationInputProps {
     is_active: bool,
     on_active: EventHandler<bool>,
     can_disable: bool,
-    #[props(default = false)]
-    has_millis: bool,
     on_input: EventHandler<Option<KeyBindingConfiguration>>,
     value: Option<KeyBindingConfiguration>,
+    children: Element,
 }
 
 #[component]
@@ -384,13 +457,6 @@ fn KeyBindingConfigurationInput(props: KeyBindingConfigurationInputProps) -> Ele
             key,
             ..props.value.unwrap_or_default()
         }));
-    });
-    let on_millis_input = use_callback(move |millis: u64| {
-        (props.on_input)(
-            props
-                .value
-                .map(|config| KeyBindingConfiguration { millis, ..config }),
-        );
     });
     let input_width = if props.can_disable { "w-24" } else { "w-44" };
 
@@ -451,18 +517,7 @@ fn KeyBindingConfigurationInput(props: KeyBindingConfigurationInputProps) -> Ele
                     }
                 }
             }
-            if props.has_millis {
-                MillisInput {
-                    label: "Every Milliseconds",
-                    div_class: "flex items-center space-x-4 text-xs text-gray-700",
-                    label_class: "flex-1",
-                    input_class: "w-44 rounded border border-gray-300 px-1 text-gray-700 h-6 outline-none",
-                    on_input: move |value| {
-                        on_millis_input(value);
-                    },
-                    value: props.value.map(|key| key.millis).unwrap_or_default(),
-                }
-            }
+            {props.children}
         }
     }
 }

@@ -226,6 +226,16 @@ pub fn Minimap(
                     p {
                         {
                             state()
+                                .and_then(|state| state.health)
+                                .map(|(current_health, max_health)| {
+                                    format!("Health: {} / {}", current_health, max_health)
+                                })
+                                .unwrap_or("Health: Unknown".to_string())
+                        }
+                    }
+                    p {
+                        {
+                            state()
                                 .map(|state| {
                                     format!(
                                         "Priority Action: {}",

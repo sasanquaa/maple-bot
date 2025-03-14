@@ -6,6 +6,7 @@
 #![feature(box_into_inner)]
 #![feature(downcast_unchecked)]
 #![feature(associated_type_defaults)]
+#![feature(mapped_lock_guards)]
 
 use std::{
     any::Any,
@@ -29,13 +30,14 @@ mod minimap;
 mod player;
 mod rotator;
 mod skill;
+mod task;
 
 pub use {
     context::start_update_loop,
     database::{
         Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
-        Configuration, KeyBinding, KeyBindingConfiguration, Minimap, Position, RotationMode,
-        delete_map, query_configs, upsert_config, upsert_map,
+        Configuration, KeyBinding, KeyBindingConfiguration, Minimap, Position, PotionMode,
+        RotationMode, delete_map, query_configs, upsert_config, upsert_map,
     },
     rotator::RotatorMode,
     strum::{IntoEnumIterator, ParseError},
@@ -63,6 +65,7 @@ enum Request {
 #[derive(Debug, Clone)]
 pub struct PlayerState {
     pub position: Option<(i32, i32)>,
+    pub health: Option<(u32, u32)>,
     pub state: String,
     pub normal_action: Option<String>,
     pub priority_action: Option<String>,

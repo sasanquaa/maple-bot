@@ -1,7 +1,7 @@
 use std::{fmt::Display, str::FromStr};
 
 use backend::KeyBinding;
-use dioxus::prelude::*;
+use dioxus::{document::EvalError, prelude::*};
 use num_traits::PrimInt;
 use rand::distr::{Alphanumeric, SampleString};
 
@@ -129,7 +129,91 @@ pub fn MillisInput(
             disabled,
             on_input,
             value,
-            suffix: "ms"
+            suffix: "ms",
+        }
+    }
+}
+
+// FIXME: Please fix this god-tier UI for me. SOMEONE! ANYONE! PLEASE! HLEP MEM!
+#[component]
+pub fn PercentageInput(
+    GenericInputProps {
+        label,
+        label_class,
+        div_class,
+        input_class,
+        disabled,
+        on_input,
+        value,
+    }: GenericInputProps<f32>,
+) -> Element {
+    let input_id = use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
+
+    use_effect(move || {
+        spawn(async move {
+            let js = format!(
+                r#"
+                const input = document.getElementById("{}");
+                console.log(input);
+                if (input === null) {{
+                    return;
+                }}
+                const autoNumeric = new AutoNumeric(input, {{
+                    allowDecimalPadding: false,
+                    emptyInputBehavior: "zero",
+                    maximumValue: "100",
+                    minimumValue: "0",
+                    suffixText: "%",
+                    defaultValueOverride: "{}"
+                }});
+                input.addEventListener("autoNumeric:rawValueModified", async (e) => {{
+                    await dioxus.send(e.detail.newRawValue);
+                }});
+                input.addEventListener("autoNumeric:set", (e) => {{
+                    autoNumeric.set(e.detail.value);
+                }});
+                "#,
+                input_id(),
+                value
+            );
+            let mut input = document::eval(js.as_str());
+            loop {
+                let value = input.recv::<String>().await;
+                if let Err(EvalError::Finished) = value {
+                    input = document::eval(js.as_str());
+                    continue;
+                };
+                let Ok(value) = value.unwrap().parse::<f32>() else {
+                    continue;
+                };
+                on_input(value);
+            }
+        });
+    });
+    use_effect(use_reactive!(|value| {
+        document::eval(
+            format!(
+                r#"
+                const input = document.getElementById("{}");
+                input.dispatchEvent(new CustomEvent("autoNumeric:set", {{
+                    detail: {{
+                        value: {}
+                    }}
+                }}));
+                "#,
+                input_id(),
+                value
+            )
+            .as_str(),
+        );
+    }));
+    rsx! {
+        LabeledInput {
+            label,
+            label_class,
+            div_class,
+            disabled,
+            input { id: input_id(), disabled, class: input_class }
         }
     }
 }
@@ -172,9 +256,9 @@ fn NumberInput<T: 'static + IntoAttributeValue + PrimInt + FromStr + Display>(
 ) -> Element {
     let input_id = use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
 
-    use_future(move || {
+    use_effect(move || {
         let suffix = suffix.clone();
-        async move {
+        spawn(async move {
             let js = format!(
                 r#"
                 const input = document.getElementById("{}");
@@ -203,12 +287,17 @@ fn NumberInput<T: 'static + IntoAttributeValue + PrimInt + FromStr + Display>(
             );
             let mut input = document::eval(js.as_str());
             loop {
-                let Ok(value) = input.recv::<String>().await.unwrap().parse::<T>() else {
+                let value = input.recv::<String>().await;
+                if let Err(EvalError::Finished) = value {
+                    input = document::eval(js.as_str());
+                    continue;
+                };
+                let Ok(value) = value.unwrap().parse::<T>() else {
                     continue;
                 };
                 on_input(value);
             }
-        }
+        });
     });
     use_effect(use_reactive!(|value| {
         document::eval(
