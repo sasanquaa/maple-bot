@@ -21,9 +21,10 @@ use dioxus::{
     prelude::*,
 };
 use icons::XMark;
-use input::{Checkbox, KeyBindingInput, MillisInput, NumberInputI32};
+use input::{Checkbox, KeyBindingInput, MillisInput, NumberInputI32, use_auto_numeric};
 use minimap::Minimap;
-use select::{Select, TextSelect};
+use rand::distr::{Alphanumeric, SampleString};
+use select::{EnumSelect, TextSelect};
 use tokio::task::spawn_blocking;
 use tracing_log::LogTracer;
 
@@ -216,6 +217,123 @@ fn ActionItem(
     const VALUE: &str = "font-mono text-xs w-16 overflow-hidden text-ellipsis";
     const DIV: &str = "flex items-center space-x-1";
 
+    #[component]
+    fn ActionMoveItem(action: ActionMove) -> Element {
+        let ActionMove {
+            position:
+                Position {
+                    x,
+                    y,
+                    allow_adjusting,
+                },
+            condition,
+            wait_after_move_millis,
+        } = action;
+        let wait_after_millis_id = use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
+
+        use_auto_numeric(
+            wait_after_millis_id,
+            wait_after_move_millis.to_string(),
+            None,
+            u64::MAX.to_string(),
+            "ms".to_string(),
+        );
+
+        rsx! {
+            div { class: DIV,
+                span { class: KEY, "Position" }
+                span { class: VALUE, "{x}, {y}" }
+            }
+            div { class: DIV,
+                span { class: KEY, "Adjust" }
+                span { class: VALUE, "{allow_adjusting}" }
+            }
+            div { class: DIV,
+                span { class: KEY, "Condition" }
+                span { class: VALUE, {condition.to_string()} }
+            }
+            div { class: DIV,
+                span { class: KEY, "Wait after" }
+                span { id: wait_after_millis_id(), class: VALUE }
+            }
+        }
+    }
+
+    #[component]
+    fn ActionKeyItem(action: ActionKey) -> Element {
+        let ActionKey {
+            key,
+            position,
+            condition,
+            direction,
+            with,
+            wait_before_use_millis,
+            wait_after_use_millis,
+            queue_to_front,
+        } = action;
+        let wait_before_use_millis_id =
+            use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
+        let wait_after_use_millis_id = use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
+
+        use_auto_numeric(
+            wait_before_use_millis_id,
+            wait_before_use_millis.to_string(),
+            None,
+            u64::MAX.to_string(),
+            "ms".to_string(),
+        );
+        use_auto_numeric(
+            wait_after_use_millis_id,
+            wait_after_use_millis.to_string(),
+            None,
+            u64::MAX.to_string(),
+            "ms".to_string(),
+        );
+
+        rsx! {
+            if let Some(Position { x, y, allow_adjusting }) = position {
+                div { class: DIV,
+                    span { class: KEY, "Position" }
+                    span { class: VALUE, "{x}, {y}" }
+                }
+                div { class: DIV,
+                    span { class: KEY, "Adjust" }
+                    span { class: VALUE, "{allow_adjusting}" }
+                }
+            }
+            div { class: DIV,
+                span { class: KEY, "Key" }
+                span { class: VALUE, {key.to_string()} }
+            }
+            div { class: DIV,
+                span { class: KEY, "Condition" }
+                span { class: VALUE, {condition.to_string()} }
+            }
+            div { class: DIV,
+                span { class: KEY, "Direction" }
+                span { class: VALUE, {direction.to_string()} }
+            }
+            div { class: DIV,
+                span { class: KEY, "With" }
+                span { class: VALUE, {with.to_string()} }
+            }
+            div { class: DIV,
+                span { class: KEY, "Wait before" }
+                span { id: wait_before_use_millis_id(), class: VALUE }
+            }
+            div { class: DIV,
+                span { class: KEY, "Wait after" }
+                span { id: wait_after_use_millis_id(), class: VALUE }
+            }
+            if let Some(queue_to_front) = queue_to_front {
+                div { class: DIV,
+                    span { class: KEY, "Queue to front" }
+                    span { class: VALUE, {queue_to_front.to_string()} }
+                }
+            }
+        }
+    }
+
     let border_color = match action {
         Action::Move(_) => "border-blue-300",
         Action::Key(_) => "border-gray-300",
@@ -242,82 +360,11 @@ fn ActionItem(
             },
             div { class: "flex flex-col text-xs text-gray-700",
                 match action {
-                    Action::Move(
-                        ActionMove {
-                            position: Position { x, y, allow_adjusting },
-                            condition,
-                            wait_after_move_millis,
-                        },
-                    ) => rsx! {
-                        div { class: DIV,
-                            span { class: KEY, "Position" }
-                            span { class: VALUE, "{x}, {y}" }
-                        }
-                        div { class: DIV,
-                            span { class: KEY, "Adjust" }
-                            span { class: VALUE, "{allow_adjusting}" }
-                        }
-                        div { class: DIV,
-                            span { class: KEY, "Condition" }
-                            span { class: VALUE, {condition.to_string()} }
-                        }
-                        div { class: DIV,
-                            span { class: KEY, "Wait after" }
-                            span { class: VALUE, {wait_after_move_millis.to_string()} }
-                        }
+                    Action::Move(action) => rsx! {
+                        ActionMoveItem { action }
                     },
-                    Action::Key(
-                        ActionKey {
-                            key,
-                            position,
-                            condition,
-                            direction,
-                            with,
-                            wait_before_use_millis,
-                            wait_after_use_millis,
-                            queue_to_front,
-                        },
-                    ) => rsx! {
-                        if let Some(Position { x, y, allow_adjusting }) = position {
-                            div { class: DIV,
-                                span { class: KEY, "Position" }
-                                span { class: VALUE, "{x}, {y}" }
-                            }
-                            div { class: DIV,
-                                span { class: KEY, "Adjust" }
-                                span { class: VALUE, "{allow_adjusting}" }
-                            }
-                        }
-                        div { class: DIV,
-                            span { class: KEY, "Key" }
-                            span { class: VALUE, {key.to_string()} }
-                        }
-                        div { class: DIV,
-                            span { class: KEY, "Condition" }
-                            span { class: VALUE, {condition.to_string()} }
-                        }
-                        div { class: DIV,
-                            span { class: KEY, "Direction" }
-                            span { class: VALUE, {direction.to_string()} }
-                        }
-                        div { class: DIV,
-                            span { class: KEY, "With" }
-                            span { class: VALUE, {with.to_string()} }
-                        }
-                        div { class: DIV,
-                            span { class: KEY, "Wait before" }
-                            span { class: VALUE, {wait_before_use_millis.to_string()} }
-                        }
-                        div { class: DIV,
-                            span { class: KEY, "Wait after" }
-                            span { class: VALUE, {wait_after_use_millis.to_string()} }
-                        }
-                        if let Some(queue_to_front) = queue_to_front {
-                            div { class: DIV,
-                                span { class: KEY, "Queue to front" }
-                                span { class: VALUE, {queue_to_front.to_string()} }
-                            }
-                        }
+                    Action::Key(action) => rsx! {
+                        ActionKeyItem { action }
                     },
                 }
             }
@@ -432,7 +479,8 @@ fn ActionInput(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<Strin
             div { class: "flex space-x-2 overflow-y-auto flex-1",
                 div { class: "w-1/2 overflow-y-auto scrollbar pr-2",
                     div { class: "flex flex-col space-y-2.5",
-                        ActionTypeInput {
+                        ActionEnumSelect {
+                            label: "Type",
                             on_input: move |action: Action| {
                                 if let Some((editing_action, _)) = *editing_action.peek() {
                                     if editing_action.to_string() == action.to_string() {
@@ -742,14 +790,16 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
                     value: queue_to_front,
                 }
             }
-            ActionKeyDirectionInput {
+            ActionEnumSelect::<ActionKeyDirection> {
+                label: "Direction",
                 on_input: move |direction| {
                     set_direction(direction);
                 },
                 disabled: props.disabled,
                 value: direction,
             }
-            ActionKeyWithInput {
+            ActionEnumSelect::<ActionKeyWith> {
+                label: "With",
                 on_input: move |with| {
                     set_with(with);
                 },
@@ -783,60 +833,6 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
 }
 
 #[component]
-fn ActionTypeInput(
-    InputConfigProps {
-        on_input,
-        disabled,
-        value,
-    }: InputConfigProps<Action>,
-) -> Element {
-    rsx! {
-        ActionEnumInput {
-            label: "Type",
-            on_input,
-            disabled,
-            value,
-        }
-    }
-}
-
-#[component]
-fn ActionKeyDirectionInput(
-    InputConfigProps {
-        on_input,
-        disabled,
-        value,
-    }: InputConfigProps<ActionKeyDirection>,
-) -> Element {
-    rsx! {
-        ActionEnumInput {
-            label: "Direction",
-            on_input,
-            disabled,
-            value,
-        }
-    }
-}
-
-#[component]
-fn ActionKeyWithInput(
-    InputConfigProps {
-        on_input,
-        disabled,
-        value,
-    }: InputConfigProps<ActionKeyWith>,
-) -> Element {
-    rsx! {
-        ActionEnumInput {
-            label: "With",
-            on_input,
-            disabled,
-            value,
-        }
-    }
-}
-
-#[component]
 fn ActionConditionInput(
     InputConfigProps {
         on_input,
@@ -845,7 +841,7 @@ fn ActionConditionInput(
     }: InputConfigProps<ActionCondition>,
 ) -> Element {
     rsx! {
-        ActionEnumInput {
+        ActionEnumSelect {
             label: "Condition",
             on_input,
             disabled,
@@ -868,7 +864,7 @@ fn ActionConditionInput(
 }
 
 #[component]
-fn ActionEnumInput<
+fn ActionEnumSelect<
     T: 'static + Clone + Copy + PartialEq + Display + FromStr<Err = ParseError> + IntoEnumIterator,
 >(
     label: String,
@@ -876,23 +872,17 @@ fn ActionEnumInput<
     on_input: EventHandler<T>,
     value: T,
 ) -> Element {
-    let options = T::iter()
-        .map(|variant| (variant.to_string(), variant.to_string()))
-        .collect::<Vec<_>>();
-    let selected = value.to_string();
-
     rsx! {
-        Select {
+        EnumSelect {
             label,
             div_class: DIV_CLASS,
             label_class: LABEL_CLASS,
             select_class: INPUT_CLASS,
             disabled,
-            options,
-            on_select: move |selected: String| {
-                on_input(T::from_str(selected.as_str()).unwrap());
+            on_select: move |selected: T| {
+                on_input(selected);
             },
-            selected,
+            selected: value,
         }
     }
 }

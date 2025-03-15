@@ -51,6 +51,11 @@ pub trait Contextual {
     /// Represents a state that is persistent through each `update` tick.
     type Persistent = ();
 
+    /// Update the contextual state.
+    ///
+    /// Updating is performed on each tick and the behavior whether to continue
+    /// updating in the same tick or next is decided by `ControlFlow`. The state
+    /// can transition or stay the same.
     fn update(
         self,
         context: &Context,
@@ -210,9 +215,7 @@ fn update_loop() {
             context.buffs[i] =
                 fold_context(&context, &detector, context.buffs[i], &mut buff_states[i]);
         });
-        if !context.halting {
-            rotator.rotate_action(&context, &mut player_state);
-        }
+        rotator.rotate_action(&context, &mut player_state);
         poll_request(|request| match request {
             Request::RotateActions(halted) => {
                 context.halting = halted;

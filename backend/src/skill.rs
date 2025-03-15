@@ -111,7 +111,7 @@ fn get_anchor(mat: &Mat, bbox: Rect) -> (Point, Vec4b) {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{assert_matches::assert_matches, time::Duration};
 
     use crate::detect::MockDetector;
 
@@ -166,7 +166,7 @@ mod tests {
         let mut state = SkillState::new(SkillKind::ErdaShower);
 
         let skill = advance_task(Skill::Detecting, &detector, &mut state).await;
-        assert!(matches!(skill, Skill::Idle(_, _)));
+        assert_matches!(skill, Skill::Idle(_, _));
         match skill {
             Skill::Idle(point, pixel) => {
                 assert_eq!(point, (rect.tl() + rect.br()) / 2);
@@ -186,7 +186,7 @@ mod tests {
             &detector,
             &mut state,
         );
-        assert!(matches!(skill, Skill::Cooldown));
+        assert_matches!(skill, Skill::Cooldown);
     }
 
     #[tokio::test(start_paused = true)]
@@ -195,7 +195,7 @@ mod tests {
         let (detector, _) = create_mock_detector(255, Some(0.51));
 
         let skill = advance_task(Skill::Cooldown, &detector, &mut state).await;
-        assert!(matches!(skill, Skill::Detecting));
+        assert_matches!(skill, Skill::Detecting);
     }
 
     #[tokio::test(start_paused = true)]
@@ -204,7 +204,7 @@ mod tests {
         let (detector, rect) = create_mock_detector(255, None);
 
         let skill = advance_task(Skill::Cooldown, &detector, &mut state).await;
-        assert!(matches!(skill, Skill::Idle(_, _)));
+        assert_matches!(skill, Skill::Idle(_, _));
         match skill {
             Skill::Idle(point, pixel) => {
                 assert_eq!(point, (rect.tl() + rect.br()) / 2);
@@ -220,6 +220,6 @@ mod tests {
         let (detector, _) = create_mock_detector(255, Some(0.52));
 
         let skill = advance_task(Skill::Cooldown, &detector, &mut state).await;
-        assert!(matches!(skill, Skill::Cooldown));
+        assert_matches!(skill, Skill::Cooldown);
     }
 }

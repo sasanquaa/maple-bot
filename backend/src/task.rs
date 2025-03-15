@@ -39,21 +39,6 @@ impl<T: fmt::Debug> Task<T> {
         }
     }
 
-    fn spawn_blocking<F>(f: F) -> Task<T>
-    where
-        F: FnOnce() -> T + Send + 'static,
-        T: Send + 'static,
-    {
-        let (tx, rx) = oneshot::channel();
-        spawn_blocking(move || {
-            let _ = tx.send(f());
-        });
-        Task {
-            rx,
-            completed: false,
-        }
-    }
-
     #[cfg(test)]
     pub fn completed(&self) -> bool {
         self.completed
@@ -103,7 +88,9 @@ where
         Some(TaskState::Complete(value)) => Update::Complete(value),
         Some(TaskState::Pending) => Update::Pending,
         None => {
-            *task = Some(Task::spawn_blocking(task_fn));
+            *task = Some(Task::spawn(async move {
+                spawn_blocking(task_fn).await.unwrap()
+            }));
             Update::Pending
         }
     }
@@ -111,10 +98,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::task::{Task, TaskState};
+    use std::assert_matches::assert_matches;
+
+    use crate::task::{Task, TaskState, Update, update_task_repeatable};
+    use anyhow::Result;
+    use tokio::task::yield_now;
 
     #[tokio::test(start_paused = true)]
-    async fn spawn() {
+    async fn spawn_state() {
         let mut task = Task::spawn(async move { 0 });
         assert!(!task.completed());
 
@@ -126,24 +117,37 @@ mod tests {
                 TaskState::AlreadyCompleted => unreachable!(),
             };
         }
-        assert!(matches!(task.poll_inner(), TaskState::AlreadyCompleted));
+        assert_matches!(task.poll_inner(), TaskState::AlreadyCompleted);
         assert!(task.completed());
     }
 
     #[tokio::test(start_paused = true)]
-    async fn spawn_blocking() {
-        let mut task = Task::spawn_blocking(|| 0);
-        assert!(!task.completed());
+    async fn update_task_repeatable_state() {
+        let mut task = None::<Task<Result<u32>>>;
+        assert!(task.is_none());
 
-        while !task.completed() {
-            match task.poll_inner() {
-                TaskState::Complete(value) => assert_eq!(value, 0),
-                TaskState::Pending => continue,
-                TaskState::Error => unreachable!(),
-                TaskState::AlreadyCompleted => unreachable!(),
-            };
+        assert_matches!(
+            update_task_repeatable(1000, &mut task, || Ok(0)),
+            Update::Pending
+        );
+        assert!(task.is_some());
+
+        while !task.as_ref().unwrap().completed() {
+            match update_task_repeatable(1000, &mut task, || Ok(0)) {
+                Update::Complete(value) => assert!(value.is_ok_and(|value| value == 0)),
+                Update::Pending => yield_now().await,
+            }
         }
-        assert!(matches!(task.poll_inner(), TaskState::AlreadyCompleted));
-        assert!(task.completed());
+        assert_matches!(
+            task.as_mut().unwrap().poll_inner(),
+            TaskState::AlreadyCompleted
+        );
+        assert!(task.as_ref().unwrap().completed());
+
+        assert_matches!(
+            update_task_repeatable(1000, &mut task, || Ok(0)),
+            Update::Pending
+        );
+        assert!(!task.as_ref().unwrap().completed());
     }
 }

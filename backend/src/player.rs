@@ -1598,3 +1598,29 @@ fn update_state(
     update_health_state(context, detector, state);
     Some(pos)
 }
+
+// #[cfg(test)]
+// mod tests {
+//     use opencv::core::Rect;
+
+//     use crate::{context::Context, detect::MockDetector};
+
+//     use super::PlayerState;
+
+//     fn create_mock_detector() -> MockDetector {
+//         let rect = Rect::new(0, 0, 100, 100);
+//         let player = Rect::new(50, 50, 10, 10);
+//         let mut detector = MockDetector::new();
+//         detector.expect_clone().returning(|| create_mock_detector());
+//         detector.expect_detect_player().return_const(Ok(player));
+//         detector
+//     }
+
+//     #[tokio::test(start_paused = true)]
+//     async fn update_health_state() {
+//         let rect = Rect::new(0, 0, 100, 100);
+//         let context = Context::default();
+//         let state = PlayerState::default();
+//         // update_health_state("");
+//     }
+// }

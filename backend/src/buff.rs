@@ -106,7 +106,7 @@ fn update_context(contextual: Buff, detector: &impl Detector, state: &mut BuffSt
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{assert_matches::assert_matches, time::Duration};
 
     use strum::IntoEnumIterator;
     use tokio::time;
@@ -181,7 +181,7 @@ mod tests {
             let buff = advance_task(Buff::NoBuff, &detector, &mut state).await;
             let buff = update_context(buff, &detector, &mut state);
             assert_eq!(state.fail_count, 0);
-            assert!(matches!(buff, Buff::HasBuff));
+            assert_matches!(buff, Buff::HasBuff);
         }
     }
 
@@ -194,7 +194,7 @@ mod tests {
 
             let buff = advance_task(Buff::HasBuff, &detector, &mut state).await;
             assert_eq!(state.fail_count, BUFF_FAIL_MAX_COUNT);
-            assert!(matches!(buff, Buff::NoBuff));
+            assert_matches!(buff, Buff::NoBuff);
         }
     }
 }

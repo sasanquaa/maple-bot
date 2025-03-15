@@ -7,6 +7,81 @@ use rand::distr::{Alphanumeric, SampleString};
 
 use crate::key::KeyInput;
 
+pub fn use_auto_numeric(
+    id: Memo<String>,
+    value: String,
+    on_value: Option<EventHandler<String>>,
+    maximum_value: String,
+    suffix: String,
+) {
+    let value = use_memo(use_reactive!(|value| { value }));
+    let maximum_value = use_memo(move || maximum_value.clone());
+    let suffix = use_memo(move || suffix.clone());
+    let mut initialized = use_signal(|| false);
+
+    use_effect(move || {
+        spawn(async move {
+            let js = format!(
+                r#"
+                const element = document.getElementById("{}");
+                const hasInput = {};
+                const autoNumeric = new AutoNumeric(element, {{
+                    allowDecimalPadding: false,
+                    emptyInputBehavior: "zero",
+                    maximumValue: "{}",
+                    minimumValue: "0",
+                    suffixText: "{}",
+                    defaultValueOverride: "{}"
+                }});
+                if (hasInput) {{
+                    element.addEventListener("autoNumeric:rawValueModified", async (e) => {{
+                        await dioxus.send(e.detail.newRawValue);
+                    }});
+                }}
+                element.addEventListener("autoNumeric:set", (e) => {{
+                    autoNumeric.set(e.detail.value);
+                }});
+                "#,
+                id(),
+                on_value.is_some(),
+                maximum_value(),
+                suffix(),
+                value()
+            );
+            let mut element = document::eval(js.as_str());
+            initialized.set(true);
+            if let Some(on_value) = on_value {
+                loop {
+                    let value = element.recv::<String>().await;
+                    if let Err(EvalError::Finished) = value {
+                        element = document::eval(js.as_str());
+                        continue;
+                    };
+                    on_value(value.unwrap());
+                }
+            }
+        });
+    });
+    use_effect(move || {
+        if !initialized() {
+            return;
+        }
+        let js = format!(
+            r#"
+            const element = document.getElementById("{}");
+            element.dispatchEvent(new CustomEvent("autoNumeric:set", {{
+                detail: {{
+                    value: {}
+                }}
+            }}));
+            "#,
+            id(),
+            value()
+        );
+        document::eval(js.as_str());
+    });
+}
+
 #[derive(Clone, PartialEq, Props)]
 pub struct LabeledInputProps {
     label: String,
@@ -121,7 +196,7 @@ pub fn MillisInput(
     }: GenericInputProps<u64>,
 ) -> Element {
     rsx! {
-        NumberInput {
+        PrimIntInput {
             label,
             label_class,
             div_class,
@@ -148,65 +223,18 @@ pub fn PercentageInput(
     }: GenericInputProps<f32>,
 ) -> Element {
     let input_id = use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
-
-    use_effect(move || {
-        spawn(async move {
-            let js = format!(
-                r#"
-                const input = document.getElementById("{}");
-                console.log(input);
-                if (input === null) {{
-                    return;
-                }}
-                const autoNumeric = new AutoNumeric(input, {{
-                    allowDecimalPadding: false,
-                    emptyInputBehavior: "zero",
-                    maximumValue: "100",
-                    minimumValue: "0",
-                    suffixText: "%",
-                    defaultValueOverride: "{}"
-                }});
-                input.addEventListener("autoNumeric:rawValueModified", async (e) => {{
-                    await dioxus.send(e.detail.newRawValue);
-                }});
-                input.addEventListener("autoNumeric:set", (e) => {{
-                    autoNumeric.set(e.detail.value);
-                }});
-                "#,
-                input_id(),
-                value
-            );
-            let mut input = document::eval(js.as_str());
-            loop {
-                let value = input.recv::<String>().await;
-                if let Err(EvalError::Finished) = value {
-                    input = document::eval(js.as_str());
-                    continue;
-                };
-                let Ok(value) = value.unwrap().parse::<f32>() else {
-                    continue;
-                };
-                on_input(value);
+    use_auto_numeric(
+        input_id,
+        value.to_string(),
+        Some(EventHandler::new(move |value: String| {
+            if let Ok(value) = value.parse::<f32>() {
+                on_input(value)
             }
-        });
-    });
-    use_effect(use_reactive!(|value| {
-        document::eval(
-            format!(
-                r#"
-                const input = document.getElementById("{}");
-                input.dispatchEvent(new CustomEvent("autoNumeric:set", {{
-                    detail: {{
-                        value: {}
-                    }}
-                }}));
-                "#,
-                input_id(),
-                value
-            )
-            .as_str(),
-        );
-    }));
+        })),
+        "100".to_string(),
+        "%".to_string(),
+    );
+
     rsx! {
         LabeledInput {
             label,
@@ -231,7 +259,7 @@ pub fn NumberInputI32(
     }: GenericInputProps<i32>,
 ) -> Element {
     rsx! {
-        NumberInput {
+        PrimIntInput {
             label,
             label_class,
             div_class,
@@ -244,78 +272,29 @@ pub fn NumberInputI32(
 }
 
 #[component]
-fn NumberInput<T: 'static + IntoAttributeValue + PrimInt + FromStr + Display>(
+fn PrimIntInput<T: 'static + IntoAttributeValue + PrimInt + FromStr + Display>(
     label: String,
     #[props(default = String::default())] label_class: String,
     #[props(default = String::default())] div_class: String,
     #[props(default = String::default())] input_class: String,
+    #[props(default = None)] maximum_value: Option<T>,
     #[props(default = String::default())] suffix: String,
     #[props(default = false)] disabled: bool,
     on_input: EventHandler<T>,
     value: T,
 ) -> Element {
     let input_id = use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
-
-    use_effect(move || {
-        let suffix = suffix.clone();
-        spawn(async move {
-            let js = format!(
-                r#"
-                const input = document.getElementById("{}");
-                if (input === null) {{
-                    return;
-                }}
-                const autoNumeric = new AutoNumeric(input, {{
-                    decimalPlaces: 0,
-                    emptyInputBehavior: "zero",
-                    maximumValue: "{}",
-                    minimumValue: "0",
-                    suffixText: "{}",
-                    defaultValueOverride: "{}"
-                }});
-                input.addEventListener("autoNumeric:rawValueModified", async (e) => {{
-                    await dioxus.send(e.detail.newRawValue);
-                }});
-                input.addEventListener("autoNumeric:set", (e) => {{
-                    autoNumeric.set(e.detail.value);
-                }});
-                "#,
-                input_id(),
-                T::max_value(),
-                suffix,
-                value
-            );
-            let mut input = document::eval(js.as_str());
-            loop {
-                let value = input.recv::<String>().await;
-                if let Err(EvalError::Finished) = value {
-                    input = document::eval(js.as_str());
-                    continue;
-                };
-                let Ok(value) = value.unwrap().parse::<T>() else {
-                    continue;
-                };
-                on_input(value);
+    use_auto_numeric(
+        input_id,
+        value.to_string(),
+        Some(EventHandler::new(move |value: String| {
+            if let Ok(value) = value.parse::<T>() {
+                on_input(value)
             }
-        });
-    });
-    use_effect(use_reactive!(|value| {
-        document::eval(
-            format!(
-                r#"
-                const input = document.getElementById("{}");
-                input.dispatchEvent(new CustomEvent("autoNumeric:set", {{
-                    detail: {{
-                        value: {}
-                    }}
-                }}));
-                "#,
-                input_id(),
-                value
-            )
-            .as_str(),
-        );
-    }));
+        })),
+        maximum_value.unwrap_or(T::max_value()).to_string(),
+        suffix,
+    );
 
     rsx! {
         LabeledInput {

@@ -12,6 +12,7 @@ use crate::{
     context::{Context, Contextual, ControlFlow},
     database::{Action, ActionKey, ActionMove, Minimap as MinimapData, query_maps, upsert_map},
     detect::Detector,
+    player::Player,
     task::{Task, Update, update_task_repeatable},
 };
 
@@ -64,24 +65,25 @@ impl Contextual for Minimap {
 
     fn update(
         self,
-        _: &Context,
+        context: &Context,
         detector: &impl Detector,
         state: &mut MinimapState,
     ) -> ControlFlow<Self> {
-        ControlFlow::Next(update_context(self, detector, state))
+        ControlFlow::Next(update_context(self, context, detector, state))
     }
 }
 
 #[inline]
 fn update_context(
     contextual: Minimap,
+    context: &Context,
     detector: &impl Detector,
     state: &mut MinimapState,
 ) -> Minimap {
     match contextual {
         Minimap::Detecting => update_detecting_context(detector, state),
         Minimap::Idle(idle) => {
-            update_idle_context(detector, state, idle).unwrap_or(Minimap::Detecting)
+            update_idle_context(context, detector, state, idle).unwrap_or(Minimap::Detecting)
         }
     }
 }
@@ -118,6 +120,7 @@ fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) 
 }
 
 fn update_idle_context(
+    context: &Context,
     detector: &impl Detector,
     state: &mut MinimapState,
     idle: MinimapIdle,
@@ -145,11 +148,15 @@ fn update_idle_context(
         return None;
     }
     let rune_detector = detector.clone();
-    let rune_update = update_task_repeatable(10000, &mut state.rune_task, move || {
-        rune_detector
-            .detect_minimap_rune(bbox)
-            .map(|rune| center_of_rune(rune, bbox, scale_w, scale_h))
-    });
+    let rune_update = if matches!(context.player, Player::SolvingRune(_)) && rune.is_some() {
+        Update::Pending
+    } else {
+        update_task_repeatable(10000, &mut state.rune_task, move || {
+            rune_detector
+                .detect_minimap_rune(bbox)
+                .map(|rune| center_of_rune(rune, bbox, scale_w, scale_h))
+        })
+    };
     let rune = match rune_update {
         Update::Complete(rune) => rune.ok(),
         Update::Pending => rune,
@@ -301,7 +308,7 @@ fn anchor_at(mat: &Mat, offset: Point, size: usize, sign: i32) -> Result<(Point,
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{assert_matches::assert_matches, time::Duration};
 
     use super::*;
     use crate::detect::MockDetector;
@@ -361,6 +368,7 @@ mod tests {
         detector: &impl Detector,
         state: &mut MinimapState,
     ) -> Minimap {
+        let context = Context::default();
         let completed = |state: &MinimapState| {
             if matches!(contextual, Minimap::Idle(_)) {
                 state.rune_task.as_ref().unwrap().completed()
@@ -368,12 +376,12 @@ mod tests {
                 state.data_task.as_ref().unwrap().completed()
             }
         };
-        let mut skill = update_context(contextual, detector, state);
+        let mut minimap = update_context(contextual, &context, detector, state);
         while !completed(state) {
-            skill = update_context(skill, detector, state);
+            minimap = update_context(minimap, &context, detector, state);
             time::advance(Duration::from_millis(1000)).await;
         }
-        skill
+        minimap
     }
 
     #[tokio::test(start_paused = true)]
@@ -382,7 +390,7 @@ mod tests {
         let (detector, bbox, anchors, data, _) = create_mock_detector();
 
         let minimap = advance_task(Minimap::Detecting, &detector, &mut state).await;
-        assert!(matches!(minimap, Minimap::Idle(_)));
+        assert_matches!(minimap, Minimap::Idle(_));
         match minimap {
             Minimap::Idle(idle) => {
                 assert_eq!(idle.anchors, anchors);
@@ -412,7 +420,7 @@ mod tests {
         };
 
         let minimap = advance_task(Minimap::Idle(idle), &detector, &mut state).await;
-        assert!(matches!(minimap, Minimap::Idle(_)));
+        assert_matches!(minimap, Minimap::Idle(_));
         match minimap {
             Minimap::Idle(idle) => {
                 assert_eq!(idle.rune, Some(center_of_rune(rune_bbox, bbox, 1.0, 1.0)));

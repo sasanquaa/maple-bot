@@ -11,7 +11,7 @@ use crate::{
     icons::XMark,
     input::{MillisInput, PercentageInput},
     key::KeyInput,
-    select::{Select, TextSelect},
+    select::{EnumSelect, TextSelect},
 };
 
 const DIV_CLASS: &str = "flex items-center space-x-4 text-xs text-gray-700";
@@ -214,16 +214,16 @@ pub fn Configuration(
                         });
                     },
                     value: Some(config_view().potion_key),
-                    EnumInput::<PotionMode> {
+                    ConfigEnumSelect::<PotionMode> {
                         label: "Potion Mode",
-                        on_input: move |mode| {
+                        on_select: move |mode| {
                             on_config(ConfigurationData {
                                 potion_mode: mode,
                                 ..config_view.peek().clone()
                             });
                         },
                         disabled: disabled(),
-                        value: config_view().potion_mode,
+                        selected: config_view().potion_mode,
                     }
                     match config_view().potion_mode {
                         PotionMode::EveryMillis(value) => rsx! {
@@ -382,45 +382,39 @@ pub fn Configuration(
                     "(Only for Any condition actions)"
                 }
             }
-            EnumInput::<RotationMode> {
+            ConfigEnumSelect::<RotationMode> {
                 label: "Rotation Mode",
-                on_input: move |mode| {
+                on_select: move |mode| {
                     on_config(ConfigurationData {
                         rotation_mode: mode,
                         ..config_view.peek().clone()
                     });
                 },
                 disabled: disabled(),
-                value: config_view().rotation_mode,
+                selected: config_view().rotation_mode,
             }
         }
     }
 }
 
 #[component]
-fn EnumInput<T: 'static + Clone + Copy + PartialEq + Display + FromStr + IntoEnumIterator>(
+fn ConfigEnumSelect<
+    T: 'static + Clone + Copy + PartialEq + Display + FromStr + IntoEnumIterator,
+>(
     label: String,
-    on_input: EventHandler<T>,
+    on_select: EventHandler<T>,
     disabled: bool,
-    value: T,
+    selected: T,
 ) -> Element {
-    let options = T::iter()
-        .map(|variant| (variant.to_string(), variant.to_string()))
-        .collect::<Vec<_>>();
-    let selected = value.to_string();
-
     rsx! {
-        Select {
+        EnumSelect {
             label,
             disabled,
             div_class: "flex items-center space-x-4",
             label_class: "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400",
             select_class: "w-44 text-xs text-gray-700 text-ellipsis rounded outline-none disabled:cursor-not-allowed disabled:text-gray-400",
-            options,
-            on_select: move |variant: String| {
-                if let Ok(value) = T::from_str(variant.as_str()) {
-                    on_input(value);
-                }
+            on_select: move |variant: T| {
+                on_select(variant);
             },
             selected,
         }
@@ -461,7 +455,7 @@ fn KeyBindingConfigurationInput(props: KeyBindingConfigurationInputProps) -> Ele
     let input_width = if props.can_disable { "w-24" } else { "w-44" };
 
     rsx! {
-        div { class: "flex flex-col space-y-3 py-2 border-b border-gray-100",
+        div { class: "flex flex-col space-y-4 py-2 border-b border-gray-100",
             div { class: "flex items-center space-x-4",
                 div { class: "flex-1",
                     span {

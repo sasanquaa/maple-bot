@@ -1,3 +1,6 @@
+use std::{fmt::Display, str::FromStr};
+
+use backend::IntoEnumIterator;
 use dioxus::prelude::*;
 
 use crate::input::LabeledInput;
@@ -17,6 +20,39 @@ pub struct SelectProps<T: 'static + Clone + PartialEq> {
     options: Vec<(T, String)>,
     on_select: EventHandler<T>,
     selected: T,
+}
+
+#[component]
+pub fn EnumSelect<T: 'static + Clone + Copy + PartialEq + Display + FromStr + IntoEnumIterator>(
+    #[props(default = String::default())] label: String,
+    #[props(default = String::from("collapse"))] label_class: String,
+    #[props(default = String::default())] div_class: String,
+    #[props(default = String::default())] select_class: String,
+    #[props(default = false)] disabled: bool,
+    on_select: EventHandler<T>,
+    selected: T,
+) -> Element {
+    let options = T::iter()
+        .map(|variant| (variant.to_string(), variant.to_string()))
+        .collect::<Vec<_>>();
+    let selected = selected.to_string();
+
+    rsx! {
+        Select {
+            label,
+            disabled,
+            div_class,
+            label_class,
+            select_class,
+            options,
+            on_select: move |variant: String| {
+                if let Ok(value) = T::from_str(variant.as_str()) {
+                    on_select(value);
+                }
+            },
+            selected,
+        }
+    }
 }
 
 #[component]

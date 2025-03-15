@@ -136,24 +136,29 @@ impl Rotator {
         player
             .priority_action_id()
             .map(|id| {
-                let action = self.priority_actions.get(&id).unwrap();
-                matches!(
-                    action.condition_kind,
-                    Some(ActionCondition::ErdaShowerOffCooldown)
-                )
-            })
-            .unwrap_or_else(|| {
-                self.priority_actions_queue.iter().any(|id| {
-                    let action = self.priority_actions.get(id).unwrap();
+                self.priority_actions.get(&id).is_some_and(|action| {
                     matches!(
                         action.condition_kind,
                         Some(ActionCondition::ErdaShowerOffCooldown)
                     )
                 })
             })
+            .unwrap_or_else(|| {
+                self.priority_actions_queue.iter().any(|id| {
+                    self.priority_actions.get(id).is_some_and(|action| {
+                        matches!(
+                            action.condition_kind,
+                            Some(ActionCondition::ErdaShowerOffCooldown)
+                        )
+                    })
+                })
+            })
     }
 
     pub fn rotate_action(&mut self, context: &Context, player: &mut PlayerState) {
+        if context.halting {
+            return;
+        }
         if matches!(context.player, Player::CashShopThenExit(_, _, _)) {
             return;
         }

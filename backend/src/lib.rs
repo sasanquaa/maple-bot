@@ -6,7 +6,7 @@
 #![feature(box_into_inner)]
 #![feature(downcast_unchecked)]
 #![feature(associated_type_defaults)]
-#![feature(mapped_lock_guards)]
+#![feature(assert_matches)]
 
 use std::{
     any::Any,
