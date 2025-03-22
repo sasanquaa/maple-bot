@@ -50,7 +50,7 @@ pub trait Detector: 'static + Send + Sync + Clone {
 
     /// Detects a list of mobs.
     ///
-    /// Returns a list of mobs coordinate in minimap coordinate.
+    /// Returns a list of mobs coordinate in minimap coordinate (need flip y for player coordinate).
     fn detect_mobs(&self, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>>;
 
     /// Detects whether there is a elite boss bar.
@@ -617,6 +617,7 @@ fn detect_player(mat: &impl ToInputArray, offset: Point) -> Result<Rect> {
     result
 }
 
+// TODO: need to divide by scale w scale h
 fn detect_mobs(mat: &Mat, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>> {
     static MOB_MODEL: LazyLock<Session> = LazyLock::new(|| {
         Session::builder()
@@ -637,21 +638,16 @@ fn detect_mobs(mat: &Mat, minimap: Rect, bound: Rect, player: Point) -> Result<V
         player: Point,
         size: Size,
     ) -> Option<Point> {
-        // const SCALE: f32 = 15.8805970149254;
-        // A1 = 0.04884071062932851550737729599518
-        // A2 = -0.0679915688045769346582354712436
-        // B1 = 0.04239686841312857573020174646191
-        // B2 = 0.25847636254140319180969587473653
         // this is the linear transformation from screen coordinate
         // to minimap coordinate that I cooked up using alchemy
         // Is it correct? I don't know, tried others but only this sort of work
         // [ A1 A2 ]
         // [ B1 B2 ]
-        const A1: f32 = 0.0657894736842105;
-        const A2: f32 = 0.120621443812233;
+        const A1: f32 = 0.065_789_476;
+        const A2: f32 = 0.120_621_44;
         const A: Point2f = Point2f::new(A1, A2);
         const B1: f32 = 0.0;
-        const B2: f32 = 0.0726351351351351;
+        const B2: f32 = 0.072_635_14;
         const B: Point2f = Point2f::new(B1, B2);
 
         // the main idea is to calculate the offset of the detected mob
@@ -670,7 +666,7 @@ fn detect_mobs(mat: &Mat, minimap: Rect, bound: Rect, player: Point) -> Result<V
 
         // transform to minimap coordinate
         // 20.0 is a based random number
-        let point = Point2f::new(point_x.dot(A), point_y.dot(B) - 18.0)
+        let point = Point2f::new(point_x.dot(A), point_y.dot(B) - 20.0)
             .to::<i32>()
             .unwrap();
         let point = if is_left {
@@ -679,13 +675,16 @@ fn detect_mobs(mat: &Mat, minimap: Rect, bound: Rect, player: Point) -> Result<V
             Point::new(player.x + point.x, player.y + point.y)
         };
         let point = Point::new(point.x, minimap.height - point.y);
-        if point.x < bound.x
+        if point.x < 0
+            || point.y < 0
+            || point.x < bound.x
             || point.x > bound.x + bound.width
             || point.y < bound.y
             || point.y > bound.y + bound.height
         {
             None
         } else {
+            debug!(target: "mob", "found mob {point:?} in bound {bound:?}");
             Some(point)
         }
     }
@@ -694,40 +693,39 @@ fn detect_mobs(mat: &Mat, minimap: Rect, bound: Rect, player: Point) -> Result<V
     let (mat_in, w_ratio, h_ratio) = preprocess_for_yolo(mat);
     let result = MOB_MODEL.run([norm_rgb_to_input_value(&mat_in)]).unwrap();
     let result = from_output_value(&result);
-    // let points = (0..result.rows())
     // SAFETY: 0..result.rows() is within Mat bounds
-    // .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
-    // .filter_map(|pred| if pred[4] > 0.8 { Some(pred) } else { None })
-    // .map(|pred| remap_from_yolo(pred, size, w_ratio, h_ratio))
-    // .filter_map(|bbox| to_minimap_coordinate(bbox, minimap, bound, player, size))
-    // .collect::<Vec<_>>();
-    let bboxes = (0..result.rows())
-        // SAFETY: 0..result.rows() is within Mat bounds
+    let points = (0..result.rows())
         .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
-        .filter_map(|pred| if pred[4] > 0.8 { Some(pred) } else { None })
+        .filter(|pred| pred[4] > 0.8)
         .map(|pred| remap_from_yolo(pred, size, w_ratio, h_ratio))
-        .collect::<Vec<_>>();
-    let points = bboxes
-        .iter()
-        .copied()
         .filter_map(|bbox| to_minimap_coordinate(bbox, minimap, bound, player, size))
         .collect::<Vec<_>>();
-    #[cfg(debug_assertions)]
-    if !bboxes.is_empty() {
-        debug_mat(
-            "Test",
-            mat,
-            1,
-            &points
-                .clone()
-                .into_iter()
-                .map(|pt| minimap.tl() + Point::new(pt.x, pt.y))
-                .map(|pt| Rect::from_points(pt - Point::new(5, 5), pt))
-                .chain(bboxes)
-                .collect::<Vec<_>>(),
-            &vec![""; points.len() * 2],
-        );
-    }
+    // let bboxes = (0..result.rows())
+    //     .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
+    //     .filter_map(|pred| if pred[4] > 0.8 { Some(pred) } else { None })
+    //     .map(|pred| remap_from_yolo(pred, size, w_ratio, h_ratio))
+    //     .collect::<Vec<_>>();
+    // let points = bboxes
+    //     .iter()
+    //     .copied()
+    //     .filter_map(|bbox| to_minimap_coordinate(bbox, minimap, bound, player, size))
+    //     .collect::<Vec<_>>();
+    // #[cfg(debug_assertions)]
+    // if !bboxes.is_empty() {
+    //     debug_mat(
+    //         "Test",
+    //         mat,
+    //         1,
+    //         &points
+    //             .clone()
+    //             .into_iter()
+    //             .map(|pt| minimap.tl() + Point::new(pt.x, pt.y))
+    //             .map(|pt| Rect::from_points(pt - Point::new(5, 5), pt))
+    //             .chain(bboxes)
+    //             .collect::<Vec<_>>(),
+    //         &vec![""; points.len() * 2],
+    //     );
+    // }
     Ok(points)
 }
 

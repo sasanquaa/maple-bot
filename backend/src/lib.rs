@@ -32,7 +32,7 @@ mod task;
 pub use {
     context::start_update_loop,
     database::{
-        Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
+        Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, Bound,
         Configuration, KeyBinding, KeyBindingConfiguration, Minimap, Position, PotionMode,
         RotationMode, delete_map, query_configs, upsert_config, upsert_map,
     },
@@ -40,11 +40,13 @@ pub use {
     strum::{IntoEnumIterator, ParseError},
 };
 
+type RequestItem = (Request, Sender<Response>);
+
 static REQUESTS: LazyLock<(
-    mpsc::Sender<(Request, Sender<Response>)>,
-    Mutex<mpsc::Receiver<(Request, Sender<Response>)>>,
+    mpsc::Sender<RequestItem>,
+    Mutex<mpsc::Receiver<RequestItem>>,
 )> = LazyLock::new(|| {
-    let (tx, rx) = mpsc::channel::<(Request, Sender<Response>)>(10);
+    let (tx, rx) = mpsc::channel::<RequestItem>(10);
     (tx, Mutex::new(rx))
 });
 
@@ -151,15 +153,21 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
     if let Ok((request, sender)) = LazyLock::force(&REQUESTS).1.lock().unwrap().try_recv() {
         let result = match request {
             Request::RotateActions(halting) => {
-                Response::RotateActions(handler.on_rotate_actions(halting))
+                handler.on_rotate_actions(halting);
+                Response::RotateActions(())
             }
             Request::UpdateMinimap(preset, minimap) => {
-                Response::UpdateMinimap(handler.on_update_minimap(preset, minimap))
+                handler.on_update_minimap(preset, minimap);
+                Response::UpdateMinimap(())
             }
             Request::UpdateConfiguration(config) => {
-                Response::UpdateConfiguration(handler.on_update_configuration(config))
+                handler.on_update_configuration(config);
+                Response::UpdateConfiguration(())
             }
-            Request::RedetectMinimap => Response::RedetectMinimap(handler.on_redetect_minimap()),
+            Request::RedetectMinimap => {
+                handler.on_redetect_minimap();
+                Response::RedetectMinimap(())
+            }
             Request::PlayerState => Response::PlayerState(handler.on_player_state()),
             Request::MinimapFrame => Response::MinimapFrame(handler.on_minimap_frame()),
             Request::MinimapData => Response::MinimapData(handler.on_minimap_data()),

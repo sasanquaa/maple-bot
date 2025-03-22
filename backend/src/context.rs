@@ -106,7 +106,7 @@ struct DefaultRequestHandler<'a> {
 impl DefaultRequestHandler<'_> {
     fn update_rotator_actions(&mut self, mode: RotatorMode) {
         self.rotator.build_actions(
-            config_actions(&self.config)
+            config_actions(self.config)
                 .into_iter()
                 .chain(self.actions.iter().copied())
                 .collect::<Vec<_>>()
@@ -133,10 +133,11 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         }
         if !*self.ignore_update_actions {
             self.minimap.data = minimap;
+            *self.player = PlayerState::default();
             *self.actions = preset
                 .and_then(|preset| self.minimap.data.actions.get(&preset).cloned())
                 .unwrap_or_default();
-            self.update_rotator_actions(self.config.rotation_mode.into());
+            self.update_rotator_actions((self.config as &_, &self.minimap.data).into());
         }
         if *self.ignore_update_actions && matches!(self.context.minimap, Minimap::Idle(_)) {
             *self.ignore_update_actions = false;
@@ -149,7 +150,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         }
         if !*self.ignore_update_actions {
             *self.config = config;
-            *self.buffs = config_buffs(&self.config);
+            *self.buffs = config_buffs(self.config);
             self.player.interact_key = self.config.interact_key.key.into();
             self.player.grappling_key = self.config.ropelift_key.key.into();
             self.player.upjump_key = self.config.up_jump_key.map(|key| key.key.into());
@@ -161,7 +162,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
                     (_, PotionMode::Percentage(percent)) => Some(percent / 100.0),
                 };
             self.player.update_health_millis = Some(self.config.health_update_millis);
-            self.update_rotator_actions(self.config.rotation_mode.into());
+            self.update_rotator_actions((self.config as &_, &self.minimap.data).into());
         }
         if *self.ignore_update_actions && matches!(self.context.minimap, Minimap::Idle(_)) {
             *self.ignore_update_actions = false;
@@ -184,7 +185,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_minimap_frame(&mut self) -> Option<(Vec<u8>, usize, usize)> {
-        extract_minimap(&self.context, self.detector.mat())
+        extract_minimap(self.context, self.detector.mat())
     }
 
     fn on_minimap_data(&mut self) -> Option<crate::Minimap> {
@@ -258,14 +259,6 @@ fn update_loop() {
         let detector = CachedDetector::new(mat);
         context.minimap = fold_context(&context, &detector, context.minimap, &mut minimap_state);
         context.player = fold_context(&context, &detector, context.player, &mut player_state);
-        // if true {
-        //     if let Minimap::Idle(idle) = context.minimap {
-        //         if let Some(pos) = player_state.last_known_pos {
-        //             let _ = detector.detect_mobs(idle.bbox, pos);
-        //         }
-        //     }
-        //     return;
-        // }
         (0..context.skills.len()).for_each(|i| {
             context.skills[i] =
                 fold_context(&context, &detector, context.skills[i], &mut skill_states[i]);

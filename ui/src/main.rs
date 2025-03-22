@@ -7,9 +7,9 @@ use std::str::FromStr;
 use std::string::ToString;
 
 use backend::{
-    Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
-    Configuration as ConfigurationData, IntoEnumIterator, Minimap as MinimapData, ParseError,
-    Position, start_update_loop, upsert_map,
+    Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, Bound,
+    Configuration as ConfigurationData, IntoEnumIterator, KeyBinding, Minimap as MinimapData,
+    ParseError, Position, start_update_loop, upsert_map,
 };
 use configuration::Configuration;
 use dioxus::{
@@ -66,6 +66,7 @@ fn App() -> Element {
     let last_preset = use_signal::<Option<(i64, String)>>(|| None);
     let configs = use_signal_sync(Vec::<ConfigurationData>::new);
     let config = use_signal_sync::<Option<ConfigurationData>>(|| None);
+    let copy_position = use_signal::<Option<(i32, i32)>>(|| None);
     let mut active_tab = use_signal(|| TAB_CONFIGURATION.to_string());
     let mut script_loaded = use_signal(|| false);
 
@@ -95,25 +96,29 @@ fn App() -> Element {
                     minimap,
                     preset,
                     last_preset,
+                    copy_position,
                     config,
                 }
                 Tab {
                     tabs: vec![TAB_CONFIGURATION.to_string(), TAB_ACTIONS.to_string()],
+                    class: "py-2 px-4 font-medium text-sm focus:outline-none",
+                    selected_class: "bg-white text-gray-800",
+                    unselected_class: "hover:text-gray-700 text-gray-400 bg-gray-100",
                     on_tab: move |tab| {
                         active_tab.set(tab);
                     },
                     tab: active_tab(),
                 }
-                div { class: "px-2 pb-2 pt-2 overflow-y-auto scrollbar h-full",
-                    match active_tab().as_str() {
-                        TAB_CONFIGURATION => rsx! {
+                match active_tab().as_str() {
+                    TAB_CONFIGURATION => rsx! {
+                        div { class: "px-2 pb-2 pt-2 overflow-y-auto scrollbar h-full",
                             Configuration { configs, config }
-                        },
-                        TAB_ACTIONS => rsx! {
-                            ActionInput { minimap, preset }
-                        },
-                        _ => unreachable!(),
-                    }
+                        }
+                    },
+                    TAB_ACTIONS => rsx! {
+                        ActionInput { minimap, preset, copy_position }
+                    },
+                    _ => unreachable!(),
                 }
             }
         }
@@ -123,23 +128,38 @@ fn App() -> Element {
 #[derive(PartialEq, Props, Clone)]
 struct TabProps {
     tabs: Vec<String>,
+    #[props(default = String::new())]
+    div_class: String,
+    class: String,
+    selected_class: String,
+    unselected_class: String,
     on_tab: EventHandler<String>,
     tab: String,
 }
 
 #[component]
-fn Tab(TabProps { tabs, on_tab, tab }: TabProps) -> Element {
+fn Tab(
+    TabProps {
+        tabs,
+        div_class,
+        class,
+        selected_class,
+        unselected_class,
+        on_tab,
+        tab,
+    }: TabProps,
+) -> Element {
     rsx! {
-        div { class: "flex",
+        div { class: "flex {div_class}",
             for t in tabs {
                 button {
                     class: {
-                        let class = if t == tab {
-                            "bg-white text-gray-800"
+                        let conditional_class = if t == tab {
+                            selected_class.clone()
                         } else {
-                            "hover:text-gray-700 text-gray-400 bg-gray-100"
+                            unselected_class.clone()
                         };
-                        format!("{class} py-2 px-4 font-medium text-sm focus:outline-none")
+                        format!("{conditional_class} {class}")
                     },
                     onclick: move |_| {
                         on_tab(t.clone());
@@ -391,9 +411,17 @@ fn ActionItem(
 }
 
 #[component]
-fn ActionInput(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<String>>) -> Element {
+fn ActionInput(
+    minimap: Signal<Option<MinimapData>>,
+    preset: Signal<Option<String>>,
+    copy_position: Signal<Option<(i32, i32)>>,
+) -> Element {
+    const TAB_PRESET: &str = "Preset";
+    const TAB_AUTO_MOBBING: &str = "Auto Mobbing";
+
     let mut editing_action = use_signal::<Option<(Action, usize)>>(|| None);
     let mut value_action = use_signal(|| Action::Move(ActionMove::default()));
+    let mut active_tab = use_signal(|| TAB_PRESET.to_string());
 
     let save_minimap = move |mut minimap: MinimapData| {
         spawn(async move {
@@ -447,129 +475,198 @@ fn ActionInput(minimap: Signal<Option<MinimapData>>, preset: Signal<Option<Strin
             save_minimap(minimap.clone());
         }
     });
+    let on_auto_mob = use_callback(move |(enabled, key, bound)| {
+        if let Some(minimap) = minimap.write().as_mut() {
+            minimap.auto_mobbing_enabled = enabled;
+            minimap.auto_mobbing_key = key;
+            minimap.auto_mobbing_bound = bound;
+            save_minimap(minimap.clone());
+        }
+    });
 
     use_effect(move || {
         if preset().is_none() {
             editing_action.set(None);
+            copy_position.set(None);
+        }
+    });
+    use_effect(move || {
+        if let Some((x, y)) = copy_position() {
+            let mut action = *value_action.peek();
+            match &mut action {
+                Action::Move(action_move) => {
+                    action_move.position = Position {
+                        x,
+                        y,
+                        ..action_move.position
+                    }
+                }
+                Action::Key(action_key) => {
+                    action_key.position = action_key.position.map_or(
+                        Some(Position {
+                            x,
+                            y,
+                            ..Position::default()
+                        }),
+                        |pos| Some(Position { x, y, ..pos }),
+                    );
+                }
+            }
+            on_edit(action);
         }
     });
 
     rsx! {
-        div { class: "flex flex-col h-full",
-            TextSelect {
-                on_create: move |created: String| {
-                    if let Some(minimap) = minimap.write().deref_mut() {
-                        let actions_inserted = minimap
-                            .actions
-                            .try_insert(created.clone(), vec![])
-                            .is_ok();
-                        if actions_inserted {
-                            save_minimap(minimap.clone());
+        Tab {
+            tabs: vec![TAB_PRESET.to_string(), TAB_AUTO_MOBBING.to_string()],
+            div_class: "px-2 pt-2 pb-2 mb-2",
+            class: "text-xs px-2 pb-2 focus:outline-none",
+            selected_class: "text-gray-800 border-b",
+            unselected_class: "hover:text-gray-700 text-gray-400",
+            on_tab: move |tab| {
+                active_tab.set(tab);
+            },
+            tab: active_tab(),
+        }
+        div { class: "px-2 pb-2 overflow-y-auto scrollbar h-full",
+            match active_tab().as_str() {
+                TAB_PRESET => rsx! {
+                    div { class: "flex flex-col h-full",
+                        TextSelect {
+                            on_create: move |created: String| {
+                                if let Some(minimap) = minimap.write().deref_mut() {
+                                    let actions_inserted = minimap
+                                        .actions
+                                        .try_insert(created.clone(), vec![])
+                                        .is_ok();
+                                    if actions_inserted {
+                                        save_minimap(minimap.clone());
+                                    }
+                                    preset.set(Some(created));
+                                }
+                            },
+                            disabled: minimap().is_none(),
+                            on_select: move |selected| {
+                                preset.set(Some(selected));
+                            },
+                            options: presets(),
+                            selected: preset(),
                         }
-                        preset.set(Some(created));
-                    }
-                },
-                disabled: minimap().is_none(),
-                on_select: move |selected| {
-                    preset.set(Some(selected));
-                },
-                options: presets(),
-                selected: preset(),
-            }
-            div { class: "flex space-x-2 overflow-y-auto flex-1",
-                div { class: "w-1/2 overflow-y-auto scrollbar pr-2",
-                    div { class: "flex flex-col space-y-2.5",
-                        ActionEnumSelect {
-                            label: "Type",
-                            on_input: move |action: Action| {
-                                if let Some((editing_action, _)) = *editing_action.peek() {
-                                    if editing_action.to_string() == action.to_string() {
-                                        on_edit(editing_action);
-                                        return;
+                        div { class: "flex space-x-2 overflow-y-auto flex-1",
+                            div { class: "w-1/2 overflow-y-auto scrollbar pr-2",
+                                div { class: "flex flex-col space-y-2.5",
+                                    ActionEnumSelect {
+                                        label: "Type",
+                                        on_input: move |action: Action| {
+                                            if let Some((editing_action, _)) = *editing_action.peek() {
+                                                if editing_action.to_string() == action.to_string() {
+                                                    on_edit(editing_action);
+                                                    return;
+                                                }
+                                            }
+                                            on_edit(action);
+                                        },
+                                        disabled: preset().is_none(),
+                                        value: value_action(),
+                                    }
+                                    match value_action() {
+                                        Action::Move(_) => rsx! {
+                                            ActionMoveInput {
+                                                on_input: move |action| {
+                                                    on_edit(action);
+                                                },
+                                                disabled: preset().is_none(),
+                                                value: value_action(),
+                                            }
+                                        },
+                                        Action::Key(_) => rsx! {
+                                            ActionKeyInput {
+                                                on_input: move |action| {
+                                                    on_edit(action);
+                                                },
+                                                disabled: preset().is_none(),
+                                                value: value_action(),
+                                            }
+                                        },
+                                    }
+                                    if editing_action().is_none() {
+                                        button {
+                                            class: "w-full button-primary h-6",
+                                            disabled: preset().is_none(),
+                                            onclick: move |_| {
+                                                on_save(None);
+                                            },
+                                            "Add action"
+                                        }
+                                    } else {
+                                        div { class: "grid grid-cols-2 gap-x-2",
+                                            button {
+                                                class: "button-primary h-6",
+                                                onclick: move |_| {
+                                                    on_save(editing_action.replace(None).map(|tuple| tuple.1));
+                                                },
+                                                "Save"
+                                            }
+                                            button {
+                                                class: "button-secondary h-6",
+                                                onclick: move |_| {
+                                                    editing_action.set(None);
+                                                },
+                                                "Cancel"
+                                            }
+                                        }
                                     }
                                 }
-                                on_edit(action);
-                            },
-                            disabled: preset().is_none(),
-                            value: value_action(),
-                        }
-                        match value_action() {
-                            Action::Move(_) => rsx! {
-                                ActionMoveInput {
-                                    on_input: move |action| {
-                                        on_edit(action);
-                                    },
-                                    disabled: preset().is_none(),
-                                    value: value_action(),
-                                }
-                            },
-                            Action::Key(_) => rsx! {
-                                ActionKeyInput {
-                                    on_input: move |action| {
-                                        on_edit(action);
-                                    },
-                                    disabled: preset().is_none(),
-                                    value: value_action(),
-                                }
-                            },
-                        }
-                        if editing_action().is_none() {
-                            button {
-                                class: "w-full button-primary h-6",
-                                disabled: preset().is_none(),
-                                onclick: move |_| {
-                                    on_save(None);
-                                },
-                                "Add action"
                             }
-                        } else {
-                            div { class: "grid grid-cols-2 gap-x-2",
-                                button {
-                                    class: "button-primary h-6",
-                                    onclick: move |_| {
-                                        on_save(editing_action.replace(None).map(|tuple| tuple.1));
-                                    },
-                                    "Save"
-                                }
-                                button {
-                                    class: "button-secondary h-6",
-                                    onclick: move |_| {
-                                        editing_action.set(None);
-                                    },
-                                    "Cancel"
-                                }
+                            ActionItemList {
+                                disabled: preset().is_none(),
+                                actions: actions(),
+                                on_click: move |(action, index)| {
+                                    editing_action.set(Some((action, index)));
+                                    on_edit(action);
+                                },
+                                on_remove: move |index| {
+                                    let editing = *editing_action.peek();
+                                    if let Some((action, i)) = editing {
+                                        if index == i {
+                                            editing_action.set(None);
+                                        } else if index < i {
+                                            editing_action.set(Some((action, i.saturating_sub(1))));
+                                        }
+                                    }
+                                    on_remove(index);
+                                },
+                                on_change: move |(a, b, swapping)| {
+                                    let editing = *editing_action.peek();
+                                    if let Some((action, index)) = editing {
+                                        if index == a {
+                                            editing_action.set(Some((action, b)));
+                                        } else if swapping && index == b {
+                                            editing_action.set(Some((action, a)));
+                                        }
+                                    }
+                                    on_change((a, b, swapping));
+                                },
                             }
                         }
                     }
-                }
-                ActionItemList {
-                    disabled: preset().is_none(),
-                    actions: actions(),
-                    on_click: move |(action, index)| {
-                        editing_action.set(Some((action, index)));
-                        on_edit(action);
-                    },
-                    on_remove: move |index| {
-                        let editing = *editing_action.peek();
-                        if let Some((_, i)) = editing {
-                            if index == i {
-                                editing_action.set(None);
-                            }
-                        }
-                        on_remove(index);
-                    },
-                    on_change: move |(a, b, swapping)| {
-                        let editing = *editing_action.peek();
-                        if let Some((action, index)) = editing {
-                            if index == a {
-                                editing_action.set(Some((action, b)));
-                            } else if swapping && index == b {
-                                editing_action.set(Some((action, a)));
-                            }
-                        }
-                        on_change((a, b, swapping));
-                    },
-                }
+                },
+                TAB_AUTO_MOBBING => rsx! {
+                    AutoMobInput {
+                        disabled: minimap().is_none(),
+                        on_input: move |value| {
+                            on_auto_mob(value);
+                        },
+                        value: minimap()
+                            .map(|minimap| (
+                                minimap.auto_mobbing_enabled,
+                                minimap.auto_mobbing_key,
+                                minimap.auto_mobbing_bound,
+                            ))
+                            .unwrap_or_default(),
+                    }
+                },
+                _ => unreachable!(),
             }
         }
     }
@@ -626,7 +723,7 @@ fn PositionInput(props: InputConfigProps<Position>) -> Element {
             label: "Adjust position",
             div_class: DIV_CLASS,
             label_class: LABEL_CLASS,
-            input_class: "appearance-none h-4 w-4 border border-gray-300 rounded checked:bg-gray-400",
+            input_class: "w-22 flex items-center",
             disabled: props.disabled,
             on_input: move |checked| {
                 set_allow_adjusting(checked);
@@ -743,7 +840,7 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
                 label: "Position",
                 label_class: LABEL_CLASS,
                 div_class: DIV_CLASS,
-                input_class: "appearance-none h-4 w-4 border border-gray-300 rounded checked:bg-gray-400",
+                input_class: "w-22 flex items-center",
                 disabled: props.disabled,
                 on_input: move |checked: bool| {
                     set_position(checked.then_some(Position::default()));
@@ -782,7 +879,7 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
                     label: "Queue to front",
                     label_class: LABEL_CLASS,
                     div_class: DIV_CLASS,
-                    input_class: "appearance-none h-4 w-4 border border-gray-300 rounded checked:bg-gray-400",
+                    input_class: "w-22 flex items-center",
                     disabled: props.disabled,
                     on_input: move |checked: bool| {
                         set_queue_to_front(Some(checked));
@@ -883,6 +980,96 @@ fn ActionEnumSelect<
                 on_input(selected);
             },
             selected: value,
+        }
+    }
+}
+
+#[component]
+fn AutoMobInput(
+    disabled: bool,
+    on_input: EventHandler<(bool, KeyBinding, Bound)>,
+    value: (bool, KeyBinding, Bound),
+) -> Element {
+    const DIV_CLASS: &str = "flex py-2 border-b border-gray-100 space-x-2";
+    const LABEL_CLASS: &str =
+        "flex-1 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400";
+    const INPUT_CLASS: &str = "w-28 px-1.5 h-6 border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
+
+    let (enabled, key, value) = value;
+
+    rsx! {
+        div { class: "flex flex-col space-y-2",
+            p { class: "italic text-xs text-gray-400", "*Mob detected outside of bound is ignored" }
+            p { class: "italic text-xs text-gray-400",
+                "*Action in preset with Any condition is ignored when enabled"
+            }
+            p { class: "italic text-xs text-gray-400", "*X,Y origin is top-left of minimap" }
+            Checkbox {
+                label: "Enabled",
+                div_class: DIV_CLASS,
+                label_class: LABEL_CLASS,
+                input_class: "w-28 flex items-center",
+                disabled,
+                on_input: move |checked| {
+                    on_input((checked, key, value));
+                },
+                value: enabled,
+            }
+            KeyBindingInput {
+                label: "Mobbing Key",
+                label_class: LABEL_CLASS,
+                div_class: DIV_CLASS,
+                input_class: INPUT_CLASS,
+                disabled,
+                on_input: move |key| {
+                    on_input((enabled, key, value));
+                },
+                value: key,
+            }
+            NumberInputI32 {
+                label: "X",
+                div_class: DIV_CLASS,
+                label_class: LABEL_CLASS,
+                input_class: INPUT_CLASS,
+                disabled,
+                on_input: move |x| {
+                    on_input((enabled, key, Bound { x, ..value }));
+                },
+                value: value.x,
+            }
+            NumberInputI32 {
+                label: "Y",
+                div_class: DIV_CLASS,
+                label_class: LABEL_CLASS,
+                input_class: INPUT_CLASS,
+                disabled,
+                on_input: move |y| {
+                    on_input((enabled, key, Bound { y, ..value }));
+                },
+                value: value.y,
+            }
+            NumberInputI32 {
+                label: "Width",
+                div_class: DIV_CLASS,
+                label_class: LABEL_CLASS,
+                input_class: INPUT_CLASS,
+                disabled,
+                on_input: move |width| {
+                    on_input((enabled, key, Bound { width, ..value }));
+                },
+                value: value.width,
+            }
+            NumberInputI32 {
+                label: "Height",
+                div_class: DIV_CLASS,
+                label_class: LABEL_CLASS,
+                input_class: INPUT_CLASS,
+                disabled,
+                on_input: move |height| {
+                    on_input((enabled, key, Bound { height, ..value }));
+                },
+                value: value.height,
+            }
         }
     }
 }

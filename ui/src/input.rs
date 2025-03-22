@@ -170,14 +170,16 @@ pub fn Checkbox(
             label_class,
             div_class,
             disabled,
-            input {
-                class: input_class,
-                disabled,
-                r#type: "checkbox",
-                oninput: move |e| {
-                    on_input(e.parsed::<bool>().unwrap());
-                },
-                checked: value,
+            div { class: input_class,
+                input {
+                    class: "appearance-none h-4 w-4 border border-gray-300 rounded checked:bg-gray-400",
+                    disabled,
+                    r#type: "checkbox",
+                    oninput: move |e| {
+                        on_input(e.parsed::<bool>().unwrap());
+                    },
+                    checked: value,
+                }
             }
         }
     }

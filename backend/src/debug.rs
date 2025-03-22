@@ -7,7 +7,6 @@ use opencv::core::Scalar;
 use opencv::core::Size;
 use opencv::core::add_weighted_def;
 use opencv::highgui::WINDOW_KEEPRATIO;
-use opencv::highgui::WINDOW_NORMAL;
 use opencv::highgui::named_window;
 use opencv::imgproc::COLOR_BGRA2GRAY;
 use opencv::imgproc::LINE_8;
@@ -62,7 +61,6 @@ pub fn debug_mat<T: AsRef<str>>(
             Scalar::new(0.0, 255.0, 0.0, 0.0),
         );
     }
-    // named_window(name, WINDOW_NORMAL | WINDOW_KEEPRATIO).unwrap();
     named_window(name, WINDOW_KEEPRATIO).unwrap();
     imshow(name, &mat).unwrap();
     wait_key(wait).unwrap()
@@ -71,8 +69,8 @@ pub fn debug_mat<T: AsRef<str>>(
 #[allow(unused)]
 pub fn save_image_for_training(mat: &Mat) {
     let name = Alphanumeric.sample_string(&mut rand::rng(), 8);
-    // let mat = to_grayscale(mat);
-    let mat = mat.clone();
+    let mat = to_grayscale(mat);
+    // let mat = mat.clone();
     let image = LazyLock::force(&DATASET_DIR).join(format!("{name}.png"));
 
     debug_mat("Image", &mat, 0, &[], &[""; 0]);

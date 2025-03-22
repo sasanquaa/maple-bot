@@ -20,6 +20,7 @@ pub fn Minimap(
     minimap: Signal<Option<MinimapData>>,
     preset: Signal<Option<String>>,
     last_preset: Signal<Option<(i64, String)>>,
+    copy_position: Signal<Option<(i32, i32)>>,
     config: ReadOnlySignal<Option<Configuration>, SyncStorage>,
 ) -> Element {
     const MINIMAP_JS: &str = r#"
@@ -44,7 +45,7 @@ pub fn Minimap(
     const MINIMAP_ACTIONS_JS: &str = r#"
         const canvas = document.getElementById("canvas-minimap-actions");
         const canvasCtx = canvas.getContext("2d");
-        const [width, height, actions] = await dioxus.recv();
+        const [width, height, actions, autoMobEnabled, autoMobBound] = await dioxus.recv();
         canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
         const anyActions = actions.filter((action) => action.condition === "Any");
         const erdaActions = actions.filter((action) => action.condition === "ErdaShowerOffCooldown");
@@ -53,6 +54,15 @@ pub fn Minimap(
         canvasCtx.fillStyle = "rgb(255, 153, 128)";
         canvasCtx.strokeStyle = "rgb(255, 153, 128)";
         drawActions(canvas, canvasCtx, anyActions, true);
+        if (autoMobEnabled) {
+            const x = (autoMobBound.x / width) * canvas.width;
+            const y = (autoMobBound.y / height) * canvas.height;
+            const w = (autoMobBound.width / width) * canvas.width;
+            const h = (autoMobBound.height / height) * canvas.height;
+            canvasCtx.beginPath();
+            canvasCtx.rect(x, y, w, h);
+            canvasCtx.stroke();
+        }
 
         canvasCtx.fillStyle = "rgb(179, 198, 255)";
         canvasCtx.strokeStyle = "rgb(179, 198, 255)";
@@ -67,8 +77,8 @@ pub fn Minimap(
             const rectHalf = rectSize / 2;
             let lastAction = null;
             for (const action of actions) {
-                let x = (action.x / width) * canvas.width;
-                let y = ((height - action.y) / height) * canvas.height;
+                const x = (action.x / width) * canvas.width;
+                const y = ((height - action.y) / height) * canvas.height;
                 ctx.fillRect(x, y, rectSize, rectSize);
                 if (!hasArc) {
                     continue;
@@ -159,12 +169,19 @@ pub fn Minimap(
         }
     });
     use_effect(move || {
-        let size = minimap().map(|minimap| (minimap.width, minimap.height));
+        let config = minimap().map(|minimap| {
+            (
+                minimap.width,
+                minimap.height,
+                minimap.auto_mobbing_enabled,
+                minimap.auto_mobbing_bound,
+            )
+        });
         let actions = actions();
-        if let Some((width, height)) = size {
+        if let Some((width, height, enabled, bound)) = config {
             spawn(async move {
                 document::eval(MINIMAP_ACTIONS_JS)
-                    .send((width, height, actions))
+                    .send((width, height, actions, enabled, bound))
                     .unwrap();
             });
         }
@@ -197,8 +214,17 @@ pub fn Minimap(
 
     rsx! {
         div { class: "flex flex-col items-center justify-center space-y-4 mb-8",
-            p { class: "text-gray-700 text-sm",
-                {minimap().map(|minimap| minimap.name).unwrap_or("Detecting...".to_string())}
+            div { class: "flex flex-col items-center justify-center space-y-2",
+                p { class: "text-gray-700 text-sm",
+                    {minimap().map(|minimap| minimap.name).unwrap_or("Detecting...".to_string())}
+                }
+                p { class: "text-gray-700 text-xs",
+                    {
+                        minimap()
+                            .map(|minimap| format!("{}px x {}px", minimap.width, minimap.height))
+                            .unwrap_or("Width, Height".to_string())
+                    }
+                }
             }
             div { class: "relative p-3 h-36 border border-gray-300 rounded-md",
                 canvas { class: "w-full h-full", id: "canvas-minimap" }
@@ -207,7 +233,13 @@ pub fn Minimap(
                 }
             }
             div { class: "flex flex-col text-gray-700 text-xs space-y-1 font-mono",
-                p { class: "text-center",
+                p {
+                    class: "text-center hover:bg-gray-100",
+                    onclick: move |_| {
+                        if let Some(pos) = state.peek().as_ref().and_then(|state| state.position) {
+                            copy_position.set(Some(pos));
+                        }
+                    },
                     {
                         state()
                             .and_then(|state| state.position)

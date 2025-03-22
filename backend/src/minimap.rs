@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use anyhow::{Result, anyhow};
 use log::debug;
 use opencv::{
@@ -185,11 +183,10 @@ fn get_data_for_minimap(bbox: &Rect, name: &str) -> Result<(MinimapData, f32, f3
     if cfg!(test) {
         return Ok((
             MinimapData {
-                id: None,
                 name: name.to_string(),
                 width: bbox.width,
                 height: bbox.height,
-                actions: HashMap::new(),
+                ..MinimapData::default()
             },
             1.0,
             1.0,
@@ -258,11 +255,10 @@ fn get_data_for_minimap(bbox: &Rect, name: &str) -> Result<(MinimapData, f32, f3
         }
         None => {
             let mut map = MinimapData {
-                id: None,
                 name: name.to_string(),
                 width: bbox.width,
                 height: bbox.height,
-                actions: HashMap::new(),
+                ..MinimapData::default()
             };
             upsert_map(&mut map)?;
             debug!(target: "minimap", "new minimap data detected {map:?}");
@@ -338,11 +334,10 @@ mod tests {
         let bbox = Rect::new(0, 0, 100, 100);
         let rune_bbox = Rect::new(40, 40, 20, 20);
         let data = MinimapData {
-            id: None,
             name: "TestMap".to_string(),
             width: bbox.width,
             height: bbox.height,
-            actions: HashMap::new(),
+            ..MinimapData::default()
         };
         detector
             .expect_detect_minimap_rune()

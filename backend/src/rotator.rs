@@ -4,13 +4,14 @@ use opencv::core::{Point, Rect};
 use ordered_hash_map::OrderedHashMap;
 use rand::seq::IndexedRandom;
 use std::{
+    assert_matches::debug_assert_matches,
     collections::VecDeque,
     sync::atomic::{AtomicU32, Ordering},
     time::Instant,
 };
 
 use crate::{
-    ActionKeyDirection, ActionKeyWith, KeyBinding, Position, RotationMode,
+    ActionKeyDirection, ActionKeyWith, Configuration, KeyBinding, Position, RotationMode,
     buff::Buff,
     context::{Context, ERDA_SHOWER_SKILL_POSITION, RUNE_BUFF_POSITION},
     database::{Action, ActionCondition, ActionKey, ActionMove},
@@ -35,20 +36,24 @@ struct PriorityAction {
     last_queued_time: Option<Instant>,
 }
 
+// TODO: merge RotationMode in Configuration with Minimap
 #[derive(Default)]
 pub enum RotatorMode {
     StartToEnd,
     #[default]
     StartToEndThenReverse,
-    AutoMobbing,
+    AutoMobbing(KeyBinding, Rect),
 }
 
-impl From<RotationMode> for RotatorMode {
-    fn from(value: RotationMode) -> Self {
-        match value {
-            RotationMode::StartToEnd => RotatorMode::StartToEnd,
-            RotationMode::StartToEndThenReverse => RotatorMode::StartToEndThenReverse,
-            RotationMode::AutoMobbing => RotatorMode::AutoMobbing,
+impl From<(&Configuration, &crate::Minimap)> for RotatorMode {
+    fn from((config, minimap): (&Configuration, &crate::Minimap)) -> Self {
+        if minimap.auto_mobbing_enabled {
+            RotatorMode::AutoMobbing(minimap.auto_mobbing_key, minimap.auto_mobbing_bound.into())
+        } else {
+            match config.rotation_mode {
+                RotationMode::StartToEnd => RotatorMode::StartToEnd,
+                RotationMode::StartToEndThenReverse => RotatorMode::StartToEndThenReverse,
+            }
         }
     }
 }
@@ -80,42 +85,23 @@ impl Rotator {
 
         // this is literally free postfix increment!
         let id = AtomicU32::new(0);
-        if !matches!(self.normal_rotate_mode, RotatorMode::AutoMobbing) {
-            for action in actions.iter().copied() {
-                match action {
-                    Action::Move(ActionMove { condition, .. })
-                    | Action::Key(ActionKey { condition, .. }) => match condition {
-                        ActionCondition::EveryMillis(_)
-                        | ActionCondition::ErdaShowerOffCooldown => {
-                            self.priority_actions.insert(
-                                id.fetch_add(1, Ordering::Relaxed),
-                                PriorityAction {
-                                    action: action.into(),
-                                    condition: Box::new(move |context, last_queued_time| {
-                                        should_queue_fixed_action(
-                                            context,
-                                            last_queued_time,
-                                            condition,
-                                        )
-                                    }),
-                                    condition_kind: Some(condition),
-                                    queue_to_front: if let Action::Key(ActionKey {
-                                        queue_to_front,
-                                        ..
-                                    }) = action
-                                    {
-                                        queue_to_front.unwrap_or_default()
-                                    } else {
-                                        false
-                                    },
-                                    ignoring: false,
-                                    last_queued_time: None,
-                                },
-                            );
+        for action in actions.iter().copied() {
+            match action {
+                Action::Move(ActionMove { condition, .. })
+                | Action::Key(ActionKey { condition, .. }) => match condition {
+                    ActionCondition::EveryMillis(_) | ActionCondition::ErdaShowerOffCooldown => {
+                        self.priority_actions.insert(
+                            id.fetch_add(1, Ordering::Relaxed),
+                            priority_action(action, condition),
+                        );
+                    }
+                    ActionCondition::Any => {
+                        if matches!(self.normal_rotate_mode, RotatorMode::AutoMobbing(_, _)) {
+                            continue;
                         }
-                        ActionCondition::Any => self.normal_actions.push(action.into()),
-                    },
-                }
+                        self.normal_actions.push(action.into())
+                    }
+                },
             }
         }
         self.priority_actions.insert(
@@ -234,64 +220,98 @@ impl Rotator {
         }
         if !player.has_normal_action() {
             match self.normal_rotate_mode {
-                RotatorMode::StartToEnd => {
-                    if self.normal_actions.is_empty() {
-                        return;
-                    }
-                    debug_assert!(self.normal_index < self.normal_actions.len());
-                    let action = self.normal_actions[self.normal_index];
-                    self.normal_index = (self.normal_index + 1) % self.normal_actions.len();
-                    player.set_normal_action(action);
-                }
-                RotatorMode::StartToEndThenReverse => {
-                    if self.normal_actions.is_empty() {
-                        return;
-                    }
-                    debug_assert!(self.normal_index < self.normal_actions.len());
-                    let len = self.normal_actions.len();
-                    let i = if self.normal_action_backward {
-                        (len - self.normal_index).saturating_sub(1)
-                    } else {
-                        self.normal_index
-                    };
-                    if (self.normal_index + 1) == len {
-                        self.normal_action_backward = !self.normal_action_backward
-                    }
-                    self.normal_index = (self.normal_index + 1) % len;
-                    player.set_normal_action(self.normal_actions[i]);
-                }
-                RotatorMode::AutoMobbing => {
-                    let Minimap::Idle(idle) = context.minimap else {
-                        return;
-                    };
-                    let Some(pos) = player.last_known_pos else {
-                        return;
-                    };
-                    let detector = detector.clone();
-                    let Update::Complete(Ok(points)) =
-                        update_task_repeatable(0, &mut self.auto_mob_task, move || {
-                            Ok(detector
-                                .detect_mobs(idle.bbox, Rect::new(17, 8, 143, 24), pos)?
-                                .into_iter()
-                                .filter(|point| (pos.x - point.x).abs() <= 25)
-                                .collect::<Vec<_>>())
-                        })
-                    else {
-                        return;
-                    };
-                    let Some(point) = points.choose(&mut rand::rng()) else {
-                        return;
-                    };
-                    player.set_normal_action(PlayerAction::AutoMob(PlayerActionAutoMob {
-                        position: Position {
-                            x: point.x,
-                            y: point.y,
-                            allow_adjusting: false,
-                        },
-                    }));
+                RotatorMode::StartToEnd => self.rotate_start_end(player),
+                RotatorMode::StartToEndThenReverse => self.rotate_start_to_end_then_reverse(player),
+                RotatorMode::AutoMobbing(key, bound) => {
+                    self.rotate_auto_mobbing(context, detector, player, key, bound)
                 }
             }
         }
+    }
+
+    fn rotate_auto_mobbing(
+        &mut self,
+        context: &Context,
+        detector: &impl Detector,
+        player: &mut PlayerState,
+        key: KeyBinding,
+        bound: opencv::core::Rect_<i32>,
+    ) {
+        let Minimap::Idle(idle) = context.minimap else {
+            return;
+        };
+        let Some(pos) = player.last_known_pos else {
+            return;
+        };
+        let detector = detector.clone();
+        let Update::Complete(Ok(points)) =
+            update_task_repeatable(0, &mut self.auto_mob_task, move || {
+                detector.detect_mobs(idle.bbox, bound, pos)
+            })
+        else {
+            return;
+        };
+        let Some(point) = points.choose(&mut rand::rng()) else {
+            return;
+        };
+        player.set_normal_action(PlayerAction::AutoMob(PlayerActionAutoMob {
+            key,
+            position: Position {
+                x: point.x,
+                y: idle.bbox.height - point.y,
+                allow_adjusting: false,
+            },
+        }));
+    }
+
+    fn rotate_start_end(&mut self, player: &mut PlayerState) {
+        if self.normal_actions.is_empty() {
+            return;
+        }
+        debug_assert!(self.normal_index < self.normal_actions.len());
+        let action = self.normal_actions[self.normal_index];
+        self.normal_index = (self.normal_index + 1) % self.normal_actions.len();
+        player.set_normal_action(action);
+    }
+
+    fn rotate_start_to_end_then_reverse(&mut self, player: &mut PlayerState) {
+        if self.normal_actions.is_empty() {
+            return;
+        }
+        debug_assert!(self.normal_index < self.normal_actions.len());
+        let len = self.normal_actions.len();
+        let i = if self.normal_action_backward {
+            (len - self.normal_index).saturating_sub(1)
+        } else {
+            self.normal_index
+        };
+        if (self.normal_index + 1) == len {
+            self.normal_action_backward = !self.normal_action_backward
+        }
+        self.normal_index = (self.normal_index + 1) % len;
+        player.set_normal_action(self.normal_actions[i]);
+    }
+}
+
+#[inline]
+fn priority_action(action: Action, condition: ActionCondition) -> PriorityAction {
+    debug_assert_matches!(
+        condition,
+        ActionCondition::EveryMillis(_) | ActionCondition::ErdaShowerOffCooldown
+    );
+    PriorityAction {
+        action: action.into(),
+        condition: Box::new(move |context, last_queued_time| {
+            should_queue_fixed_action(context, last_queued_time, condition)
+        }),
+        condition_kind: Some(condition),
+        queue_to_front: if let Action::Key(ActionKey { queue_to_front, .. }) = action {
+            queue_to_front.unwrap_or_default()
+        } else {
+            false
+        },
+        ignoring: false,
+        last_queued_time: None,
     }
 }
 

@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::Result;
+use opencv::core::Rect;
 use platforms::windows::KeyKind;
 use rand::distr::{Alphanumeric, SampleString};
 use rusqlite::{Connection, Params, Statement, types::Null};
@@ -91,6 +92,20 @@ impl Default for KeyBindingConfiguration {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize)]
+pub struct Bound {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl From<Bound> for Rect {
+    fn from(value: Bound) -> Self {
+        Self::new(value.x, value.y, value.width, value.height)
+    }
+}
+
 #[derive(
     Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumIter, Display, EnumString,
 )]
@@ -98,7 +113,6 @@ pub enum RotationMode {
     StartToEnd,
     #[default]
     StartToEndThenReverse,
-    AutoMobbing,
 }
 
 impl Identifiable for Configuration {
@@ -119,6 +133,12 @@ pub struct Minimap {
     pub name: String,
     pub width: i32,
     pub height: i32,
+    #[serde(default)]
+    pub auto_mobbing_bound: Bound,
+    #[serde(default)]
+    pub auto_mobbing_key: KeyBinding,
+    #[serde(default)]
+    pub auto_mobbing_enabled: bool,
     pub actions: HashMap<String, Vec<Action>>,
 }
 
