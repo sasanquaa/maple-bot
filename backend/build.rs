@@ -19,6 +19,7 @@ fn main() {
     let hp_separator = dir.join("hp_separator_ideal_ratio.png");
     let hp_end = dir.join("hp_end_ideal_ratio.png");
 
+    let mob_model = dir.join("mob.onnx");
     let rune_model = dir.join("rune.onnx");
     let minimap_model = dir.join("minimap_nms.onnx");
     let onnx_runtime = dir.join("onnxruntime.dll");
@@ -91,6 +92,7 @@ fn main() {
         "cargo:rustc-env=ONNX_RUNTIME={}",
         onnx_runtime.to_str().unwrap()
     );
+    println!("cargo:rustc-env=MOB_MODEL={}", mob_model.to_str().unwrap());
     println!(
         "cargo:rustc-env=MINIMAP_MODEL={}",
         minimap_model.to_str().unwrap()

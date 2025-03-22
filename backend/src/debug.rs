@@ -6,9 +6,14 @@ use opencv::core::Rect;
 use opencv::core::Scalar;
 use opencv::core::Size;
 use opencv::core::add_weighted_def;
+use opencv::highgui::WINDOW_KEEPRATIO;
+use opencv::highgui::WINDOW_NORMAL;
+use opencv::highgui::named_window;
 use opencv::imgproc::COLOR_BGRA2GRAY;
+use opencv::imgproc::LINE_8;
 use opencv::imgproc::cvt_color_def;
-use opencv::imgproc::{FONT_HERSHEY_SIMPLEX, put_text_def, rectangle_def};
+use opencv::imgproc::rectangle;
+use opencv::imgproc::{FONT_HERSHEY_SIMPLEX, put_text_def};
 use opencv::{
     highgui::{imshow, wait_key},
     imgcodecs::imwrite_def,
@@ -37,10 +42,17 @@ pub fn debug_mat<T: AsRef<str>>(
     wait: i32,
     bboxes: &[Rect],
     text: &[T],
-) {
+) -> i32 {
     let mut mat = mat.try_clone().unwrap();
     for (bbox, text) in bboxes.iter().zip(text) {
-        let _ = rectangle_def(&mut mat, *bbox, Scalar::new(255.0, 0.0, 0.0, 0.0));
+        let _ = rectangle(
+            &mut mat,
+            *bbox,
+            Scalar::new(255.0, 0.0, 0.0, 0.0),
+            1,
+            LINE_8,
+            0,
+        );
         let _ = put_text_def(
             &mut mat,
             text.as_ref(),
@@ -50,14 +62,17 @@ pub fn debug_mat<T: AsRef<str>>(
             Scalar::new(0.0, 255.0, 0.0, 0.0),
         );
     }
-    let _ = imshow(name, &mat);
-    let _ = wait_key(wait);
+    // named_window(name, WINDOW_NORMAL | WINDOW_KEEPRATIO).unwrap();
+    named_window(name, WINDOW_KEEPRATIO).unwrap();
+    imshow(name, &mat).unwrap();
+    wait_key(wait).unwrap()
 }
 
 #[allow(unused)]
 pub fn save_image_for_training(mat: &Mat) {
     let name = Alphanumeric.sample_string(&mut rand::rng(), 8);
-    let mat = to_grayscale(mat);
+    // let mat = to_grayscale(mat);
+    let mat = mat.clone();
     let image = LazyLock::force(&DATASET_DIR).join(format!("{name}.png"));
 
     debug_mat("Image", &mat, 0, &[], &[""; 0]);
@@ -122,7 +137,7 @@ pub fn save_rune_for_training(
                 KeyKind::Right => 3,
                 _ => unreachable!(),
             };
-            to_yolo_format(label, size, bbox)
+            to_yolo_format(label, size, *bbox)
         })
         .collect::<Vec<String>>()
         .join("\n");
@@ -136,6 +151,30 @@ pub fn save_rune_for_training(
 }
 
 #[allow(unused)]
+pub fn save_mobs_for_training(mat: &Mat, mobs: &[Rect]) {
+    let name = Alphanumeric.sample_string(&mut rand::rng(), 8);
+    let dataset = LazyLock::force(&DATASET_DIR);
+    let label = dataset.join(format!("{name}.txt"));
+    let image = dataset.join(format!("{name}.png"));
+    let mut labels = Vec::<String>::new();
+    for mob in mobs.iter().copied() {
+        labels.push(to_yolo_format(0, mat.size().unwrap(), mob));
+    }
+
+    let key = debug_mat(
+        "Training",
+        mat,
+        0,
+        mobs,
+        vec!["Mobs"; mobs.len()].as_slice(),
+    );
+    if key == 97 {
+        imwrite_def(image.to_str().unwrap(), mat).unwrap();
+        fs::write(label, labels.join("\n")).unwrap();
+    }
+}
+
+#[allow(unused)]
 fn save_minimap_for_training(mat: &Mat, minimap: &Rect) {
     let name = Alphanumeric.sample_string(&mut rand::rng(), 8);
     let dataset = LazyLock::force(&DATASET_DIR);
@@ -145,7 +184,7 @@ fn save_minimap_for_training(mat: &Mat, minimap: &Rect) {
     debug_mat("Training", &mat.roi(*minimap).unwrap(), 0, &[], &[""; 0]);
 
     imwrite_def(image.to_str().unwrap(), mat).unwrap();
-    fs::write(label, to_yolo_format(0, mat.size().unwrap(), minimap)).unwrap();
+    fs::write(label, to_yolo_format(0, mat.size().unwrap(), *minimap)).unwrap();
 }
 
 fn map_bbox_from_prediction(pred: &[f32], size: Size, w_ratio: f32, h_ratio: f32) -> Rect {
@@ -156,7 +195,7 @@ fn map_bbox_from_prediction(pred: &[f32], size: Size, w_ratio: f32, h_ratio: f32
     Rect::from_points(Point::new(tl_x, tl_y), Point::new(br_x, br_y))
 }
 
-fn to_yolo_format(label: u32, size: Size, bbox: &Rect) -> String {
+fn to_yolo_format(label: u32, size: Size, bbox: Rect) -> String {
     let x_center = bbox.x + bbox.width / 2;
     let y_center = bbox.y + bbox.height / 2;
     let x_center = x_center as f32 / size.width as f32;

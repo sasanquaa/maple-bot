@@ -14,7 +14,7 @@ use platforms::windows::{self, Capture, Handle, Keys};
 use strum::IntoEnumIterator;
 
 use crate::{
-    Action, ActionCondition, ActionKey, KeyBindingConfiguration, Request,
+    Action, ActionCondition, ActionKey, KeyBindingConfiguration, RequestHandler, RotatorMode,
     buff::{Buff, BuffKind, BuffState},
     database::{Configuration, KeyBinding, PotionMode, query_configs},
     detect::{CachedDetector, Detector},
@@ -91,6 +91,107 @@ impl Default for Context {
     }
 }
 
+struct DefaultRequestHandler<'a> {
+    context: &'a mut Context,
+    config: &'a mut Configuration,
+    buffs: &'a mut Vec<(usize, KeyBinding)>,
+    actions: &'a mut Vec<Action>,
+    rotator: &'a mut Rotator,
+    detector: &'a CachedDetector,
+    player: &'a mut PlayerState,
+    minimap: &'a mut MinimapState,
+    ignore_update_actions: &'a mut bool,
+}
+
+impl DefaultRequestHandler<'_> {
+    fn update_rotator_actions(&mut self, mode: RotatorMode) {
+        self.rotator.build_actions(
+            config_actions(&self.config)
+                .into_iter()
+                .chain(self.actions.iter().copied())
+                .collect::<Vec<_>>()
+                .as_slice(),
+            self.buffs,
+            self.config.potion_key.key,
+            mode,
+        );
+    }
+}
+
+impl RequestHandler for DefaultRequestHandler<'_> {
+    fn on_rotate_actions(&mut self, halting: bool) {
+        self.context.halting = halting;
+        if halting {
+            self.rotator.reset_queue();
+            self.player.abort_actions();
+        }
+    }
+
+    fn on_update_minimap(&mut self, preset: Option<String>, minimap: crate::Minimap) {
+        if matches!(self.context.player, Player::CashShopThenExit(_, _, _)) {
+            *self.ignore_update_actions = true;
+        }
+        if !*self.ignore_update_actions {
+            self.minimap.data = minimap;
+            *self.actions = preset
+                .and_then(|preset| self.minimap.data.actions.get(&preset).cloned())
+                .unwrap_or_default();
+            self.update_rotator_actions(self.config.rotation_mode.into());
+        }
+        if *self.ignore_update_actions && matches!(self.context.minimap, Minimap::Idle(_)) {
+            *self.ignore_update_actions = false;
+        }
+    }
+
+    fn on_update_configuration(&mut self, config: Configuration) {
+        if matches!(self.context.player, Player::CashShopThenExit(_, _, _)) {
+            *self.ignore_update_actions = true;
+        }
+        if !*self.ignore_update_actions {
+            *self.config = config;
+            *self.buffs = config_buffs(&self.config);
+            self.player.interact_key = self.config.interact_key.key.into();
+            self.player.grappling_key = self.config.ropelift_key.key.into();
+            self.player.upjump_key = self.config.up_jump_key.map(|key| key.key.into());
+            self.player.cash_shop_key = self.config.cash_shop_key.key.into();
+            self.player.potion_key = self.config.potion_key.key.into();
+            self.player.use_potion_below_percent =
+                match (self.config.potion_key.enabled, self.config.potion_mode) {
+                    (false, _) | (_, PotionMode::EveryMillis(_)) => None,
+                    (_, PotionMode::Percentage(percent)) => Some(percent / 100.0),
+                };
+            self.player.update_health_millis = Some(self.config.health_update_millis);
+            self.update_rotator_actions(self.config.rotation_mode.into());
+        }
+        if *self.ignore_update_actions && matches!(self.context.minimap, Minimap::Idle(_)) {
+            *self.ignore_update_actions = false;
+        }
+    }
+
+    fn on_redetect_minimap(&mut self) {
+        self.context.minimap = Minimap::Detecting;
+    }
+
+    fn on_player_state(&mut self) -> crate::PlayerState {
+        crate::PlayerState {
+            position: self.player.last_known_pos.map(|pos| (pos.x, pos.y)),
+            health: self.player.health,
+            state: self.context.player.to_string(),
+            normal_action: self.player.normal_action_name(),
+            priority_action: self.player.priority_action_name(),
+            erda_shower_state: self.context.skills[ERDA_SHOWER_SKILL_POSITION].to_string(),
+        }
+    }
+
+    fn on_minimap_frame(&mut self) -> Option<(Vec<u8>, usize, usize)> {
+        extract_minimap(&self.context, self.detector.mat())
+    }
+
+    fn on_minimap_data(&mut self) -> Option<crate::Minimap> {
+        matches!(self.context.minimap, Minimap::Idle(_)).then_some(self.minimap.data.clone())
+    }
+}
+
 pub fn start_update_loop() {
     static LOOPING: AtomicBool = AtomicBool::new(false);
 
@@ -147,66 +248,24 @@ fn update_loop() {
         buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
         halting: true,
     };
-    let mut ignore_update_action = false;
-    let update_minimap = |updated_minimap: crate::database::Minimap,
-                          preset: Option<String>,
-                          config: &Configuration,
-                          buffs: &Vec<(usize, KeyBinding)>,
-                          minimap_state: &mut MinimapState,
-                          actions: &mut Vec<Action>,
-                          rotator: &mut Rotator| {
-        minimap_state.data = updated_minimap;
-        *actions = preset
-            .and_then(|preset| minimap_state.data.actions.get(&preset).cloned())
-            .unwrap_or_default();
-        rotator.build_actions(
-            config_actions(config)
-                .into_iter()
-                .chain(actions.iter().copied())
-                .collect::<Vec<_>>()
-                .as_slice(),
-            buffs,
-            config.potion_key.key,
-        );
-    };
-    let update_config = |updated_config: Configuration,
-                         config: &mut Configuration,
-                         buffs: &mut Vec<(usize, KeyBinding)>,
-                         actions: &Vec<Action>,
-                         player_state: &mut PlayerState,
-                         rotator: &mut Rotator| {
-        *config = updated_config;
-        *buffs = config_buffs(config);
-        player_state.interact_key = config.interact_key.key.into();
-        player_state.grappling_key = config.ropelift_key.key.into();
-        player_state.upjump_key = config.up_jump_key.map(|key| key.key.into());
-        player_state.cash_shop_key = config.cash_shop_key.key.into();
-        player_state.potion_key = config.potion_key.key.into();
-        player_state.use_potion_below_percent =
-            match (config.potion_key.enabled, config.potion_mode) {
-                (false, _) | (_, PotionMode::EveryMillis(_)) => None,
-                (_, PotionMode::Percentage(percent)) => Some(percent / 100.0),
-            };
-        player_state.update_health_millis = Some(config.health_update_millis);
-        rotator.rotator_mode(config.rotation_mode.into());
-        rotator.build_actions(
-            config_actions(config)
-                .into_iter()
-                .chain(actions.iter().copied())
-                .collect::<Vec<_>>()
-                .as_slice(),
-            buffs,
-            config.potion_key.key,
-        );
-    };
 
+    let mut ignore_update_actions = false;
     loop_with_fps(FPS, || {
         let Ok(mat) = capture.grab().map(OwnedMat::new) else {
             return;
         };
+        // I know what you are thinking...
         let detector = CachedDetector::new(mat);
         context.minimap = fold_context(&context, &detector, context.minimap, &mut minimap_state);
         context.player = fold_context(&context, &detector, context.player, &mut player_state);
+        // if true {
+        //     if let Minimap::Idle(idle) = context.minimap {
+        //         if let Some(pos) = player_state.last_known_pos {
+        //             let _ = detector.detect_mobs(idle.bbox, pos);
+        //         }
+        //     }
+        //     return;
+        // }
         (0..context.skills.len()).for_each(|i| {
             context.skills[i] =
                 fold_context(&context, &detector, context.skills[i], &mut skill_states[i]);
@@ -215,72 +274,20 @@ fn update_loop() {
             context.buffs[i] =
                 fold_context(&context, &detector, context.buffs[i], &mut buff_states[i]);
         });
-        rotator.rotate_action(&context, &mut player_state);
-        poll_request(|request| match request {
-            Request::RotateActions(halted) => {
-                context.halting = halted;
-                if halted {
-                    rotator.reset_queue();
-                    player_state.abort_actions();
-                }
-                Box::new(())
-            }
-            Request::MinimapFrame => Box::new(extract_minimap(&context, detector.mat())),
-            Request::RedetectMinimap => {
-                context.minimap = Minimap::Detecting;
-                Box::new(())
-            }
-            Request::MinimapData => Box::new(
-                matches!(context.minimap, Minimap::Idle(_)).then_some(minimap_state.data.clone()),
-            ),
-            Request::PlayerState => Box::new(crate::PlayerState {
-                position: player_state.last_known_pos.map(|pos| (pos.x, pos.y)),
-                health: player_state.health,
-                state: context.player.to_string(),
-                normal_action: player_state.normal_action_name(),
-                priority_action: player_state.priority_action_name(),
-                erda_shower_state: context.skills[ERDA_SHOWER_SKILL_POSITION].to_string(),
-            }),
-            Request::UpdateMinimap(preset, updated_minimap) => {
-                if matches!(context.player, Player::CashShopThenExit(_, _, _)) {
-                    ignore_update_action = true;
-                }
-                if !ignore_update_action {
-                    update_minimap(
-                        updated_minimap,
-                        preset,
-                        &config,
-                        &buffs,
-                        &mut minimap_state,
-                        &mut actions,
-                        &mut rotator,
-                    );
-                }
-                if ignore_update_action && matches!(context.minimap, Minimap::Idle(_)) {
-                    ignore_update_action = false;
-                }
-                Box::new(())
-            }
-            Request::UpdateConfiguration(updated_config) => {
-                if matches!(context.player, Player::CashShopThenExit(_, _, _)) {
-                    ignore_update_action = true;
-                }
-                if !ignore_update_action {
-                    update_config(
-                        updated_config,
-                        &mut config,
-                        &mut buffs,
-                        &mut actions,
-                        &mut player_state,
-                        &mut rotator,
-                    );
-                }
-                if ignore_update_action && matches!(context.minimap, Minimap::Idle(_)) {
-                    ignore_update_action = false;
-                }
-                Box::new(())
-            }
-        });
+        rotator.rotate_action(&context, &detector, &mut player_state);
+        // I know what you are thinking...
+        let mut handler = DefaultRequestHandler {
+            context: &mut context,
+            config: &mut config,
+            buffs: &mut buffs,
+            actions: &mut actions,
+            rotator: &mut rotator,
+            detector: &detector,
+            player: &mut player_state,
+            minimap: &mut minimap_state,
+            ignore_update_actions: &mut ignore_update_actions,
+        };
+        poll_request(&mut handler);
     });
 }
 

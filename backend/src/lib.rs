@@ -8,10 +8,7 @@
 #![feature(associated_type_defaults)]
 #![feature(assert_matches)]
 
-use std::{
-    any::Any,
-    sync::{LazyLock, Mutex},
-};
+use std::sync::{LazyLock, Mutex};
 
 use anyhow::{Result, anyhow};
 use tokio::sync::{
@@ -43,13 +40,22 @@ pub use {
     strum::{IntoEnumIterator, ParseError},
 };
 
-type Response = (Sender<Box<dyn Any + Send>>, Request);
+static REQUESTS: LazyLock<(
+    mpsc::Sender<(Request, Sender<Response>)>,
+    Mutex<mpsc::Receiver<(Request, Sender<Response>)>>,
+)> = LazyLock::new(|| {
+    let (tx, rx) = mpsc::channel::<(Request, Sender<Response>)>(10);
+    (tx, Mutex::new(rx))
+});
 
-static REQUESTS: LazyLock<(mpsc::Sender<Response>, Mutex<mpsc::Receiver<Response>>)> =
-    LazyLock::new(|| {
-        let (tx, rx) = mpsc::channel::<Response>(10);
-        (tx, Mutex::new(rx))
-    });
+macro_rules! expect_variant {
+    ($e:expr, $p:path) => {
+        match $e {
+            $p(value) => value,
+            _ => unreachable!(),
+        }
+    };
+}
 
 #[derive(Debug)]
 enum Request {
@@ -60,6 +66,33 @@ enum Request {
     PlayerState,
     MinimapFrame,
     MinimapData,
+}
+
+#[derive(Debug)]
+enum Response {
+    RotateActions(()),
+    UpdateMinimap(()),
+    UpdateConfiguration(()),
+    RedetectMinimap(()),
+    PlayerState(PlayerState),
+    MinimapFrame(Option<(Vec<u8>, usize, usize)>),
+    MinimapData(Option<Minimap>),
+}
+
+pub(crate) trait RequestHandler {
+    fn on_rotate_actions(&mut self, halting: bool);
+
+    fn on_update_minimap(&mut self, preset: Option<String>, minimap: Minimap);
+
+    fn on_update_configuration(&mut self, config: Configuration);
+
+    fn on_redetect_minimap(&mut self);
+
+    fn on_player_state(&mut self) -> PlayerState;
+
+    fn on_minimap_frame(&mut self) -> Option<(Vec<u8>, usize, usize)>;
+
+    fn on_minimap_data(&mut self) -> Option<Minimap>;
 }
 
 #[derive(Debug, Clone)]
@@ -73,51 +106,74 @@ pub struct PlayerState {
 }
 
 pub async fn rotate_actions(halting: bool) {
-    request::<()>(Request::RotateActions(halting)).await
+    expect_variant!(
+        request(Request::RotateActions(halting)).await,
+        Response::RotateActions
+    )
 }
 
 pub async fn update_minimap(preset: Option<String>, minimap: Minimap) {
-    request::<()>(Request::UpdateMinimap(preset, minimap)).await
+    expect_variant!(
+        request(Request::UpdateMinimap(preset, minimap)).await,
+        Response::UpdateMinimap
+    )
 }
 
 pub async fn update_configuration(config: Configuration) {
-    request::<()>(Request::UpdateConfiguration(config)).await
+    expect_variant!(
+        request(Request::UpdateConfiguration(config)).await,
+        Response::UpdateConfiguration
+    )
 }
 
 pub async fn redetect_minimap() {
-    request::<()>(Request::RedetectMinimap).await
+    expect_variant!(
+        request(Request::RedetectMinimap).await,
+        Response::RedetectMinimap
+    )
 }
 
 pub async fn player_state() -> PlayerState {
-    request::<PlayerState>(Request::PlayerState).await
+    expect_variant!(request(Request::PlayerState).await, Response::PlayerState)
 }
 
 pub async fn minimap_frame() -> Result<(Vec<u8>, usize, usize)> {
-    request::<Option<(Vec<u8>, usize, usize)>>(Request::MinimapFrame)
-        .await
+    expect_variant!(request(Request::MinimapFrame).await, Response::MinimapFrame)
         .ok_or(anyhow!("minimap frame not found"))
 }
 
 pub async fn minimap_data() -> Result<Minimap> {
-    request::<Option<Minimap>>(Request::MinimapData)
-        .await
+    expect_variant!(request(Request::MinimapData).await, Response::MinimapData)
         .ok_or(anyhow!("minimap data not found"))
 }
 
-pub(crate) fn poll_request(mut callback: impl FnMut(Request) -> Box<dyn Any + Send>) {
-    if let Ok((sender, request)) = LazyLock::force(&REQUESTS).1.lock().unwrap().try_recv() {
-        let _ = sender.send(callback(request));
+pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
+    if let Ok((request, sender)) = LazyLock::force(&REQUESTS).1.lock().unwrap().try_recv() {
+        let result = match request {
+            Request::RotateActions(halting) => {
+                Response::RotateActions(handler.on_rotate_actions(halting))
+            }
+            Request::UpdateMinimap(preset, minimap) => {
+                Response::UpdateMinimap(handler.on_update_minimap(preset, minimap))
+            }
+            Request::UpdateConfiguration(config) => {
+                Response::UpdateConfiguration(handler.on_update_configuration(config))
+            }
+            Request::RedetectMinimap => Response::RedetectMinimap(handler.on_redetect_minimap()),
+            Request::PlayerState => Response::PlayerState(handler.on_player_state()),
+            Request::MinimapFrame => Response::MinimapFrame(handler.on_minimap_frame()),
+            Request::MinimapData => Response::MinimapData(handler.on_minimap_data()),
+        };
+        let _ = sender.send(result);
     }
 }
 
-async fn request<T: Any + Send>(request: Request) -> T {
+async fn request(request: Request) -> Response {
     let (tx, rx) = oneshot::channel();
     LazyLock::force(&REQUESTS)
         .0
-        .send((tx, request))
+        .send((request, tx))
         .await
         .unwrap();
-    let result = rx.await.unwrap();
-    // SAFETY: it is safe because it will crash if it is unsafe
-    Box::into_inner(unsafe { result.downcast_unchecked::<T>() })
+    rx.await.unwrap()
 }

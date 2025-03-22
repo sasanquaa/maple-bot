@@ -16,9 +16,9 @@ use opencv::{
     boxed_ref::BoxedRef,
     core::{
         CMP_EQ, CMP_GT, CV_8U, CV_32FC3, CV_32S, Mat, MatExprTraitConst, MatTrait, MatTraitConst,
-        MatTraitConstManual, ModifyInplace, Point, Range, Rect, Scalar, Size, ToInputArray, Vec4b,
-        Vector, add, add_weighted_def, bitwise_and_def, compare, divide2_def, find_non_zero,
-        min_max_loc, no_array, subtract_def, transpose_nd,
+        MatTraitConstManual, ModifyInplace, Point, Point2f, Range, Rect, Scalar, Size,
+        ToInputArray, Vec4b, Vector, add, add_weighted_def, bitwise_and_def, compare, divide2_def,
+        find_non_zero, min_max_loc, no_array, subtract_def, transpose_nd,
     },
     dnn::{
         ModelTrait, TextRecognitionModel, TextRecognitionModelTrait,
@@ -47,6 +47,11 @@ use crate::mat::OwnedMat;
 
 pub trait Detector: 'static + Send + Sync + Clone {
     fn mat(&self) -> &Mat;
+
+    /// Detects a list of mobs.
+    ///
+    /// Returns a list of mobs coordinate in minimap coordinate.
+    fn detect_mobs(&self, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>>;
 
     /// Detects whether there is a elite boss bar.
     fn detect_elite_boss_bar(&self) -> bool;
@@ -115,6 +120,7 @@ mock! {
 
     impl Detector for Detector {
         fn mat(&self) -> &Mat;
+        fn detect_mobs(&self, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>>;
         fn detect_elite_boss_bar(&self) -> bool;
         fn detect_minimap(&self, border_threshold: u8) -> Result<Rect>;
         fn detect_minimap_name(&self, minimap: Rect) -> Result<String>;
@@ -174,6 +180,10 @@ impl CachedDetector {
 impl Detector for CachedDetector {
     fn mat(&self) -> &Mat {
         &self.mat
+    }
+
+    fn detect_mobs(&self, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>> {
+        detect_mobs(&self.mat, minimap, bound, player)
     }
 
     fn detect_elite_boss_bar(&self) -> bool {
@@ -607,6 +617,120 @@ fn detect_player(mat: &impl ToInputArray, offset: Point) -> Result<Rect> {
     result
 }
 
+fn detect_mobs(mat: &Mat, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>> {
+    static MOB_MODEL: LazyLock<Session> = LazyLock::new(|| {
+        Session::builder()
+            .and_then(|b| b.commit_from_memory(include_bytes!(env!("MOB_MODEL"))))
+            .expect("unable to build mob detection session")
+    });
+
+    /// This function approximates the delta (dx, dy) that the player needs to move
+    /// in relative to the minimap coordinate in order to reach the mob. And returns
+    /// the exact mob coordinate on the minimap.
+    ///
+    /// Note: It is not that accurate but that is that and this is this
+    #[inline]
+    fn to_minimap_coordinate(
+        bbox: Rect,
+        minimap: Rect,
+        bound: Rect,
+        player: Point,
+        size: Size,
+    ) -> Option<Point> {
+        // const SCALE: f32 = 15.8805970149254;
+        // A1 = 0.04884071062932851550737729599518
+        // A2 = -0.0679915688045769346582354712436
+        // B1 = 0.04239686841312857573020174646191
+        // B2 = 0.25847636254140319180969587473653
+        // this is the linear transformation from screen coordinate
+        // to minimap coordinate that I cooked up using alchemy
+        // Is it correct? I don't know, tried others but only this sort of work
+        // [ A1 A2 ]
+        // [ B1 B2 ]
+        const A1: f32 = 0.0657894736842105;
+        const A2: f32 = 0.120621443812233;
+        const A: Point2f = Point2f::new(A1, A2);
+        const B1: f32 = 0.0;
+        const B2: f32 = 0.0726351351351351;
+        const B: Point2f = Point2f::new(B1, B2);
+
+        // the main idea is to calculate the offset of the detected mob
+        // from the middle of screen and use that distance as dx to move the player
+        // for dy, it is calculated as offset from the bottom of the screen
+        // minus some number
+        // point_x is relative to middle of the screen
+        let point_x = (bbox.x + bbox.width / 2) as f32;
+        let point_x = size.width as f32 / 2.0 - point_x;
+        let is_left = point_x > 0.0;
+        let point_x = Point2f::new(point_x.abs(), 0.0);
+
+        // point_y is relative to top of the screen
+        let point_y = (bbox.y + bbox.height) as f32;
+        let point_y = Point2f::new(0.0, size.height as f32 - point_y);
+
+        // transform to minimap coordinate
+        // 20.0 is a based random number
+        let point = Point2f::new(point_x.dot(A), point_y.dot(B) - 18.0)
+            .to::<i32>()
+            .unwrap();
+        let point = if is_left {
+            Point::new(player.x - point.x, player.y + point.y)
+        } else {
+            Point::new(player.x + point.x, player.y + point.y)
+        };
+        let point = Point::new(point.x, minimap.height - point.y);
+        if point.x < bound.x
+            || point.x > bound.x + bound.width
+            || point.y < bound.y
+            || point.y > bound.y + bound.height
+        {
+            None
+        } else {
+            Some(point)
+        }
+    }
+
+    let size = mat.size().unwrap();
+    let (mat_in, w_ratio, h_ratio) = preprocess_for_yolo(mat);
+    let result = MOB_MODEL.run([norm_rgb_to_input_value(&mat_in)]).unwrap();
+    let result = from_output_value(&result);
+    // let points = (0..result.rows())
+    // SAFETY: 0..result.rows() is within Mat bounds
+    // .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
+    // .filter_map(|pred| if pred[4] > 0.8 { Some(pred) } else { None })
+    // .map(|pred| remap_from_yolo(pred, size, w_ratio, h_ratio))
+    // .filter_map(|bbox| to_minimap_coordinate(bbox, minimap, bound, player, size))
+    // .collect::<Vec<_>>();
+    let bboxes = (0..result.rows())
+        // SAFETY: 0..result.rows() is within Mat bounds
+        .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
+        .filter_map(|pred| if pred[4] > 0.8 { Some(pred) } else { None })
+        .map(|pred| remap_from_yolo(pred, size, w_ratio, h_ratio))
+        .collect::<Vec<_>>();
+    let points = bboxes
+        .iter()
+        .copied()
+        .filter_map(|bbox| to_minimap_coordinate(bbox, minimap, bound, player, size))
+        .collect::<Vec<_>>();
+    #[cfg(debug_assertions)]
+    if !bboxes.is_empty() {
+        debug_mat(
+            "Test",
+            mat,
+            1,
+            &points
+                .clone()
+                .into_iter()
+                .map(|pt| minimap.tl() + Point::new(pt.x, pt.y))
+                .map(|pt| Rect::from_points(pt - Point::new(5, 5), pt))
+                .chain(bboxes)
+                .collect::<Vec<_>>(),
+            &vec![""; points.len() * 2],
+        );
+    }
+    Ok(points)
+}
+
 fn detect_elite_boss_bar(mat: &Mat) -> bool {
     /// TODO: Support default ratio
     static ELITE_BOSS_BAR: LazyLock<Mat> = LazyLock::new(|| {
@@ -755,14 +879,7 @@ fn detect_minimap(mat: &Mat, border_threshold: u8) -> Result<Rect> {
         if pred[4] < 0.5 {
             None
         } else {
-            let tl_x = (pred[0] * w_ratio).max(0.0).min(size.width as f32);
-            let tl_y = (pred[1] * h_ratio).max(0.0).min(size.height as f32);
-            let br_x = (pred[2] * w_ratio).max(0.0).min(size.width as f32);
-            let br_y = (pred[3] * h_ratio).max(0.0).min(size.height as f32);
-            Some(Rect::from_points(
-                Point::new(tl_x as i32, tl_y as i32),
-                Point::new(br_x as i32, br_y as i32),
-            ))
+            Some(remap_from_yolo(pred, size, w_ratio, h_ratio))
         }
     });
     let minimap = bbox.map(|bbox| {
@@ -1127,6 +1244,18 @@ fn extract_text_bboxes(
         bboxes.push(Rect::from_points(tl, br));
     }
     bboxes
+}
+
+#[inline]
+fn remap_from_yolo(pred: &[f32], size: Size, w_ratio: f32, h_ratio: f32) -> Rect {
+    let tl_x = (pred[0] * w_ratio).max(0.0).min(size.width as f32);
+    let tl_y = (pred[1] * h_ratio).max(0.0).min(size.height as f32);
+    let br_x = (pred[2] * w_ratio).max(0.0).min(size.width as f32);
+    let br_y = (pred[3] * h_ratio).max(0.0).min(size.height as f32);
+    Rect::from_points(
+        Point::new(tl_x as i32, tl_y as i32),
+        Point::new(br_x as i32, br_y as i32),
+    )
 }
 
 /// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32` for YOLO detection.

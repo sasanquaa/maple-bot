@@ -118,6 +118,7 @@ impl Capture {
         if let Err(error) = result {
             return Err(Error::from(error));
         }
+        // SAFETY: I swear on the love of Axis Order, this call passed the safety vibe check
         let ptr = unsafe { slice::from_raw_parts(bitmap.buffer, bitmap.size) };
         let data = ptr.to_vec();
         Ok(Frame {

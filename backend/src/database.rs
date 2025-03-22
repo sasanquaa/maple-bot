@@ -98,6 +98,7 @@ pub enum RotationMode {
     StartToEnd,
     #[default]
     StartToEndThenReverse,
+    AutoMobbing,
 }
 
 impl Identifiable for Configuration {
