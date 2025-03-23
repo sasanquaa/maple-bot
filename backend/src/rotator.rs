@@ -42,13 +42,17 @@ pub enum RotatorMode {
     StartToEnd,
     #[default]
     StartToEndThenReverse,
-    AutoMobbing(KeyBinding, Rect),
+    AutoMobbing(KeyBinding, u32, Rect),
 }
 
 impl From<(&Configuration, &crate::Minimap)> for RotatorMode {
     fn from((config, minimap): (&Configuration, &crate::Minimap)) -> Self {
         if minimap.auto_mobbing_enabled {
-            RotatorMode::AutoMobbing(minimap.auto_mobbing_key, minimap.auto_mobbing_bound.into())
+            RotatorMode::AutoMobbing(
+                minimap.auto_mobbing_key,
+                minimap.auto_mobbing_key_count,
+                minimap.auto_mobbing_bound.into(),
+            )
         } else {
             match config.rotation_mode {
                 RotationMode::StartToEnd => RotatorMode::StartToEnd,
@@ -96,7 +100,7 @@ impl Rotator {
                         );
                     }
                     ActionCondition::Any => {
-                        if matches!(self.normal_rotate_mode, RotatorMode::AutoMobbing(_, _)) {
+                        if matches!(self.normal_rotate_mode, RotatorMode::AutoMobbing(_, _, _)) {
                             continue;
                         }
                         self.normal_actions.push(action.into())
@@ -222,8 +226,8 @@ impl Rotator {
             match self.normal_rotate_mode {
                 RotatorMode::StartToEnd => self.rotate_start_end(player),
                 RotatorMode::StartToEndThenReverse => self.rotate_start_to_end_then_reverse(player),
-                RotatorMode::AutoMobbing(key, bound) => {
-                    self.rotate_auto_mobbing(context, detector, player, key, bound)
+                RotatorMode::AutoMobbing(key, count, bound) => {
+                    self.rotate_auto_mobbing(context, detector, player, key, count, bound)
                 }
             }
         }
@@ -235,6 +239,7 @@ impl Rotator {
         detector: &impl Detector,
         player: &mut PlayerState,
         key: KeyBinding,
+        count: u32,
         bound: opencv::core::Rect_<i32>,
     ) {
         let Minimap::Idle(idle) = context.minimap else {
@@ -256,6 +261,7 @@ impl Rotator {
         };
         player.set_normal_action(PlayerAction::AutoMob(PlayerActionAutoMob {
             key,
+            count: if count == 0 { 1 } else { count },
             position: Position {
                 x: point.x,
                 y: idle.bbox.height - point.y,
@@ -331,6 +337,7 @@ fn elite_boss_potion_spam_priority_action(key: KeyBinding) -> PriorityAction {
         condition_kind: None,
         action: PlayerAction::Key(PlayerActionKey {
             key,
+            count: 1,
             position: None,
             direction: ActionKeyDirection::Any,
             with: ActionKeyWith::Any,
@@ -379,6 +386,7 @@ fn buff_priority_action(buff_index: usize, key: KeyBinding) -> PriorityAction {
         condition_kind: None,
         action: PlayerAction::Key(PlayerActionKey {
             key,
+            count: 1,
             position: None,
             direction: ActionKeyDirection::Any,
             with: ActionKeyWith::Stationary,

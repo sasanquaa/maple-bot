@@ -21,7 +21,9 @@ use dioxus::{
     prelude::*,
 };
 use icons::XMark;
-use input::{Checkbox, KeyBindingInput, MillisInput, NumberInputI32, use_auto_numeric};
+use input::{
+    Checkbox, KeyBindingInput, MillisInput, NumberInputI32, NumberInputU32, use_auto_numeric,
+};
 use minimap::Minimap;
 use rand::distr::{Alphanumeric, SampleString};
 use select::{EnumSelect, TextSelect};
@@ -283,6 +285,7 @@ fn ActionItem(
     fn ActionKeyItem(action: ActionKey) -> Element {
         let ActionKey {
             key,
+            count,
             position,
             condition,
             direction,
@@ -324,6 +327,10 @@ fn ActionItem(
             div { class: DIV,
                 span { class: KEY, "Key" }
                 span { class: VALUE, {key.to_string()} }
+            }
+            div { class: DIV,
+                span { class: KEY, "Count" }
+                span { class: VALUE, {count.to_string()} }
             }
             div { class: DIV,
                 span { class: KEY, "Condition" }
@@ -475,10 +482,11 @@ fn ActionInput(
             save_minimap(minimap.clone());
         }
     });
-    let on_auto_mob = use_callback(move |(enabled, key, bound)| {
+    let on_auto_mob = use_callback(move |(enabled, key, count, bound)| {
         if let Some(minimap) = minimap.write().as_mut() {
             minimap.auto_mobbing_enabled = enabled;
             minimap.auto_mobbing_key = key;
+            minimap.auto_mobbing_key_count = count;
             minimap.auto_mobbing_bound = bound;
             save_minimap(minimap.clone());
         }
@@ -661,6 +669,7 @@ fn ActionInput(
                             .map(|minimap| (
                                 minimap.auto_mobbing_enabled,
                                 minimap.auto_mobbing_key,
+                                minimap.auto_mobbing_key_count,
                                 minimap.auto_mobbing_bound,
                             ))
                             .unwrap_or_default(),
@@ -792,6 +801,7 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
     };
     let ActionKey {
         key,
+        count,
         position,
         condition,
         direction,
@@ -803,6 +813,7 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
     let submit =
         use_callback(move |action_key: ActionKey| (props.on_input)(Action::Key(action_key)));
     let set_key = use_callback(move |key| submit(ActionKey { key, ..value }));
+    let set_count = use_callback(move |count| submit(ActionKey { count, ..value }));
     let set_position = use_callback(move |position| submit(ActionKey { position, ..value }));
     let set_condition = use_callback(move |condition| submit(ActionKey { condition, ..value }));
     let set_direction = use_callback(move |direction| submit(ActionKey { direction, ..value }));
@@ -866,6 +877,17 @@ fn ActionKeyInput(props: InputConfigProps<Action>) -> Element {
                     set_key(key);
                 },
                 value: key,
+            }
+            NumberInputU32 {
+                label: "Count",
+                label_class: LABEL_CLASS,
+                div_class: DIV_CLASS,
+                input_class: INPUT_CLASS,
+                disabled: props.disabled,
+                on_input: move |key| {
+                    set_count(key);
+                },
+                value: count,
             }
             ActionConditionInput {
                 on_input: move |condition| {
@@ -987,15 +1009,15 @@ fn ActionEnumSelect<
 #[component]
 fn AutoMobInput(
     disabled: bool,
-    on_input: EventHandler<(bool, KeyBinding, Bound)>,
-    value: (bool, KeyBinding, Bound),
+    on_input: EventHandler<(bool, KeyBinding, u32, Bound)>,
+    value: (bool, KeyBinding, u32, Bound),
 ) -> Element {
     const DIV_CLASS: &str = "flex py-2 border-b border-gray-100 space-x-2";
     const LABEL_CLASS: &str =
         "flex-1 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400";
     const INPUT_CLASS: &str = "w-28 px-1.5 h-6 border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
 
-    let (enabled, key, value) = value;
+    let (enabled, key, count, value) = value;
 
     rsx! {
         div { class: "flex flex-col space-y-2",
@@ -1011,7 +1033,7 @@ fn AutoMobInput(
                 input_class: "w-28 flex items-center",
                 disabled,
                 on_input: move |checked| {
-                    on_input((checked, key, value));
+                    on_input((checked, key, count, value));
                 },
                 value: enabled,
             }
@@ -1022,9 +1044,20 @@ fn AutoMobInput(
                 input_class: INPUT_CLASS,
                 disabled,
                 on_input: move |key| {
-                    on_input((enabled, key, value));
+                    on_input((enabled, key, count, value));
                 },
                 value: key,
+            }
+            NumberInputU32 {
+                label: "Mobbing Key Count",
+                div_class: DIV_CLASS,
+                label_class: LABEL_CLASS,
+                input_class: INPUT_CLASS,
+                disabled,
+                on_input: move |count| {
+                    on_input((enabled, key, count, value));
+                },
+                value: count,
             }
             NumberInputI32 {
                 label: "X",
@@ -1033,7 +1066,7 @@ fn AutoMobInput(
                 input_class: INPUT_CLASS,
                 disabled,
                 on_input: move |x| {
-                    on_input((enabled, key, Bound { x, ..value }));
+                    on_input((enabled, key, count, Bound { x, ..value }));
                 },
                 value: value.x,
             }
@@ -1044,7 +1077,7 @@ fn AutoMobInput(
                 input_class: INPUT_CLASS,
                 disabled,
                 on_input: move |y| {
-                    on_input((enabled, key, Bound { y, ..value }));
+                    on_input((enabled, key, count, Bound { y, ..value }));
                 },
                 value: value.y,
             }
@@ -1055,7 +1088,7 @@ fn AutoMobInput(
                 input_class: INPUT_CLASS,
                 disabled,
                 on_input: move |width| {
-                    on_input((enabled, key, Bound { width, ..value }));
+                    on_input((enabled, key, count, Bound { width, ..value }));
                 },
                 value: value.width,
             }
@@ -1066,7 +1099,7 @@ fn AutoMobInput(
                 input_class: INPUT_CLASS,
                 disabled,
                 on_input: move |height| {
-                    on_input((enabled, key, Bound { height, ..value }));
+                    on_input((enabled, key, count, Bound { height, ..value }));
                 },
                 value: value.height,
             }

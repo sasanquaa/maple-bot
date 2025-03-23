@@ -249,6 +249,31 @@ pub fn PercentageInput(
 }
 
 #[component]
+pub fn NumberInputU32(
+    GenericInputProps {
+        label,
+        label_class,
+        div_class,
+        input_class,
+        disabled,
+        on_input,
+        value,
+    }: GenericInputProps<u32>,
+) -> Element {
+    rsx! {
+        PrimIntInput {
+            label,
+            label_class,
+            div_class,
+            input_class,
+            disabled,
+            on_input,
+            value,
+        }
+    }
+}
+
+#[component]
 pub fn NumberInputI32(
     GenericInputProps {
         label,

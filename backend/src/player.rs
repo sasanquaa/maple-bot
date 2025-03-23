@@ -60,6 +60,8 @@ pub struct PlayerState {
     pub interact_key: KeyKind,
     /// The RopeLift key
     pub grappling_key: KeyKind,
+    /// The teleport key with `None` indicating double jump
+    pub teleport_key: Option<KeyKind>,
     /// The up jump key with `None` indicating composite jump (Up arrow + Double Space)
     pub upjump_key: Option<KeyKind>,
     /// The cash shop key
@@ -103,7 +105,7 @@ pub struct PlayerState {
     /// Resets when a limit is reached (for unstucking) or position did change.
     unstuck_counter: u32,
     /// The number of consecutive times player transtioned to `Player::Unstucking`
-    /// Resets when transitioned from `Player::Detecting` to `Player::Idle`
+    /// Resets when limit is reached
     unstuck_consecutive_counter: u32,
     /// Rune solving task
     keys_task: Option<Task<Result<[KeyKind; 4]>>>,
@@ -124,6 +126,7 @@ enum PlayerLastMovement {
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerActionKey {
     pub key: KeyBinding,
+    pub count: u32,
     pub position: Option<Position>,
     pub direction: ActionKeyDirection,
     pub with: ActionKeyWith,
@@ -135,6 +138,7 @@ impl From<ActionKey> for PlayerActionKey {
     fn from(
         ActionKey {
             key,
+            count,
             position,
             direction,
             with,
@@ -145,6 +149,7 @@ impl From<ActionKey> for PlayerActionKey {
     ) -> Self {
         Self {
             key,
+            count,
             position,
             direction,
             with,
@@ -179,6 +184,7 @@ impl From<ActionMove> for PlayerActionMove {
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerActionAutoMob {
     pub key: KeyBinding,
+    pub count: u32,
     pub position: Position,
 }
 
@@ -356,11 +362,14 @@ impl PlayerMoving {
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerUseKey {
     key: KeyBinding,
+    count: u32,
+    current_count: u32,
     direction: ActionKeyDirection,
     with: ActionKeyWith,
     wait_before_use_ticks: u32,
     wait_after_use_ticks: u32,
     timeout: Timeout,
+    using: bool,
 }
 
 impl PlayerUseKey {
@@ -369,6 +378,7 @@ impl PlayerUseKey {
         match action {
             PlayerAction::Key(PlayerActionKey {
                 key,
+                count,
                 direction,
                 with,
                 wait_before_use_ticks,
@@ -376,19 +386,25 @@ impl PlayerUseKey {
                 ..
             }) => Self {
                 key,
+                count,
+                current_count: 0,
                 direction,
                 with,
                 wait_before_use_ticks,
                 wait_after_use_ticks,
                 timeout: Timeout::default(),
+                using: false,
             },
             PlayerAction::AutoMob(mob) => Self {
                 key: mob.key,
+                count: mob.count,
+                current_count: 0,
                 direction: ActionKeyDirection::Any,
                 with: ActionKeyWith::Any,
                 wait_before_use_ticks: 5,
                 wait_after_use_ticks: 5,
                 timeout: Timeout::default(),
+                using: false,
             },
             PlayerAction::SolveRune | PlayerAction::Move { .. } => {
                 unreachable!()
@@ -431,7 +447,6 @@ impl Contextual for Player {
     // 草草ｗｗ。。。
     // TODO: detect if a point is reachable after number of retries?
     // TODO: add unit tests
-    // TODO: support mages
     fn update(
         self,
         context: &Context,
@@ -444,12 +459,12 @@ impl Contextual for Player {
             update_state(context, detector, state)
         };
         let Some(cur_pos) = cur_pos else {
-            if let Some(next) = update_non_positional_context(self, context, detector, state) {
+            if let Some(next) = update_non_positional_context(self, context, detector, state, true)
+            {
                 return ControlFlow::Next(next);
             }
             let next = if !context.halting
                 && let Minimap::Idle(idle) = context.minimap
-                && state.last_known_pos.is_some()
             {
                 if idle.partially_overlapping {
                     Player::Detecting
@@ -469,7 +484,7 @@ impl Contextual for Player {
         } else {
             self
         };
-        let next = update_non_positional_context(contextual, context, detector, state)
+        let next = update_non_positional_context(contextual, context, detector, state, false)
             .unwrap_or_else(|| update_positional_context(contextual, context, cur_pos, state));
         if let Player::UseKey(use_key) = next
             && !use_key.timeout.started
@@ -494,19 +509,19 @@ fn update_non_positional_context(
     context: &Context,
     detector: &impl Detector,
     state: &mut PlayerState,
+    fail_to_detect: bool,
 ) -> Option<Player> {
     match contextual {
-        Player::UseKey(use_key) => Some(update_use_key_context(context, state, use_key)),
+        Player::UseKey(use_key) => {
+            (!fail_to_detect).then_some(update_use_key_context(context, state, use_key))
+        }
         Player::Unstucking(timeout) => Some(update_unstucking_context(context, state, timeout)),
         Player::Stalling(timeout, max_timeout) => {
-            Some(update_stalling_context(state, timeout, max_timeout))
+            (!fail_to_detect).then_some(update_stalling_context(state, timeout, max_timeout))
         }
-        Player::SolvingRune(solving_rune) => Some(update_solving_rune_context(
-            context,
-            detector,
-            state,
-            solving_rune,
-        )),
+        Player::SolvingRune(solving_rune) => (!fail_to_detect).then_some(
+            update_solving_rune_context(context, detector, state, solving_rune),
+        ),
         Player::CashShopThenExit(timeout, in_cash_shop, exitting) => {
             let next = match (in_cash_shop, exitting) {
                 (false, _) => {
@@ -566,10 +581,7 @@ fn update_positional_context(
     state: &mut PlayerState,
 ) -> Player {
     match contextual {
-        Player::Detecting => {
-            state.unstuck_consecutive_counter = 0;
-            Player::Idle
-        }
+        Player::Detecting => Player::Idle,
         Player::Idle => update_idle_context(context, state, cur_pos),
         Player::Moving(dest, exact) => update_moving_context(state, cur_pos, dest, exact),
         Player::Adjusting(moving) => update_adjusting_context(context, state, cur_pos, moving),
@@ -750,38 +762,53 @@ fn update_use_key_context(
         }
     }
 
-    let update = |timeout| Player::UseKey(PlayerUseKey { timeout, ..use_key });
     let next = update_with_timeout(
         use_key.timeout,
-        USE_KEY_TIMEOUT + use_key.wait_before_use_ticks,
-        update,
+        USE_KEY_TIMEOUT + use_key.count + use_key.wait_before_use_ticks,
+        |timeout| Player::UseKey(PlayerUseKey { timeout, ..use_key }),
         || Player::Idle,
         |timeout| {
-            if !update_direction(context, state, timeout, use_key.direction) {
-                return update(timeout);
-            }
-            match use_key.with {
-                ActionKeyWith::Any => (),
-                ActionKeyWith::Stationary => {
-                    if !state.is_stationary {
-                        return update(timeout);
+            if !use_key.using {
+                if !update_direction(context, state, timeout, use_key.direction) {
+                    return Player::UseKey(PlayerUseKey { timeout, ..use_key });
+                }
+                match use_key.with {
+                    ActionKeyWith::Any => (),
+                    ActionKeyWith::Stationary => {
+                        if !state.is_stationary {
+                            return Player::UseKey(PlayerUseKey { timeout, ..use_key });
+                        }
+                    }
+                    ActionKeyWith::DoubleJump => {
+                        if !matches!(state.last_movement, Some(PlayerLastMovement::DoubleJumping)) {
+                            let pos = state.last_known_pos.unwrap();
+                            return Player::DoubleJumping(
+                                PlayerMoving::new(pos, pos, false),
+                                true,
+                                true,
+                            );
+                        }
                     }
                 }
-                ActionKeyWith::DoubleJump => {
-                    if !matches!(state.last_movement, Some(PlayerLastMovement::DoubleJumping)) {
-                        let pos = state.last_known_pos.unwrap();
-                        return Player::DoubleJumping(
-                            PlayerMoving::new(pos, pos, false),
-                            true,
-                            true,
-                        );
-                    }
+                if timeout.current < use_key.wait_before_use_ticks {
+                    return Player::UseKey(PlayerUseKey { timeout, ..use_key });
                 }
+                return Player::UseKey(PlayerUseKey {
+                    timeout,
+                    using: true,
+                    ..use_key
+                });
             }
-            if timeout.current < use_key.wait_before_use_ticks {
-                return update(timeout);
-            }
+            debug_assert!(use_key.using);
+            debug_assert!(use_key.current_count < use_key.count);
             let _ = context.keys.send(use_key.key.into());
+            if use_key.current_count + 1 < use_key.count {
+                return Player::UseKey(PlayerUseKey {
+                    timeout,
+                    current_count: use_key.current_count + 1,
+                    ..use_key
+                });
+            }
             if state.has_auto_mob_action()
                 && !state.has_priority_action()
                 && state.auto_mob_reachable_y_require_update()
@@ -899,12 +926,10 @@ fn update_moving_context(
     }
 
     state.use_immediate_control_flow = true;
-    if !state.has_auto_mob_action() || state.has_priority_action() {
-        state.unstuck_counter += 1;
-        if state.unstuck_counter >= UNSTUCK_TRACKER_THRESHOLD {
-            state.unstuck_counter = 0;
-            return Player::Unstucking(Timeout::default());
-        }
+    state.unstuck_counter += 1;
+    if state.unstuck_counter >= UNSTUCK_TRACKER_THRESHOLD {
+        state.unstuck_counter = 0;
+        return Player::Unstucking(Timeout::default());
     }
 
     let (x_distance, _) = x_distance_direction(dest, cur_pos);
@@ -1192,7 +1217,8 @@ fn update_double_jumping_context(
         }),
         |mut moving| {
             if !moving.completed {
-                if !forced {
+                // mage teleportation requires a direction
+                if !forced || state.teleport_key.is_some() {
                     match x_direction {
                         d if d > 0 => {
                             let _ = context.keys.send_up(KeyKind::Left);
@@ -1204,13 +1230,29 @@ fn update_double_jumping_context(
                             let _ = context.keys.send_down(KeyKind::Left);
                             state.last_known_direction = ActionKeyDirection::Left;
                         }
-                        _ => (),
+                        _ => {
+                            if state.teleport_key.is_some() {
+                                match state.last_known_direction {
+                                    ActionKeyDirection::Any => (),
+                                    ActionKeyDirection::Left => {
+                                        let _ = context.keys.send_up(KeyKind::Right);
+                                        let _ = context.keys.send_down(KeyKind::Left);
+                                    }
+                                    ActionKeyDirection::Right => {
+                                        let _ = context.keys.send_up(KeyKind::Left);
+                                        let _ = context.keys.send_down(KeyKind::Right);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 if (!forced && x_distance >= state.double_jump_threshold())
                     || x_changed <= DOUBLE_JUMP_FORCE_THRESHOLD
                 {
-                    let _ = context.keys.send(KeyKind::Space);
+                    let _ = context
+                        .keys
+                        .send(state.teleport_key.unwrap_or(KeyKind::Space));
                 } else {
                     let _ = context.keys.send_up(KeyKind::Right);
                     let _ = context.keys.send_up(KeyKind::Left);
@@ -1391,7 +1433,7 @@ fn update_unstucking_context(
 ) -> Player {
     const Y_IGNORE_THRESHOLD: i32 = 18;
     // what is gamba mode? i am disappointed if you don't know
-    const GAMBA_MODE_COUNT: u32 = 10;
+    const GAMBA_MODE_COUNT: u32 = 4;
     /// Random threshold to choose unstucking direction
     const X_TO_RIGHT_THRESHOLD: i32 = 10;
 
@@ -1405,6 +1447,8 @@ fn update_unstucking_context(
     if !timeout.started {
         if state.unstuck_consecutive_counter < GAMBA_MODE_COUNT {
             state.unstuck_consecutive_counter += 1;
+        } else {
+            state.unstuck_consecutive_counter = 0;
         }
     }
 
@@ -1417,6 +1461,7 @@ fn update_unstucking_context(
         timeout,
         PLAYER_MOVE_TIMEOUT,
         |timeout| {
+            let _ = context.keys.send(KeyKind::Esc);
             let to_right = match (is_gamba_mode, pos) {
                 (true, _) => rand::random_bool(0.5),
                 (_, Some(pos)) => {
@@ -1433,7 +1478,6 @@ fn update_unstucking_context(
             } else {
                 let _ = context.keys.send_down(KeyKind::Left);
             }
-            let _ = context.keys.send(KeyKind::Esc);
             Player::Unstucking(timeout)
         },
         || {

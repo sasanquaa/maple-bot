@@ -153,6 +153,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             *self.buffs = config_buffs(self.config);
             self.player.interact_key = self.config.interact_key.key.into();
             self.player.grappling_key = self.config.ropelift_key.key.into();
+            self.player.teleport_key = self.config.teleport_key.map(|key| key.key.into());
             self.player.upjump_key = self.config.up_jump_key.map(|key| key.key.into());
             self.player.cash_shop_key = self.config.cash_shop_key.key.into();
             self.player.potion_key = self.config.potion_key.key.into();

@@ -18,6 +18,7 @@ const DIV_CLASS: &str = "flex items-center space-x-4 text-xs text-gray-700";
 const LABEL_CLASS: &str = "flex-1";
 const INPUT_CLASS: &str = "w-44 rounded border border-gray-300 px-1 text-gray-700 h-6 outline-none";
 const ROPE_LIFT: &str = "Rope Lift";
+const TELEPORT: &str = "Teleport";
 const UP_JUMP: &str = "Up Jump";
 const INTERACT: &str = "Interact";
 const CASH_SHOP: &str = "Cash Shop";
@@ -116,6 +117,23 @@ pub fn Configuration(
                         });
                     },
                     value: Some(config_view().ropelift_key),
+                }
+                KeyBindingConfigurationInput {
+                    label: TELEPORT,
+                    input_disabled: disabled(),
+                    is_optional: true,
+                    is_active: matches!(active(), Some(TELEPORT)),
+                    on_active: move |value: bool| {
+                        active.set(value.then_some(TELEPORT));
+                    },
+                    can_disable: false,
+                    on_input: move |key| {
+                        on_config(ConfigurationData {
+                            teleport_key: key,
+                            ..config_view.peek().clone()
+                        });
+                    },
+                    value: config_view().teleport_key,
                 }
                 KeyBindingConfigurationInput {
                     label: UP_JUMP,

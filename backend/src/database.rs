@@ -48,6 +48,8 @@ pub struct Configuration {
     pub id: Option<i64>,
     pub name: String,
     pub ropelift_key: KeyBindingConfiguration,
+    #[serde(default)]
+    pub teleport_key: Option<KeyBindingConfiguration>,
     pub up_jump_key: Option<KeyBindingConfiguration>,
     pub interact_key: KeyBindingConfiguration,
     pub cash_shop_key: KeyBindingConfiguration,
@@ -137,6 +139,8 @@ pub struct Minimap {
     pub auto_mobbing_bound: Bound,
     #[serde(default)]
     pub auto_mobbing_key: KeyBinding,
+    #[serde(default = "count_default")]
+    pub auto_mobbing_key_count: u32,
     #[serde(default)]
     pub auto_mobbing_enabled: bool,
     pub actions: HashMap<String, Vec<Action>>,
@@ -170,6 +174,8 @@ pub struct ActionMove {
 #[derive(Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize)]
 pub struct ActionKey {
     pub key: KeyBinding,
+    #[serde(default = "count_default")]
+    pub count: u32,
     pub position: Option<Position>,
     pub condition: ActionCondition,
     pub direction: ActionKeyDirection,
@@ -179,6 +185,10 @@ pub struct ActionKey {
     #[serde(alias = "wait_after_use_ticks")]
     pub wait_after_use_millis: u64,
     pub queue_to_front: Option<bool>,
+}
+
+fn count_default() -> u32 {
+    1
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, EnumIter, Display, EnumString)]
