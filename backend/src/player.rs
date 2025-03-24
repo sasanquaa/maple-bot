@@ -17,7 +17,7 @@ use crate::{
 };
 
 /// Maximum number of times adjusting or double jump states can be transitioned to without changing position
-const UNSTUCK_TRACKER_THRESHOLD: u32 = 10;
+const UNSTUCK_TRACKER_THRESHOLD: u32 = 6;
 
 /// Minimium y distance required to perform a fall and double jump/adjusting
 const ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD: i32 = 8;
@@ -42,7 +42,7 @@ const PLAYER_VERTICAL_MOVE_THRESHOLD: i32 = 4;
 /// The number of times a reachable y must successfuly make the player moves to that exact y
 /// Once the count is reached, it is considered "solidified" and guarantee that reachable y is always
 /// a valid y (one that has platform and player can stand on)
-const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 3;
+const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 4;
 
 /// The acceptable y range above and below the detected mob position to match with a reachable y
 const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 8;
@@ -416,6 +416,7 @@ impl PlayerUseKey {
 #[derive(Clone, Copy, Default, Debug)]
 pub struct PlayerSolvingRune {
     solve_timeout: Timeout,
+    solve_fail_timeout: Timeout,
     validate_timeout: Timeout,
     keys: Option<[KeyKind; 4]>,
     key_index: usize,
@@ -515,7 +516,9 @@ fn update_non_positional_context(
         Player::UseKey(use_key) => {
             (!fail_to_detect).then_some(update_use_key_context(context, state, use_key))
         }
-        Player::Unstucking(timeout) => Some(update_unstucking_context(context, state, timeout)),
+        Player::Unstucking(timeout) => {
+            Some(update_unstucking_context(context, detector, state, timeout))
+        }
         Player::Stalling(timeout, max_timeout) => {
             (!fail_to_detect).then_some(update_stalling_context(state, timeout, max_timeout))
         }
@@ -1428,12 +1431,13 @@ fn update_falling_context(
 
 fn update_unstucking_context(
     context: &Context,
+    detector: &impl Detector,
     state: &mut PlayerState,
     timeout: Timeout,
 ) -> Player {
     const Y_IGNORE_THRESHOLD: i32 = 18;
     // what is gamba mode? i am disappointed if you don't know
-    const GAMBA_MODE_COUNT: u32 = 4;
+    const GAMBA_MODE_COUNT: u32 = 2;
     /// Random threshold to choose unstucking direction
     const X_TO_RIGHT_THRESHOLD: i32 = 10;
 
@@ -1461,7 +1465,10 @@ fn update_unstucking_context(
         timeout,
         PLAYER_MOVE_TIMEOUT,
         |timeout| {
-            let _ = context.keys.send(KeyKind::Esc);
+            // don't care about thread/slowness if unstucking
+            if is_gamba_mode || detector.detect_esc_settings() {
+                let _ = context.keys.send(KeyKind::Esc);
+            }
             let to_right = match (is_gamba_mode, pos) {
                 (true, _) => rand::random_bool(0.5),
                 (_, Some(pos)) => {
@@ -1548,6 +1555,7 @@ fn update_solving_rune_context(
     solving_rune: PlayerSolvingRune,
 ) -> Player {
     const RUNE_COOLDOWN_TIMEOUT: u32 = 370; // around 11 secs
+    const RUNE_FAIL_WAIT_TIMEOUT: u32 = 60; // wait 2 secs after timeout
     const SOLVE_RUNE_TIMEOUT: u32 = RUNE_COOLDOWN_TIMEOUT;
     const PRESS_KEY_INTERVAL: u32 = 10;
     const MAX_FAILED_COUNT: usize = 2;
@@ -1555,6 +1563,31 @@ fn update_solving_rune_context(
     if solving_rune.failed_count >= MAX_FAILED_COUNT {
         return Player::CashShopThenExit(Timeout::default(), false, false);
     }
+    if solving_rune.failed_count != 0
+        && solving_rune.solve_fail_timeout.current < RUNE_FAIL_WAIT_TIMEOUT
+    {
+        return update_with_timeout(
+            solving_rune.solve_fail_timeout,
+            RUNE_FAIL_WAIT_TIMEOUT,
+            |timeout| {
+                Player::SolvingRune(PlayerSolvingRune {
+                    solve_fail_timeout: timeout,
+                    ..solving_rune
+                })
+            },
+            || Player::SolvingRune(solving_rune),
+            |timeout| {
+                Player::SolvingRune(PlayerSolvingRune {
+                    solve_fail_timeout: timeout,
+                    ..solving_rune
+                })
+            },
+        );
+    }
+    debug_assert!(
+        solving_rune.failed_count == 0
+            || solving_rune.solve_fail_timeout.current >= RUNE_FAIL_WAIT_TIMEOUT
+    );
     if !solving_rune.validating && !solving_rune.solve_timeout.started {
         state.keys_task = None;
     }
@@ -1612,7 +1645,7 @@ fn update_solving_rune_context(
             },
             |timeout| {
                 if solving_rune.keys.is_none() {
-                    let Update::Complete(keys) =
+                    let Update::Complete(Ok(keys)) =
                         update_task_repeatable(1000, &mut state.keys_task, move || {
                             detector.detect_rune_arrows()
                         })
@@ -1622,23 +1655,16 @@ fn update_solving_rune_context(
                             ..solving_rune
                         });
                     };
-                    return if let Ok(keys) = keys {
-                        return Player::SolvingRune(PlayerSolvingRune {
-                            // reset current timeout for pressing keys
-                            solve_timeout: Timeout {
-                                current: 1, // starts at 1 instead of 0 to avoid immediate key press
-                                total: 1,
-                                started: true,
-                            },
-                            keys: Some(keys),
-                            ..solving_rune
-                        });
-                    } else {
-                        Player::SolvingRune(PlayerSolvingRune {
-                            solve_timeout: timeout,
-                            ..solving_rune
-                        })
-                    };
+                    return Player::SolvingRune(PlayerSolvingRune {
+                        // reset current timeout for pressing keys
+                        solve_timeout: Timeout {
+                            current: 1, // starts at 1 instead of 0 to avoid immediate key press
+                            total: 1,
+                            started: true,
+                        },
+                        keys: Some(keys),
+                        ..solving_rune
+                    });
                 }
                 if timeout.current % PRESS_KEY_INTERVAL != 0 {
                     return Player::SolvingRune(PlayerSolvingRune {

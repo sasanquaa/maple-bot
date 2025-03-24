@@ -53,6 +53,9 @@ pub trait Detector: 'static + Send + Sync + Clone {
     /// Returns a list of mobs coordinate in minimap coordinate (need flip y for player coordinate).
     fn detect_mobs(&self, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>>;
 
+    /// Detects whether there is ESC settings screen for unstucking.
+    fn detect_esc_settings(&self) -> bool;
+
     /// Detects whether there is a elite boss bar.
     fn detect_elite_boss_bar(&self) -> bool;
 
@@ -121,6 +124,7 @@ mock! {
     impl Detector for Detector {
         fn mat(&self) -> &Mat;
         fn detect_mobs(&self, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>>;
+        fn detect_esc_settings(&self) -> bool;
         fn detect_elite_boss_bar(&self) -> bool;
         fn detect_minimap(&self, border_threshold: u8) -> Result<Rect>;
         fn detect_minimap_name(&self, minimap: Rect) -> Result<String>;
@@ -184,6 +188,10 @@ impl Detector for CachedDetector {
 
     fn detect_mobs(&self, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>> {
         detect_mobs(&self.mat, minimap, bound, player)
+    }
+
+    fn detect_esc_settings(&self) -> bool {
+        detect_esc_settings(&**self.grayscale)
     }
 
     fn detect_elite_boss_bar(&self) -> bool {
@@ -727,6 +735,40 @@ fn detect_mobs(mat: &Mat, minimap: Rect, bound: Rect, player: Point) -> Result<V
     //     );
     // }
     Ok(points)
+}
+
+fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
+    /// TODO: Support default ratio
+    static ESC_SETTINGS: LazyLock<[Mat; 5]> = LazyLock::new(|| {
+        [
+            imgcodecs::imdecode(
+                include_bytes!(env!("ESC_SETTING_TEMPLATE")),
+                IMREAD_GRAYSCALE,
+            )
+            .unwrap(),
+            imgcodecs::imdecode(include_bytes!(env!("ESC_MENU_TEMPLATE")), IMREAD_GRAYSCALE)
+                .unwrap(),
+            imgcodecs::imdecode(include_bytes!(env!("ESC_EVENT_TEMPLATE")), IMREAD_GRAYSCALE)
+                .unwrap(),
+            imgcodecs::imdecode(
+                include_bytes!(env!("ESC_COMMUNITY_TEMPLATE")),
+                IMREAD_GRAYSCALE,
+            )
+            .unwrap(),
+            imgcodecs::imdecode(
+                include_bytes!(env!("ESC_CHARACTER_TEMPLATE")),
+                IMREAD_GRAYSCALE,
+            )
+            .unwrap(),
+        ]
+    });
+
+    for template in LazyLock::force(&ESC_SETTINGS) {
+        if detect_template(mat, template, Point::default(), 0.85, None).is_ok() {
+            return true;
+        }
+    }
+    false
 }
 
 fn detect_elite_boss_bar(mat: &Mat) -> bool {

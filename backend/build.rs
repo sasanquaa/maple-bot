@@ -2,6 +2,11 @@ use std::env;
 
 fn main() {
     let dir = env::current_dir().unwrap().join("resources");
+    let esc_setting = dir.join("esc_setting_ideal_ratio.png");
+    let esc_menu = dir.join("esc_menu_ideal_ratio.png");
+    let esc_event = dir.join("esc_event_ideal_ratio.png");
+    let esc_community = dir.join("esc_community_ideal_ratio.png");
+    let esc_character = dir.join("esc_character_ideal_ratio.png");
     let elite_boss_bar = dir.join("elite_boss_bar_ideal_ratio.png");
     let player_ideal_ratio = dir.join("player_ideal_ratio.png");
     let player_default_ratio = dir.join("player_default_ratio.png");
@@ -26,6 +31,26 @@ fn main() {
     let text_detection_model = dir.join("text_detection.onnx");
     let text_recognition_model = dir.join("text_recognition.onnx");
     let text_alphabet_txt = dir.join("alphabet_94.txt");
+    println!(
+        "cargo:rustc-env=ESC_SETTING_TEMPLATE={}",
+        esc_setting.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=ESC_MENU_TEMPLATE={}",
+        esc_menu.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=ESC_EVENT_TEMPLATE={}",
+        esc_event.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=ESC_COMMUNITY_TEMPLATE={}",
+        esc_community.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=ESC_CHARACTER_TEMPLATE={}",
+        esc_character.to_str().unwrap()
+    );
     println!(
         "cargo:rustc-env=ELITE_BOSS_BAR_TEMPLATE={}",
         elite_boss_bar.to_str().unwrap()
