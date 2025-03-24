@@ -1,9 +1,9 @@
 use dioxus::{document::EvalError, prelude::*};
 
 use backend::{
-    Action, ActionKey, ActionMove, Configuration, Minimap as MinimapData, PlayerState, delete_map,
-    minimap_data, minimap_frame, player_state, redetect_minimap, rotate_actions,
-    update_configuration, update_minimap,
+    Action, ActionKey, ActionMove, Configuration, Minimap as MinimapData, PlayerState,
+    RotationMode, delete_map, minimap_data, minimap_frame, player_state, redetect_minimap,
+    rotate_actions, update_configuration, update_minimap,
 };
 use serde::Serialize;
 use tokio::task::spawn_blocking;
@@ -170,11 +170,16 @@ pub fn Minimap(
     });
     use_effect(move || {
         let config = minimap().map(|minimap| {
+            let bound = if let RotationMode::AutoMobbing(mobbing) = minimap.rotation_mode {
+                Some(mobbing.bound)
+            } else {
+                None
+            };
             (
                 minimap.width,
                 minimap.height,
-                minimap.auto_mobbing_enabled,
-                minimap.auto_mobbing_bound,
+                bound.is_some(),
+                bound.unwrap_or_default(),
             )
         });
         let actions = actions();

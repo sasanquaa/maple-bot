@@ -137,7 +137,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             *self.actions = preset
                 .and_then(|preset| self.minimap.data.actions.get(&preset).cloned())
                 .unwrap_or_default();
-            self.update_rotator_actions((self.config as &_, &self.minimap.data).into());
+            self.update_rotator_actions(self.minimap.data.rotation_mode.into());
         }
         if *self.ignore_update_actions && matches!(self.context.minimap, Minimap::Idle(_)) {
             *self.ignore_update_actions = false;
@@ -163,7 +163,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
                     (_, PotionMode::Percentage(percent)) => Some(percent / 100.0),
                 };
             self.player.update_health_millis = Some(self.config.health_update_millis);
-            self.update_rotator_actions((self.config as &_, &self.minimap.data).into());
+            self.update_rotator_actions(self.minimap.data.rotation_mode.into());
         }
         if *self.ignore_update_actions && matches!(self.context.minimap, Minimap::Idle(_)) {
             *self.ignore_update_actions = false;
@@ -377,6 +377,7 @@ fn config_actions(config: &Configuration) -> Vec<Action> {
     if enabled {
         let feed_pet_action = Action::Key(ActionKey {
             key,
+            count: 1,
             condition: ActionCondition::EveryMillis(config.feed_pet_millis),
             wait_before_use_millis: 350,
             wait_after_use_millis: 350,
@@ -390,6 +391,7 @@ fn config_actions(config: &Configuration) -> Vec<Action> {
     if enabled && let PotionMode::EveryMillis(millis) = config.potion_mode {
         vec.push(Action::Key(ActionKey {
             key,
+            count: 1,
             condition: ActionCondition::EveryMillis(millis),
             wait_before_use_millis: 350,
             wait_after_use_millis: 350,

@@ -1,5 +1,4 @@
 use anyhow::Result;
-use log::debug;
 use strum::EnumIter;
 
 use crate::{
@@ -19,6 +18,7 @@ pub struct BuffState {
     task: Option<Task<Result<bool>>>,
     /// The count `Buff::HasBuff` has failed to detect
     fail_count: u32,
+    max_fail_count: u32,
 }
 
 impl BuffState {
@@ -27,6 +27,11 @@ impl BuffState {
             kind,
             task: None,
             fail_count: 0,
+            max_fail_count: if matches!(kind, BuffKind::Rune) {
+                1
+            } else {
+                BUFF_FAIL_MAX_COUNT
+            },
         }
     }
 }
@@ -90,12 +95,11 @@ fn update_context(contextual: Buff, detector: &impl Detector, state: &mut BuffSt
     } else {
         0
     };
-    debug!(target: "buff", "state updated: {has_buff} / {state:?}");
     match (has_buff, contextual) {
         (true, Buff::NoBuff) => Buff::HasBuff,
         (false, Buff::NoBuff) => Buff::NoBuff,
         (_, Buff::HasBuff) => {
-            if state.fail_count >= BUFF_FAIL_MAX_COUNT {
+            if state.fail_count >= state.max_fail_count {
                 Buff::NoBuff
             } else {
                 Buff::HasBuff
@@ -190,10 +194,11 @@ mod tests {
         for kind in BuffKind::iter() {
             let detector = detector_with_kind(kind, false);
             let mut state = BuffState::new(kind);
-            state.fail_count = BUFF_FAIL_MAX_COUNT - 1;
+            state.max_fail_count = BUFF_FAIL_MAX_COUNT;
+            state.fail_count = state.max_fail_count - 1;
 
             let buff = advance_task(Buff::HasBuff, &detector, &mut state).await;
-            assert_eq!(state.fail_count, BUFF_FAIL_MAX_COUNT);
+            assert_eq!(state.fail_count, state.max_fail_count);
             assert_matches!(buff, Buff::NoBuff);
         }
     }

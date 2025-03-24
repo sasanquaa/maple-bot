@@ -7,6 +7,8 @@ fn main() {
     let esc_event = dir.join("esc_event_ideal_ratio.png");
     let esc_community = dir.join("esc_community_ideal_ratio.png");
     let esc_character = dir.join("esc_character_ideal_ratio.png");
+    let esc_ok = dir.join("esc_ok_ideal_ratio.png");
+    let esc_cancel = dir.join("esc_ok_ideal_ratio.png");
     let elite_boss_bar = dir.join("elite_boss_bar_ideal_ratio.png");
     let player_ideal_ratio = dir.join("player_ideal_ratio.png");
     let player_default_ratio = dir.join("player_default_ratio.png");
@@ -50,6 +52,14 @@ fn main() {
     println!(
         "cargo:rustc-env=ESC_CHARACTER_TEMPLATE={}",
         esc_character.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=ESC_OK_TEMPLATE={}",
+        esc_ok.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=ESC_CANCEL_TEMPLATE={}",
+        esc_cancel.to_str().unwrap()
     );
     println!(
         "cargo:rustc-env=ELITE_BOSS_BAR_TEMPLATE={}",

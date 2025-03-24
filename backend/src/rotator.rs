@@ -11,7 +11,7 @@ use std::{
 };
 
 use crate::{
-    ActionKeyDirection, ActionKeyWith, Configuration, KeyBinding, Position, RotationMode,
+    ActionKeyDirection, ActionKeyWith, AutoMobbing, KeyBinding, Position, RotationMode,
     buff::Buff,
     context::{Context, ERDA_SHOWER_SKILL_POSITION, RUNE_BUFF_POSITION},
     database::{Action, ActionCondition, ActionKey, ActionMove},
@@ -25,7 +25,7 @@ use crate::{
 const COOLDOWN_BETWEEN_QUEUE_MILLIS: u128 = 20_000;
 const COOLDOWN_BETWEEN_POTION_QUEUE_MILLIS: u128 = 2_000;
 
-type Condition = Box<dyn Fn(&Context, Option<Instant>) -> bool>;
+type Condition = Box<dyn Fn(&Context, &mut PlayerState, Option<Instant>) -> bool>;
 
 struct PriorityAction {
     condition: Condition,
@@ -42,22 +42,27 @@ pub enum RotatorMode {
     StartToEnd,
     #[default]
     StartToEndThenReverse,
-    AutoMobbing(KeyBinding, u32, Rect),
+    AutoMobbing {
+        bound: Rect,
+        key: KeyBinding,
+        key_count: u32,
+    },
 }
 
-impl From<(&Configuration, &crate::Minimap)> for RotatorMode {
-    fn from((config, minimap): (&Configuration, &crate::Minimap)) -> Self {
-        if minimap.auto_mobbing_enabled {
-            RotatorMode::AutoMobbing(
-                minimap.auto_mobbing_key,
-                minimap.auto_mobbing_key_count,
-                minimap.auto_mobbing_bound.into(),
-            )
-        } else {
-            match config.rotation_mode {
-                RotationMode::StartToEnd => RotatorMode::StartToEnd,
-                RotationMode::StartToEndThenReverse => RotatorMode::StartToEndThenReverse,
-            }
+impl From<RotationMode> for RotatorMode {
+    fn from(mode: RotationMode) -> Self {
+        match mode {
+            RotationMode::StartToEnd => RotatorMode::StartToEnd,
+            RotationMode::StartToEndThenReverse => RotatorMode::StartToEndThenReverse,
+            RotationMode::AutoMobbing(AutoMobbing {
+                bound,
+                key,
+                key_count,
+            }) => RotatorMode::AutoMobbing {
+                bound: bound.into(),
+                key,
+                key_count,
+            },
         }
     }
 }
@@ -69,6 +74,8 @@ pub struct Rotator {
     normal_action_backward: bool,
     normal_rotate_mode: RotatorMode,
     auto_mob_task: Option<Task<Result<Vec<Point>>>>,
+    // this is literally free postfix increment!
+    priority_id_counter: AtomicU32,
     priority_actions: OrderedHashMap<u32, PriorityAction>,
     priority_actions_queue: VecDeque<u32>,
 }
@@ -87,20 +94,18 @@ impl Rotator {
         self.normal_rotate_mode = mode;
         self.priority_actions.clear();
 
-        // this is literally free postfix increment!
-        let id = AtomicU32::new(0);
         for action in actions.iter().copied() {
             match action {
                 Action::Move(ActionMove { condition, .. })
                 | Action::Key(ActionKey { condition, .. }) => match condition {
                     ActionCondition::EveryMillis(_) | ActionCondition::ErdaShowerOffCooldown => {
                         self.priority_actions.insert(
-                            id.fetch_add(1, Ordering::Relaxed),
+                            self.priority_id_counter.fetch_add(1, Ordering::Relaxed),
                             priority_action(action, condition),
                         );
                     }
                     ActionCondition::Any => {
-                        if matches!(self.normal_rotate_mode, RotatorMode::AutoMobbing(_, _, _)) {
+                        if matches!(self.normal_rotate_mode, RotatorMode::AutoMobbing { .. }) {
                             continue;
                         }
                         self.normal_actions.push(action.into())
@@ -109,16 +114,16 @@ impl Rotator {
             }
         }
         self.priority_actions.insert(
-            id.fetch_add(1, Ordering::Relaxed),
+            self.priority_id_counter.fetch_add(1, Ordering::Relaxed),
             elite_boss_potion_spam_priority_action(potion_key),
         );
         self.priority_actions.insert(
-            id.fetch_add(1, Ordering::Relaxed),
+            self.priority_id_counter.fetch_add(1, Ordering::Relaxed),
             solve_rune_priority_action(),
         );
         for (i, key) in buffs.iter().copied() {
             self.priority_actions.insert(
-                id.fetch_add(1, Ordering::Relaxed),
+                self.priority_id_counter.fetch_add(1, Ordering::Relaxed),
                 buff_priority_action(i, key),
             );
         }
@@ -132,6 +137,30 @@ impl Rotator {
     }
 
     #[inline]
+    pub fn rotate_action(
+        &mut self,
+        context: &Context,
+        detector: &impl Detector,
+        player: &mut PlayerState,
+    ) {
+        if context.halting || matches!(context.player, Player::CashShopThenExit(_, _, _)) {
+            return;
+        }
+        self.rotate_priority_actions(context, player);
+        self.rotate_priority_actions_queue(context, player);
+        if !player.has_priority_action() && !player.has_normal_action() {
+            match self.normal_rotate_mode {
+                RotatorMode::StartToEnd => self.rotate_start_end(player),
+                RotatorMode::StartToEndThenReverse => self.rotate_start_to_end_then_reverse(player),
+                RotatorMode::AutoMobbing {
+                    bound,
+                    key,
+                    key_count,
+                } => self.rotate_auto_mobbing(context, detector, player, bound, key, key_count),
+            }
+        }
+    }
+
     fn has_erda_action_in_queue(&self, player: &PlayerState) -> bool {
         player
             .priority_action_id()
@@ -145,29 +174,15 @@ impl Rotator {
             })
             .unwrap_or_else(|| {
                 self.priority_actions_queue.iter().any(|id| {
-                    self.priority_actions.get(id).is_some_and(|action| {
-                        matches!(
-                            action.condition_kind,
-                            Some(ActionCondition::ErdaShowerOffCooldown)
-                        )
-                    })
+                    matches!(
+                        self.priority_actions.get(id).unwrap().condition_kind,
+                        Some(ActionCondition::ErdaShowerOffCooldown)
+                    )
                 })
             })
     }
 
-    pub fn rotate_action(
-        &mut self,
-        context: &Context,
-        detector: &impl Detector,
-        player: &mut PlayerState,
-    ) {
-        if context.halting {
-            return;
-        }
-        if matches!(context.player, Player::CashShopThenExit(_, _, _)) {
-            return;
-        }
-        // what a mess
+    fn rotate_priority_actions(&mut self, context: &Context, player: &mut PlayerState) {
         let has_erda_action = self.has_erda_action_in_queue(player);
         for (id, action) in self.priority_actions.iter_mut() {
             action.ignoring = match action.condition_kind {
@@ -187,7 +202,7 @@ impl Rotator {
                 action.last_queued_time = Some(Instant::now());
                 continue;
             }
-            if (action.condition)(context, action.last_queued_time) {
+            if (action.condition)(context, player, action.last_queued_time) {
                 if action.queue_to_front {
                     self.priority_actions_queue.push_front(*id);
                 } else {
@@ -196,40 +211,35 @@ impl Rotator {
                 action.last_queued_time = Some(Instant::now());
             }
         }
-        if !self.priority_actions_queue.is_empty() {
-            if player.has_normal_action() && is_player_stalling_or_use_key(context) {
-                return;
-            }
-            let id = self.priority_actions_queue.pop_front().unwrap();
-            let action = self.priority_actions.get(&id).unwrap();
-            let has_queue_to_front = player
-                .priority_action_id()
-                .map(|id| self.priority_actions.get(&id).unwrap().queue_to_front)
-                .unwrap_or_default();
-            if action.queue_to_front
-                && !has_queue_to_front
-                && !is_player_stalling_or_use_key(context)
-            {
-                if let Some(id) = player.replace_priority_action(id, action.action) {
-                    self.priority_actions_queue.push_front(id);
-                }
-            } else if !player.has_priority_action() {
-                player.set_priority_action(id, action.action);
-            } else {
-                self.priority_actions_queue.push_front(id);
-            }
-        }
-        if player.has_priority_action() {
+    }
+
+    fn rotate_priority_actions_queue(&mut self, context: &Context, player: &mut PlayerState) {
+        if self.priority_actions_queue.is_empty() {
             return;
         }
-        if !player.has_normal_action() {
-            match self.normal_rotate_mode {
-                RotatorMode::StartToEnd => self.rotate_start_end(player),
-                RotatorMode::StartToEndThenReverse => self.rotate_start_to_end_then_reverse(player),
-                RotatorMode::AutoMobbing(key, count, bound) => {
-                    self.rotate_auto_mobbing(context, detector, player, key, count, bound)
-                }
+        if player.has_normal_action() && is_player_stalling_or_use_key(context) {
+            return;
+        }
+        let id = self.priority_actions_queue.pop_front().unwrap();
+        let Some(action) = self.priority_actions.get(&id) else {
+            return;
+        };
+        let has_queue_to_front = player
+            .priority_action_id()
+            .and_then(|id| {
+                self.priority_actions
+                    .get(&id)
+                    .map(|action| action.queue_to_front)
+            })
+            .unwrap_or_default();
+        if action.queue_to_front && !has_queue_to_front && !is_player_stalling_or_use_key(context) {
+            if let Some(id) = player.replace_priority_action(id, action.action) {
+                self.priority_actions_queue.push_front(id);
             }
+        } else if !player.has_priority_action() {
+            player.set_priority_action(id, action.action);
+        } else {
+            self.priority_actions_queue.push_front(id);
         }
     }
 
@@ -238,9 +248,9 @@ impl Rotator {
         context: &Context,
         detector: &impl Detector,
         player: &mut PlayerState,
-        key: KeyBinding,
-        count: u32,
         bound: opencv::core::Rect_<i32>,
+        key: KeyBinding,
+        key_count: u32,
     ) {
         let Minimap::Idle(idle) = context.minimap else {
             return;
@@ -261,7 +271,7 @@ impl Rotator {
         };
         player.set_normal_action(PlayerAction::AutoMob(PlayerActionAutoMob {
             key,
-            count: if count == 0 { 1 } else { count },
+            count: if key_count == 0 { 1 } else { key_count },
             position: Position {
                 x: point.x,
                 y: idle.bbox.height - point.y,
@@ -307,7 +317,7 @@ fn priority_action(action: Action, condition: ActionCondition) -> PriorityAction
     );
     PriorityAction {
         action: action.into(),
-        condition: Box::new(move |context, last_queued_time| {
+        condition: Box::new(move |context, _, last_queued_time| {
             should_queue_fixed_action(context, last_queued_time, condition)
         }),
         condition_kind: Some(condition),
@@ -324,7 +334,7 @@ fn priority_action(action: Action, condition: ActionCondition) -> PriorityAction
 #[inline]
 fn elite_boss_potion_spam_priority_action(key: KeyBinding) -> PriorityAction {
     PriorityAction {
-        condition: Box::new(|context, last_queued_time| {
+        condition: Box::new(|context, _, last_queued_time| {
             if !at_least_millis_passed_since(last_queued_time, COOLDOWN_BETWEEN_POTION_QUEUE_MILLIS)
             {
                 return false;
@@ -353,7 +363,10 @@ fn elite_boss_potion_spam_priority_action(key: KeyBinding) -> PriorityAction {
 #[inline]
 fn solve_rune_priority_action() -> PriorityAction {
     PriorityAction {
-        condition: Box::new(|context, last_queued_time| {
+        condition: Box::new(|context, player, last_queued_time| {
+            if player.is_validating_rune() {
+                return false;
+            }
             if !at_least_millis_passed_since(last_queued_time, COOLDOWN_BETWEEN_QUEUE_MILLIS) {
                 return false;
             }
@@ -374,7 +387,7 @@ fn solve_rune_priority_action() -> PriorityAction {
 #[inline]
 fn buff_priority_action(buff_index: usize, key: KeyBinding) -> PriorityAction {
     PriorityAction {
-        condition: Box::new(move |context, last_queued_time| {
+        condition: Box::new(move |context, _, last_queued_time| {
             if !at_least_millis_passed_since(last_queued_time, COOLDOWN_BETWEEN_QUEUE_MILLIS) {
                 return false;
             }
@@ -592,7 +605,7 @@ mod tests {
         };
         context.buffs[RUNE_BUFF_POSITION] = Buff::NoBuff;
         rotator.priority_actions.insert(55, PriorityAction {
-            condition: Box::new(|context, _| matches!(context.minimap, Minimap::Idle(_))),
+            condition: Box::new(|context, _, _| matches!(context.minimap, Minimap::Idle(_))),
             condition_kind: None,
             action: PlayerAction::SolveRune,
             queue_to_front: true,
@@ -613,7 +626,7 @@ mod tests {
         let context = Context::default();
         // queue 2 non-front priority actions
         rotator.priority_actions.insert(2, PriorityAction {
-            condition: Box::new(|_, _| true),
+            condition: Box::new(|_, _, _| true),
             condition_kind: None,
             action: NORMAL_ACTION.into(),
             queue_to_front: false,
@@ -621,7 +634,7 @@ mod tests {
             last_queued_time: None,
         });
         rotator.priority_actions.insert(3, PriorityAction {
-            condition: Box::new(|_, _| true),
+            condition: Box::new(|_, _, _| true),
             condition_kind: None,
             action: NORMAL_ACTION.into(),
             queue_to_front: false,
@@ -635,7 +648,7 @@ mod tests {
 
         // add 1 front priority action
         rotator.priority_actions.insert(4, PriorityAction {
-            condition: Box::new(|_, _| true),
+            condition: Box::new(|_, _, _| true),
             condition_kind: None,
             action: PlayerAction::SolveRune,
             queue_to_front: true,
@@ -653,7 +666,7 @@ mod tests {
 
         // add another front priority action
         rotator.priority_actions.insert(5, PriorityAction {
-            condition: Box::new(|_, _| true),
+            condition: Box::new(|_, _, _| true),
             condition_kind: None,
             action: PlayerAction::SolveRune,
             queue_to_front: true,

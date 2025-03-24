@@ -17,7 +17,7 @@ use crate::{
 };
 
 /// Maximum number of times adjusting or double jump states can be transitioned to without changing position
-const UNSTUCK_TRACKER_THRESHOLD: u32 = 6;
+const UNSTUCK_TRACKER_THRESHOLD: u32 = 7;
 
 /// Minimium y distance required to perform a fall and double jump/adjusting
 const ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD: i32 = 8;
@@ -46,6 +46,8 @@ const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 4;
 
 /// The acceptable y range above and below the detected mob position to match with a reachable y
 const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 8;
+
+const MAX_RUNE_FAILED_COUNT: u32 = 2;
 
 #[derive(Debug, Default)]
 pub struct PlayerState {
@@ -105,10 +107,107 @@ pub struct PlayerState {
     /// Resets when a limit is reached (for unstucking) or position did change.
     unstuck_counter: u32,
     /// The number of consecutive times player transtioned to `Player::Unstucking`
-    /// Resets when limit is reached
+    /// Resets when position did change
     unstuck_consecutive_counter: u32,
+    /// Unstuck task for detecting settings
+    unstuck_task: Option<Task<Result<bool>>>,
     /// Rune solving task
-    keys_task: Option<Task<Result<[KeyKind; 4]>>>,
+    rune_task: Option<Task<Result<[KeyKind; 4]>>>,
+    rune_failed_count: u32,
+    rune_cash_shop: bool,
+    rune_validate_timeout: Option<Timeout>,
+}
+
+impl PlayerState {
+    #[inline]
+    pub fn normal_action_name(&self) -> Option<String> {
+        self.normal_action.map(|action| action.to_string())
+    }
+
+    #[inline]
+    pub fn has_normal_action(&self) -> bool {
+        self.normal_action.is_some()
+    }
+
+    #[inline]
+    pub fn set_normal_action(&mut self, action: PlayerAction) {
+        self.reset_to_idle_next_update = true;
+        self.normal_action = Some(action);
+    }
+
+    #[inline]
+    pub fn priority_action_name(&self) -> Option<String> {
+        self.priority_action.map(|action| action.to_string())
+    }
+
+    #[inline]
+    pub fn priority_action_id(&self) -> Option<u32> {
+        self.has_priority_action()
+            .then_some(self.priority_action_id)
+    }
+
+    #[inline]
+    pub fn has_priority_action(&self) -> bool {
+        self.priority_action.is_some()
+    }
+
+    #[inline]
+    pub fn set_priority_action(&mut self, id: u32, action: PlayerAction) {
+        let _ = self.replace_priority_action(id, action);
+    }
+
+    #[inline]
+    pub fn replace_priority_action(&mut self, id: u32, action: PlayerAction) -> Option<u32> {
+        let prev_id = self.priority_action_id;
+        self.reset_to_idle_next_update = true;
+        self.priority_action_id = id;
+        self.priority_action
+            .replace(action)
+            .is_some()
+            .then_some(prev_id)
+    }
+
+    #[inline]
+    pub fn is_validating_rune(&self) -> bool {
+        self.rune_validate_timeout.is_some()
+    }
+
+    #[inline]
+    pub fn abort_actions(&mut self) {
+        self.reset_to_idle_next_update = true;
+        self.priority_action = None;
+        self.normal_action = None;
+    }
+
+    #[inline]
+    fn has_auto_mob_action(&self) -> bool {
+        matches!(self.normal_action, Some(PlayerAction::AutoMob(_)))
+    }
+
+    #[inline]
+    fn auto_mob_reachable_y_require_update(&self) -> bool {
+        self.auto_mob_reachable_y.is_none_or(|y| {
+            *self.auto_mob_reachable_y_map.get(&y).unwrap() < AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT
+        })
+    }
+
+    #[inline]
+    fn falling_threshold(&self) -> i32 {
+        if self.has_auto_mob_action() && !self.has_priority_action() {
+            AUTO_MOB_REACHABLE_Y_THRESHOLD
+        } else {
+            PLAYER_VERTICAL_MOVE_THRESHOLD
+        }
+    }
+
+    #[inline]
+    fn double_jump_threshold(&self) -> i32 {
+        if self.has_auto_mob_action() && !self.has_priority_action() {
+            DOUBLE_JUMP_AUTO_MOB_THRESHOLD
+        } else {
+            DOUBLE_JUMP_THRESHOLD
+        }
+    }
 }
 
 /// The player previous movement-related conextual state.
@@ -212,93 +311,6 @@ impl From<Action> for PlayerAction {
         match action {
             Action::Move(action) => PlayerAction::Move(action.into()),
             Action::Key(action) => PlayerAction::Key(action.into()),
-        }
-    }
-}
-
-impl PlayerState {
-    #[inline]
-    pub fn normal_action_name(&self) -> Option<String> {
-        self.normal_action.map(|action| action.to_string())
-    }
-
-    #[inline]
-    pub fn has_normal_action(&self) -> bool {
-        self.normal_action.is_some()
-    }
-
-    #[inline]
-    pub fn set_normal_action(&mut self, action: PlayerAction) {
-        self.reset_to_idle_next_update = true;
-        self.normal_action = Some(action);
-    }
-
-    #[inline]
-    pub fn priority_action_name(&self) -> Option<String> {
-        self.priority_action.map(|action| action.to_string())
-    }
-
-    #[inline]
-    pub fn priority_action_id(&self) -> Option<u32> {
-        self.has_priority_action()
-            .then_some(self.priority_action_id)
-    }
-
-    #[inline]
-    pub fn has_priority_action(&self) -> bool {
-        self.priority_action.is_some()
-    }
-
-    #[inline]
-    pub fn set_priority_action(&mut self, id: u32, action: PlayerAction) {
-        let _ = self.replace_priority_action(id, action);
-    }
-
-    #[inline]
-    pub fn replace_priority_action(&mut self, id: u32, action: PlayerAction) -> Option<u32> {
-        let prev_id = self.priority_action_id;
-        self.reset_to_idle_next_update = true;
-        self.priority_action_id = id;
-        self.priority_action
-            .replace(action)
-            .is_some()
-            .then_some(prev_id)
-    }
-
-    #[inline]
-    pub fn abort_actions(&mut self) {
-        self.reset_to_idle_next_update = true;
-        self.priority_action = None;
-        self.normal_action = None;
-    }
-
-    #[inline]
-    fn has_auto_mob_action(&self) -> bool {
-        matches!(self.normal_action, Some(PlayerAction::AutoMob(_)))
-    }
-
-    #[inline]
-    fn auto_mob_reachable_y_require_update(&self) -> bool {
-        self.auto_mob_reachable_y.is_none_or(|y| {
-            *self.auto_mob_reachable_y_map.get(&y).unwrap() < AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT
-        })
-    }
-
-    #[inline]
-    fn falling_threshold(&self) -> i32 {
-        if self.has_auto_mob_action() && !self.has_priority_action() {
-            AUTO_MOB_REACHABLE_Y_THRESHOLD
-        } else {
-            PLAYER_VERTICAL_MOVE_THRESHOLD
-        }
-    }
-
-    #[inline]
-    fn double_jump_threshold(&self) -> i32 {
-        if self.has_auto_mob_action() && !self.has_priority_action() {
-            DOUBLE_JUMP_AUTO_MOB_THRESHOLD
-        } else {
-            DOUBLE_JUMP_THRESHOLD
         }
     }
 }
@@ -416,12 +428,8 @@ impl PlayerUseKey {
 #[derive(Clone, Copy, Default, Debug)]
 pub struct PlayerSolvingRune {
     solve_timeout: Timeout,
-    solve_fail_timeout: Timeout,
-    validate_timeout: Timeout,
     keys: Option<[KeyKind; 4]>,
     key_index: usize,
-    validating: bool,
-    failed_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, Display)]
@@ -436,7 +444,7 @@ pub enum Player {
     Jumping(PlayerMoving),
     UpJumping(PlayerMoving),
     Falling(PlayerMoving, Point),
-    Unstucking(Timeout),
+    Unstucking(Timeout, Option<bool>),
     Stalling(Timeout, u32),
     SolvingRune(PlayerSolvingRune),
     CashShopThenExit(Timeout, bool, bool),
@@ -454,6 +462,14 @@ impl Contextual for Player {
         detector: &impl Detector,
         state: &mut PlayerState,
     ) -> ControlFlow<Self> {
+        if state.rune_cash_shop {
+            let _ = context.keys.send_up(KeyKind::Up);
+            let _ = context.keys.send_up(KeyKind::Down);
+            let _ = context.keys.send_up(KeyKind::Left);
+            let _ = context.keys.send_up(KeyKind::Right);
+            state.rune_cash_shop = false;
+            return ControlFlow::Next(Player::CashShopThenExit(Timeout::default(), false, false));
+        }
         let cur_pos = if state.ignore_pos_update {
             state.last_known_pos
         } else {
@@ -470,12 +486,12 @@ impl Contextual for Player {
                 if idle.partially_overlapping {
                     Player::Detecting
                 } else {
-                    Player::Unstucking(Timeout::default())
+                    Player::Unstucking(Timeout::default(), None)
                 }
             } else {
                 Player::Detecting
             };
-            if matches!(next, Player::Unstucking(_)) {
+            if matches!(next, Player::Unstucking(_, _)) {
                 state.last_known_direction = ActionKeyDirection::Any;
             }
             return ControlFlow::Next(next);
@@ -516,9 +532,13 @@ fn update_non_positional_context(
         Player::UseKey(use_key) => {
             (!fail_to_detect).then_some(update_use_key_context(context, state, use_key))
         }
-        Player::Unstucking(timeout) => {
-            Some(update_unstucking_context(context, detector, state, timeout))
-        }
+        Player::Unstucking(timeout, has_settings) => Some(update_unstucking_context(
+            context,
+            detector,
+            state,
+            timeout,
+            has_settings,
+        )),
         Player::Stalling(timeout, max_timeout) => {
             (!fail_to_detect).then_some(update_stalling_context(state, timeout, max_timeout))
         }
@@ -619,7 +639,7 @@ fn update_positional_context(
             update_falling_context(context, state, cur_pos, moving, anchor)
         }
         Player::UseKey(_)
-        | Player::Unstucking(_)
+        | Player::Unstucking(_, _)
         | Player::Stalling(_, _)
         | Player::SolvingRune(_)
         | Player::CashShopThenExit(_, _, _) => unreachable!(),
@@ -932,7 +952,7 @@ fn update_moving_context(
     state.unstuck_counter += 1;
     if state.unstuck_counter >= UNSTUCK_TRACKER_THRESHOLD {
         state.unstuck_counter = 0;
-        return Player::Unstucking(Timeout::default());
+        return Player::Unstucking(Timeout::default(), None);
     }
 
     let (x_distance, _) = x_distance_direction(dest, cur_pos);
@@ -1434,6 +1454,7 @@ fn update_unstucking_context(
     detector: &impl Detector,
     state: &mut PlayerState,
     timeout: Timeout,
+    has_settings: Option<bool>,
 ) -> Player {
     const Y_IGNORE_THRESHOLD: i32 = 18;
     // what is gamba mode? i am disappointed if you don't know
@@ -1441,18 +1462,27 @@ fn update_unstucking_context(
     /// Random threshold to choose unstucking direction
     const X_TO_RIGHT_THRESHOLD: i32 = 10;
 
-    if state.has_auto_mob_action() {
-        state.normal_action = None;
-    }
     let Minimap::Idle(idle) = context.minimap else {
         return Player::Detecting;
     };
 
+    debug_assert!(has_settings.is_some() || timeout == Timeout::default());
+    if has_settings.is_none() {
+        let detector = detector.clone();
+        let Update::Complete(Ok(has_settings)) =
+            update_task_repeatable(0, &mut state.unstuck_task, move || {
+                Ok(detector.detect_esc_settings())
+            })
+        else {
+            return Player::Unstucking(timeout, has_settings);
+        };
+        return Player::Unstucking(timeout, Some(has_settings));
+    }
+
+    debug_assert!(has_settings.is_some());
     if !timeout.started {
         if state.unstuck_consecutive_counter < GAMBA_MODE_COUNT {
             state.unstuck_consecutive_counter += 1;
-        } else {
-            state.unstuck_consecutive_counter = 0;
         }
     }
 
@@ -1465,19 +1495,15 @@ fn update_unstucking_context(
         timeout,
         PLAYER_MOVE_TIMEOUT,
         |timeout| {
-            // don't care about thread/slowness if unstucking
-            if is_gamba_mode || detector.detect_esc_settings() {
+            if has_settings.unwrap() || is_gamba_mode {
                 let _ = context.keys.send(KeyKind::Esc);
             }
             let to_right = match (is_gamba_mode, pos) {
                 (true, _) => rand::random_bool(0.5),
-                (_, Some(pos)) => {
-                    if pos.y <= Y_IGNORE_THRESHOLD {
-                        let _ = context.keys.send_down(KeyKind::Down);
-                        return Player::Unstucking(timeout);
-                    }
-                    pos.x <= X_TO_RIGHT_THRESHOLD
+                (_, Some(Point { y, .. })) if y <= Y_IGNORE_THRESHOLD => {
+                    return Player::Unstucking(timeout, has_settings);
                 }
+                (_, Some(Point { x, .. })) => x <= X_TO_RIGHT_THRESHOLD,
                 (_, None) => unreachable!(),
             };
             if to_right {
@@ -1485,7 +1511,7 @@ fn update_unstucking_context(
             } else {
                 let _ = context.keys.send_down(KeyKind::Left);
             }
-            Player::Unstucking(timeout)
+            Player::Unstucking(timeout, has_settings)
         },
         || {
             let _ = context.keys.send_up(KeyKind::Down);
@@ -1494,8 +1520,15 @@ fn update_unstucking_context(
             Player::Detecting
         },
         |timeout| {
-            let _ = context.keys.send(KeyKind::Space);
-            Player::Unstucking(timeout)
+            let send_space = match (is_gamba_mode, pos) {
+                (true, _) => true,
+                (_, Some(pos)) if pos.y > Y_IGNORE_THRESHOLD => true,
+                _ => false,
+            };
+            if send_space {
+                let _ = context.keys.send(KeyKind::Space);
+            }
+            Player::Unstucking(timeout, has_settings)
         },
     )
 }
@@ -1554,143 +1587,83 @@ fn update_solving_rune_context(
     state: &mut PlayerState,
     solving_rune: PlayerSolvingRune,
 ) -> Player {
-    const RUNE_COOLDOWN_TIMEOUT: u32 = 370; // around 11 secs
-    const RUNE_FAIL_WAIT_TIMEOUT: u32 = 60; // wait 2 secs after timeout
-    const SOLVE_RUNE_TIMEOUT: u32 = RUNE_COOLDOWN_TIMEOUT;
+    const RUNE_SOLVING_TIMEOUT: u32 = 185;
     const PRESS_KEY_INTERVAL: u32 = 10;
-    const MAX_FAILED_COUNT: usize = 2;
 
-    if solving_rune.failed_count >= MAX_FAILED_COUNT {
-        return Player::CashShopThenExit(Timeout::default(), false, false);
-    }
-    if solving_rune.failed_count != 0
-        && solving_rune.solve_fail_timeout.current < RUNE_FAIL_WAIT_TIMEOUT
-    {
-        return update_with_timeout(
-            solving_rune.solve_fail_timeout,
-            RUNE_FAIL_WAIT_TIMEOUT,
-            |timeout| {
-                Player::SolvingRune(PlayerSolvingRune {
-                    solve_fail_timeout: timeout,
-                    ..solving_rune
-                })
-            },
-            || Player::SolvingRune(solving_rune),
-            |timeout| {
-                Player::SolvingRune(PlayerSolvingRune {
-                    solve_fail_timeout: timeout,
-                    ..solving_rune
-                })
-            },
-        );
-    }
-    debug_assert!(
-        solving_rune.failed_count == 0
-            || solving_rune.solve_fail_timeout.current >= RUNE_FAIL_WAIT_TIMEOUT
-    );
-    if !solving_rune.validating && !solving_rune.solve_timeout.started {
-        state.keys_task = None;
-    }
-    let next = if solving_rune.validating {
-        debug_assert!(
-            solving_rune
-                .keys
-                .is_some_and(|keys| solving_rune.key_index >= keys.len())
-        );
-        update_with_timeout(
-            solving_rune.validate_timeout,
-            RUNE_COOLDOWN_TIMEOUT,
-            |timeout| {
-                Player::SolvingRune(PlayerSolvingRune {
-                    validate_timeout: timeout,
-                    ..solving_rune
-                })
-            },
-            || {
-                if matches!(context.buffs[RUNE_BUFF_POSITION], Buff::HasBuff) {
-                    Player::Idle
-                } else {
-                    Player::SolvingRune(PlayerSolvingRune {
-                        failed_count: solving_rune.failed_count + 1,
-                        ..PlayerSolvingRune::default()
+    debug_assert!(state.rune_validate_timeout.is_none());
+    debug_assert!(state.rune_failed_count < MAX_RUNE_FAILED_COUNT);
+    debug_assert!(!state.rune_cash_shop);
+    let detector = detector.clone();
+    let next = update_with_timeout(
+        solving_rune.solve_timeout,
+        RUNE_SOLVING_TIMEOUT,
+        |timeout| {
+            let _ = context.keys.send(state.interact_key);
+            Player::SolvingRune(PlayerSolvingRune {
+                solve_timeout: timeout,
+                ..solving_rune
+            })
+        },
+        || {
+            // likely a spinning rune if the bot can't detect and timeout
+            state.rune_failed_count += 1;
+            if state.rune_failed_count >= MAX_RUNE_FAILED_COUNT {
+                state.rune_failed_count = 0;
+                state.rune_cash_shop = true;
+            }
+            Player::Idle
+        },
+        |timeout| {
+            if solving_rune.keys.is_none() {
+                let Update::Complete(Ok(keys)) =
+                    update_task_repeatable(1000, &mut state.rune_task, move || {
+                        detector.detect_rune_arrows()
                     })
-                }
-            },
-            |timeout| {
-                Player::SolvingRune(PlayerSolvingRune {
-                    validate_timeout: timeout,
-                    ..solving_rune
-                })
-            },
-        )
-    } else {
-        let detector = detector.clone();
-        let state: &mut PlayerState = state;
-        update_with_timeout(
-            solving_rune.solve_timeout,
-            SOLVE_RUNE_TIMEOUT,
-            |timeout| {
-                let _ = context.keys.send(state.interact_key);
-                Player::SolvingRune(PlayerSolvingRune {
-                    solve_timeout: timeout,
-                    ..solving_rune
-                })
-            },
-            || {
-                // likely a spinning rune if the bot can't detect and timeout
-                Player::SolvingRune(PlayerSolvingRune {
-                    failed_count: solving_rune.failed_count + 1,
-                    ..PlayerSolvingRune::default()
-                })
-            },
-            |timeout| {
-                if solving_rune.keys.is_none() {
-                    let Update::Complete(Ok(keys)) =
-                        update_task_repeatable(1000, &mut state.keys_task, move || {
-                            detector.detect_rune_arrows()
-                        })
-                    else {
-                        return Player::SolvingRune(PlayerSolvingRune {
-                            solve_timeout: timeout,
-                            ..solving_rune
-                        });
-                    };
-                    return Player::SolvingRune(PlayerSolvingRune {
-                        // reset current timeout for pressing keys
-                        solve_timeout: Timeout {
-                            current: 1, // starts at 1 instead of 0 to avoid immediate key press
-                            total: 1,
-                            started: true,
-                        },
-                        keys: Some(keys),
-                        ..solving_rune
-                    });
-                }
-                if timeout.current % PRESS_KEY_INTERVAL != 0 {
+                else {
                     return Player::SolvingRune(PlayerSolvingRune {
                         solve_timeout: timeout,
                         ..solving_rune
                     });
-                }
-                debug_assert!(solving_rune.key_index != 0 || timeout.current == PRESS_KEY_INTERVAL);
-                debug_assert!(
-                    solving_rune
-                        .keys
-                        .is_some_and(|keys| solving_rune.key_index < keys.len())
-                );
-                let keys = solving_rune.keys.unwrap();
-                let key_index = solving_rune.key_index;
-                let _ = context.keys.send(keys[key_index]);
-                let key_index = solving_rune.key_index + 1;
+                };
+                return Player::SolvingRune(PlayerSolvingRune {
+                    // reset current timeout for pressing keys
+                    solve_timeout: Timeout {
+                        current: 1, // starts at 1 instead of 0 to avoid immediate key press
+                        total: 1,
+                        started: true,
+                    },
+                    keys: Some(keys),
+                    ..solving_rune
+                });
+            }
+            if timeout.current % PRESS_KEY_INTERVAL != 0 {
+                return Player::SolvingRune(PlayerSolvingRune {
+                    solve_timeout: timeout,
+                    ..solving_rune
+                });
+            }
+            debug_assert!(solving_rune.key_index != 0 || timeout.current == PRESS_KEY_INTERVAL);
+            debug_assert!(
+                solving_rune
+                    .keys
+                    .is_some_and(|keys| solving_rune.key_index < keys.len())
+            );
+            let keys = solving_rune.keys.unwrap();
+            let key_index = solving_rune.key_index;
+            let _ = context.keys.send(keys[key_index]);
+            let key_index = solving_rune.key_index + 1;
+            if key_index >= keys.len() {
+                state.rune_validate_timeout = Some(Timeout::default());
+                Player::Idle
+            } else {
                 Player::SolvingRune(PlayerSolvingRune {
                     solve_timeout: timeout,
-                    validating: key_index >= keys.len(),
                     key_index,
                     ..solving_rune
                 })
-            },
-        )
-    };
+            }
+        },
+    );
 
     on_action(
         state,
@@ -1726,6 +1699,19 @@ fn on_action_mut_state(
     if let Some(action) = state.priority_action.or(state.normal_action) {
         if let Some((next, is_terminal)) = on_action_context(state, action) {
             if is_terminal {
+                match action {
+                    PlayerAction::AutoMob(_)
+                    | PlayerAction::SolveRune
+                    | PlayerAction::Move(_)
+                    | PlayerAction::Key(PlayerActionKey {
+                        position: Some(Position { .. }),
+                        ..
+                    }) => {
+                        state.unstuck_counter = 0;
+                        state.unstuck_consecutive_counter = 0;
+                    }
+                    PlayerAction::Key(PlayerActionKey { position: None, .. }) => (),
+                }
                 if state.priority_action.is_some() {
                     state.priority_action = None;
                 } else {
@@ -1772,7 +1758,7 @@ pub struct Timeout {
     /// The current timeout tick.
     /// The timeout tick can be reset to 0 in the context of movement.
     current: u32,
-    /// The total number of passed ticks.
+    /// The total number of passed ticks. Useful when `current` can be reset.
     /// Currently only used for delaying upjumping
     total: u32,
     /// Inidcates whether the timeout has started.
@@ -1864,12 +1850,38 @@ fn reset_health(state: &mut PlayerState) {
     state.health_bar_task = None;
 }
 
+#[inline]
+fn update_rune_validating_state(context: &Context, state: &mut PlayerState) {
+    const VALIDATE_TIMEOUT: u32 = 375;
+
+    debug_assert!(state.rune_failed_count < MAX_RUNE_FAILED_COUNT);
+    debug_assert!(!state.rune_cash_shop);
+    state.rune_validate_timeout = state.rune_validate_timeout.and_then(|timeout| {
+        update_with_timeout(
+            timeout,
+            VALIDATE_TIMEOUT,
+            |timeout| Some(timeout),
+            || {
+                if matches!(context.buffs[RUNE_BUFF_POSITION], Buff::NoBuff) {
+                    state.rune_failed_count += 1;
+                    if state.rune_failed_count >= MAX_RUNE_FAILED_COUNT {
+                        state.rune_failed_count = 0;
+                        state.rune_cash_shop = true;
+                    }
+                } else {
+                    state.rune_failed_count = 0;
+                }
+                None
+            },
+            |timeout| Some(timeout),
+        )
+    });
+}
+
 // TODO: This should be a PlayerAction?
 #[inline]
 fn update_health_state(context: &Context, detector: &impl Detector, state: &mut PlayerState) {
-    if let Player::SolvingRune(solving_rune) = context.player
-        && solving_rune.validating
-    {
+    if let Player::SolvingRune(_) = context.player {
         return;
     }
     if state.use_potion_below_percent.is_none() {
@@ -1932,6 +1944,7 @@ fn update_state(
     let last_known_pos = state.last_known_pos.unwrap_or(pos);
     if last_known_pos != pos {
         state.unstuck_counter = 0;
+        state.unstuck_consecutive_counter = 0;
         state.is_stationary_timeout = Timeout::default();
     }
     let (is_stationary, is_stationary_timeout) = update_with_timeout(
@@ -1945,6 +1958,7 @@ fn update_state(
     state.is_stationary_timeout = is_stationary_timeout;
     state.last_known_pos = Some(pos);
     update_health_state(context, detector, state);
+    update_rune_validating_state(context, state);
     Some(pos)
 }
 

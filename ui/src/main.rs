@@ -7,16 +7,16 @@ use std::str::FromStr;
 use std::string::ToString;
 
 use backend::{
-    Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, Bound,
-    Configuration as ConfigurationData, IntoEnumIterator, KeyBinding, Minimap as MinimapData,
-    ParseError, Position, start_update_loop, upsert_map,
+    Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, AutoMobbing,
+    Bound, Configuration as ConfigurationData, IntoEnumIterator, Minimap as MinimapData,
+    ParseError, Position, RotationMode, start_update_loop, upsert_map,
 };
 use configuration::Configuration;
 use dioxus::{
     desktop::{
         WindowBuilder,
-        tao::platform::windows::WindowBuilderExtWindows,
-        wry::dpi::{PhysicalSize, Size},
+        tao::{platform::windows::WindowBuilderExtWindows, window::WindowSizeConstraints},
+        wry::dpi::{PhysicalSize, PixelUnit, Size},
     },
     prelude::*,
 };
@@ -48,9 +48,14 @@ fn main() {
     start_update_loop();
     let window = WindowBuilder::new()
         .with_inner_size(Size::Physical(PhysicalSize::new(448, 820)))
-        .with_resizable(false)
+        .with_inner_size_constraints(WindowSizeConstraints::new(
+            Some(PixelUnit::Physical(448.into())),
+            Some(PixelUnit::Physical(820.into())),
+            None,
+            None,
+        ))
+        .with_resizable(true)
         .with_drag_and_drop(false)
-        .with_maximizable(false)
         .with_title("Maple Bot");
     let cfg = dioxus::desktop::Config::default()
         .with_menu(None)
@@ -93,7 +98,7 @@ fn App() -> Element {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         document::Script { src: AUTO_NUMERIC_JS }
         if script_loaded() {
-            div { class: "flex flex-col w-md h-screen space-y-2",
+            div { class: "flex flex-col max-w-xl h-screen mx-auto space-y-2",
                 Minimap {
                     minimap,
                     preset,
@@ -424,7 +429,7 @@ fn ActionInput(
     copy_position: Signal<Option<(i32, i32)>>,
 ) -> Element {
     const TAB_PRESET: &str = "Preset";
-    const TAB_AUTO_MOBBING: &str = "Auto Mobbing";
+    const TAB_ROTATION_MODE: &str = "Rotation Mode";
 
     let mut editing_action = use_signal::<Option<(Action, usize)>>(|| None);
     let mut value_action = use_signal(|| Action::Move(ActionMove::default()));
@@ -482,12 +487,9 @@ fn ActionInput(
             save_minimap(minimap.clone());
         }
     });
-    let on_auto_mob = use_callback(move |(enabled, key, count, bound)| {
+    let on_rotation_mode = use_callback(move |rotation_mode| {
         if let Some(minimap) = minimap.write().as_mut() {
-            minimap.auto_mobbing_enabled = enabled;
-            minimap.auto_mobbing_key = key;
-            minimap.auto_mobbing_key_count = count;
-            minimap.auto_mobbing_bound = bound;
+            minimap.rotation_mode = rotation_mode;
             save_minimap(minimap.clone());
         }
     });
@@ -526,7 +528,7 @@ fn ActionInput(
 
     rsx! {
         Tab {
-            tabs: vec![TAB_PRESET.to_string(), TAB_AUTO_MOBBING.to_string()],
+            tabs: vec![TAB_PRESET.to_string(), TAB_ROTATION_MODE.to_string()],
             div_class: "px-2 pt-2 pb-2 mb-2",
             class: "text-xs px-2 pb-2 focus:outline-none",
             selected_class: "text-gray-800 border-b",
@@ -659,20 +661,13 @@ fn ActionInput(
                         }
                     }
                 },
-                TAB_AUTO_MOBBING => rsx! {
-                    AutoMobInput {
+                TAB_ROTATION_MODE => rsx! {
+                    RotationModeInput {
                         disabled: minimap().is_none(),
                         on_input: move |value| {
-                            on_auto_mob(value);
+                            on_rotation_mode(value);
                         },
-                        value: minimap()
-                            .map(|minimap| (
-                                minimap.auto_mobbing_enabled,
-                                minimap.auto_mobbing_key,
-                                minimap.auto_mobbing_key_count,
-                                minimap.auto_mobbing_bound,
-                            ))
-                            .unwrap_or_default(),
+                        value: minimap().map(|minimap| minimap.rotation_mode).unwrap_or_default(),
                     }
                 },
                 _ => unreachable!(),
@@ -983,6 +978,161 @@ fn ActionConditionInput(
 }
 
 #[component]
+fn AutoMobbingInput(
+    disabled: bool,
+    on_input: EventHandler<AutoMobbing>,
+    value: AutoMobbing,
+) -> Element {
+    const DIV_CLASS: &str = "flex py-2 border-b border-gray-100 space-x-2";
+    const LABEL_CLASS: &str =
+        "flex-1 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400";
+    const INPUT_CLASS: &str = "w-28 px-1.5 h-6 border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
+
+    let AutoMobbing {
+        bound,
+        key,
+        key_count,
+    } = value;
+
+    rsx! {
+        KeyBindingInput {
+            label: "Mobbing Key",
+            label_class: LABEL_CLASS,
+            div_class: DIV_CLASS,
+            input_class: INPUT_CLASS,
+            disabled,
+            on_input: move |key| {
+                on_input(AutoMobbing { key, ..value });
+            },
+            value: key,
+        }
+        NumberInputU32 {
+            label: "Mobbing Key Count",
+            div_class: DIV_CLASS,
+            label_class: LABEL_CLASS,
+            input_class: INPUT_CLASS,
+            disabled,
+            on_input: move |key_count| {
+                on_input(AutoMobbing { key_count, ..value });
+            },
+            value: key_count,
+        }
+        NumberInputI32 {
+            label: "X",
+            div_class: DIV_CLASS,
+            label_class: LABEL_CLASS,
+            input_class: INPUT_CLASS,
+            disabled,
+            on_input: move |x| {
+                on_input(AutoMobbing {
+                    bound: Bound { x, ..bound },
+                    ..value
+                });
+            },
+            value: bound.x,
+        }
+        NumberInputI32 {
+            label: "Y",
+            div_class: DIV_CLASS,
+            label_class: LABEL_CLASS,
+            input_class: INPUT_CLASS,
+            disabled,
+            on_input: move |y| {
+                on_input(AutoMobbing {
+                    bound: Bound { y, ..bound },
+                    ..value
+                });
+            },
+            value: bound.y,
+        }
+        NumberInputI32 {
+            label: "Width",
+            div_class: DIV_CLASS,
+            label_class: LABEL_CLASS,
+            input_class: INPUT_CLASS,
+            disabled,
+            on_input: move |width| {
+                on_input(AutoMobbing {
+                    bound: Bound { width, ..bound },
+                    ..value
+                });
+            },
+            value: bound.width,
+        }
+        NumberInputI32 {
+            label: "Height",
+            div_class: DIV_CLASS,
+            label_class: LABEL_CLASS,
+            input_class: INPUT_CLASS,
+            disabled,
+            on_input: move |height| {
+                on_input(AutoMobbing {
+                    bound: Bound { height, ..bound },
+                    ..value
+                });
+            },
+            value: bound.height,
+        }
+    }
+}
+
+#[component]
+fn RotationModeInput(
+    disabled: bool,
+    on_input: EventHandler<RotationMode>,
+    value: RotationMode,
+) -> Element {
+    const DIV_CLASS: &str = "flex py-2 border-b border-gray-100 space-x-2";
+    const LABEL_CLASS: &str =
+        "flex-1 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400";
+    const INPUT_CLASS: &str = "w-28 px-1.5 h-6 border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
+
+    let auto_mobbing = if let RotationMode::AutoMobbing(mobbing) = value {
+        mobbing
+    } else {
+        AutoMobbing::default()
+    };
+
+    rsx! {
+        div { class: "flex flex-col space-y-2",
+            ul { class: "list-disc text-xs text-gray-700 pl-4",
+                li {
+                    "Other rotation modes apply only to Any condition action"
+                }
+                li {
+                    "Action in preset with Any condition is ignored when auto mobbing enabled"
+                }
+                li {
+                    "Mob detected outside of bound is ignored"
+                }
+                li {
+                    "Auto mobbing X,Y origin is top-left of minimap"
+                }
+            }
+            div { class: "h-2 border-b border-gray-300 mb-2" }
+            EnumSelect {
+                label: "Rotation Mode",
+                div_class: DIV_CLASS,
+                label_class: LABEL_CLASS,
+                select_class: INPUT_CLASS,
+                disabled,
+                on_select: move |selected: RotationMode| {
+                    on_input(selected);
+                },
+                selected: value,
+            }
+            AutoMobbingInput {
+                disabled: disabled || !matches!(value, RotationMode::AutoMobbing(_)),
+                on_input: move |mobbing| {
+                    on_input(RotationMode::AutoMobbing(mobbing));
+                },
+                value: auto_mobbing,
+            }
+        }
+    }
+}
+
+#[component]
 fn ActionEnumSelect<
     T: 'static + Clone + Copy + PartialEq + Display + FromStr<Err = ParseError> + IntoEnumIterator,
 >(
@@ -1002,107 +1152,6 @@ fn ActionEnumSelect<
                 on_input(selected);
             },
             selected: value,
-        }
-    }
-}
-
-#[component]
-fn AutoMobInput(
-    disabled: bool,
-    on_input: EventHandler<(bool, KeyBinding, u32, Bound)>,
-    value: (bool, KeyBinding, u32, Bound),
-) -> Element {
-    const DIV_CLASS: &str = "flex py-2 border-b border-gray-100 space-x-2";
-    const LABEL_CLASS: &str =
-        "flex-1 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400";
-    const INPUT_CLASS: &str = "w-28 px-1.5 h-6 border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
-
-    let (enabled, key, count, value) = value;
-
-    rsx! {
-        div { class: "flex flex-col space-y-2",
-            p { class: "italic text-xs text-gray-400", "*Mob detected outside of bound is ignored" }
-            p { class: "italic text-xs text-gray-400",
-                "*Action in preset with Any condition is ignored when enabled"
-            }
-            p { class: "italic text-xs text-gray-400", "*X,Y origin is top-left of minimap" }
-            Checkbox {
-                label: "Enabled",
-                div_class: DIV_CLASS,
-                label_class: LABEL_CLASS,
-                input_class: "w-28 flex items-center",
-                disabled,
-                on_input: move |checked| {
-                    on_input((checked, key, count, value));
-                },
-                value: enabled,
-            }
-            KeyBindingInput {
-                label: "Mobbing Key",
-                label_class: LABEL_CLASS,
-                div_class: DIV_CLASS,
-                input_class: INPUT_CLASS,
-                disabled,
-                on_input: move |key| {
-                    on_input((enabled, key, count, value));
-                },
-                value: key,
-            }
-            NumberInputU32 {
-                label: "Mobbing Key Count",
-                div_class: DIV_CLASS,
-                label_class: LABEL_CLASS,
-                input_class: INPUT_CLASS,
-                disabled,
-                on_input: move |count| {
-                    on_input((enabled, key, count, value));
-                },
-                value: count,
-            }
-            NumberInputI32 {
-                label: "X",
-                div_class: DIV_CLASS,
-                label_class: LABEL_CLASS,
-                input_class: INPUT_CLASS,
-                disabled,
-                on_input: move |x| {
-                    on_input((enabled, key, count, Bound { x, ..value }));
-                },
-                value: value.x,
-            }
-            NumberInputI32 {
-                label: "Y",
-                div_class: DIV_CLASS,
-                label_class: LABEL_CLASS,
-                input_class: INPUT_CLASS,
-                disabled,
-                on_input: move |y| {
-                    on_input((enabled, key, count, Bound { y, ..value }));
-                },
-                value: value.y,
-            }
-            NumberInputI32 {
-                label: "Width",
-                div_class: DIV_CLASS,
-                label_class: LABEL_CLASS,
-                input_class: INPUT_CLASS,
-                disabled,
-                on_input: move |width| {
-                    on_input((enabled, key, count, Bound { width, ..value }));
-                },
-                value: value.width,
-            }
-            NumberInputI32 {
-                label: "Height",
-                div_class: DIV_CLASS,
-                label_class: LABEL_CLASS,
-                input_class: INPUT_CLASS,
-                disabled,
-                on_input: move |height| {
-                    on_input((enabled, key, count, Bound { height, ..value }));
-                },
-                value: value.height,
-            }
         }
     }
 }

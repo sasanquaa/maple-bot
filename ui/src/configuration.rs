@@ -2,7 +2,7 @@ use std::{fmt::Display, str::FromStr};
 
 use backend::{
     Configuration as ConfigurationData, IntoEnumIterator, KeyBinding, KeyBindingConfiguration,
-    PotionMode, RotationMode, query_configs, upsert_config,
+    PotionMode, query_configs, upsert_config,
 };
 use dioxus::prelude::*;
 use tokio::task::spawn_blocking;
@@ -391,25 +391,6 @@ pub fn Configuration(
                     },
                     value: Some(config_view().legion_luck_key),
                 }
-            }
-            h2 {
-                class: "text-sm font-medium text-gray-700 mt-4 mb-2 data-[disabled]:text-gray-400",
-                "data-disabled": data_disabled,
-                "Other"
-                span { class: "font-normal text-xs text-gray-400 ml-1",
-                    "(Only for Any condition actions)"
-                }
-            }
-            ConfigEnumSelect::<RotationMode> {
-                label: "Rotation Mode",
-                on_select: move |mode| {
-                    on_config(ConfigurationData {
-                        rotation_mode: mode,
-                        ..config_view.peek().clone()
-                    });
-                },
-                disabled: disabled(),
-                selected: config_view().rotation_mode,
             }
         }
     }

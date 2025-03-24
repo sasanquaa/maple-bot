@@ -58,7 +58,6 @@ pub struct Configuration {
     pub potion_key: KeyBindingConfiguration,
     pub potion_mode: PotionMode,
     pub health_update_millis: u64,
-    pub rotation_mode: RotationMode,
     pub sayram_elixir_key: KeyBindingConfiguration,
     pub aurelia_elixir_key: KeyBindingConfiguration,
     pub exp_x3_key: KeyBindingConfiguration,
@@ -108,6 +107,13 @@ impl From<Bound> for Rect {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize)]
+pub struct AutoMobbing {
+    pub bound: Bound,
+    pub key: KeyBinding,
+    pub key_count: u32,
+}
+
 #[derive(
     Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumIter, Display, EnumString,
 )]
@@ -115,6 +121,7 @@ pub enum RotationMode {
     StartToEnd,
     #[default]
     StartToEndThenReverse,
+    AutoMobbing(AutoMobbing),
 }
 
 impl Identifiable for Configuration {
@@ -136,13 +143,9 @@ pub struct Minimap {
     pub width: i32,
     pub height: i32,
     #[serde(default)]
-    pub auto_mobbing_bound: Bound,
+    pub rotation_mode: RotationMode,
     #[serde(default)]
-    pub auto_mobbing_key: KeyBinding,
-    #[serde(default = "count_default")]
-    pub auto_mobbing_key_count: u32,
-    #[serde(default)]
-    pub auto_mobbing_enabled: bool,
+    pub explorative_pathing: bool,
     pub actions: HashMap<String, Vec<Action>>,
 }
 

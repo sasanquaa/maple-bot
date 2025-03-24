@@ -32,9 +32,9 @@ mod task;
 pub use {
     context::start_update_loop,
     database::{
-        Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, Bound,
-        Configuration, KeyBinding, KeyBindingConfiguration, Minimap, Position, PotionMode,
-        RotationMode, delete_map, query_configs, upsert_config, upsert_map,
+        Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
+        AutoMobbing, Bound, Configuration, KeyBinding, KeyBindingConfiguration, Minimap, Position,
+        PotionMode, RotationMode, delete_map, query_configs, upsert_config, upsert_map,
     },
     rotator::RotatorMode,
     strum::{IntoEnumIterator, ParseError},

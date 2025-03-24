@@ -53,7 +53,7 @@ pub trait Detector: 'static + Send + Sync + Clone {
     /// Returns a list of mobs coordinate in minimap coordinate (need flip y for player coordinate).
     fn detect_mobs(&self, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>>;
 
-    /// Detects whether there is ESC settings screen for unstucking.
+    /// Detects whether to press ESC for unstucking.
     fn detect_esc_settings(&self) -> bool;
 
     /// Detects whether there is a elite boss bar.
@@ -569,7 +569,6 @@ fn detect_erda_shower(mat: &Mat) -> Result<Rect> {
     });
 
     let size = mat.size().unwrap();
-    debug!(target: "erda shower", "{size:?}");
     // crop to bottom right of the image for skill bar
     let crop_x = size.width / 2;
     let crop_y = size.height / 5;
@@ -739,7 +738,7 @@ fn detect_mobs(mat: &Mat, minimap: Rect, bound: Rect, player: Point) -> Result<V
 
 fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
     /// TODO: Support default ratio
-    static ESC_SETTINGS: LazyLock<[Mat; 5]> = LazyLock::new(|| {
+    static ESC_SETTINGS: LazyLock<[Mat; 7]> = LazyLock::new(|| {
         [
             imgcodecs::imdecode(
                 include_bytes!(env!("ESC_SETTING_TEMPLATE")),
@@ -757,6 +756,12 @@ fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
             .unwrap(),
             imgcodecs::imdecode(
                 include_bytes!(env!("ESC_CHARACTER_TEMPLATE")),
+                IMREAD_GRAYSCALE,
+            )
+            .unwrap(),
+            imgcodecs::imdecode(include_bytes!(env!("ESC_OK_TEMPLATE")), IMREAD_GRAYSCALE).unwrap(),
+            imgcodecs::imdecode(
+                include_bytes!(env!("ESC_CANCEL_TEMPLATE")),
                 IMREAD_GRAYSCALE,
             )
             .unwrap(),
