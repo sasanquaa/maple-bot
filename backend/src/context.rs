@@ -86,7 +86,7 @@ impl Default for Context {
             player: Player::Detecting,
             skills: [Skill::Detecting; mem::variant_count::<SkillKind>()],
             buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
-            halting: true,
+            halting: false,
         }
     }
 }
@@ -260,14 +260,15 @@ fn update_loop() {
         let detector = CachedDetector::new(mat);
         context.minimap = fold_context(&context, &detector, context.minimap, &mut minimap_state);
         context.player = fold_context(&context, &detector, context.player, &mut player_state);
-        (0..context.skills.len()).for_each(|i| {
+        for i in 0..context.skills.len() {
             context.skills[i] =
                 fold_context(&context, &detector, context.skills[i], &mut skill_states[i]);
-        });
-        (0..context.buffs.len()).for_each(|i| {
+        }
+        for i in 0..context.buffs.len() {
             context.buffs[i] =
                 fold_context(&context, &detector, context.buffs[i], &mut buff_states[i]);
-        });
+        }
+        // rotating action must always be done last
         rotator.rotate_action(&context, &detector, &mut player_state);
         // I know what you are thinking...
         let mut handler = DefaultRequestHandler {

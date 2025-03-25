@@ -1,4 +1,5 @@
 #![feature(str_from_raw_parts)]
+#![feature(maybe_uninit_uninit_array)]
 #![feature(iter_array_chunks)]
 #![feature(slice_pattern)]
 #![feature(variant_count)]
@@ -16,6 +17,7 @@ use tokio::sync::{
     oneshot::{self, Sender},
 };
 
+mod array;
 mod buff;
 mod context;
 mod database;

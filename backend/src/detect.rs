@@ -71,10 +71,19 @@ pub trait Detector: 'static + Send + Sync + Clone {
     /// `score_threshold` determines the threshold for selecting text from the minimap region.
     fn detect_minimap_name(&self, minimap: Rect) -> Result<String>;
 
+    /// Detects the portals from the given `minimap` rectangle.
+    ///
+    /// Returns `Vec<Rect>` relative to `minimap` coordinate.
+    fn detect_minimap_portals(&self, minimap: Rect) -> Result<Vec<Rect>>;
+
     /// Detects the rune from the given `minimap` rectangle.
+    ///
+    /// Returns `Rect` relative to `minimap` coordinate.
     fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect>;
 
     /// Detects whether the player in the provided `minimap` rectangle.
+    ///
+    /// Returns `Rect` relative to `minimap` coordinate.
     fn detect_player(&self, minimap: Rect) -> Result<Rect>;
 
     /// Detects whether the player is in cash shop.
@@ -128,6 +137,7 @@ mock! {
         fn detect_elite_boss_bar(&self) -> bool;
         fn detect_minimap(&self, border_threshold: u8) -> Result<Rect>;
         fn detect_minimap_name(&self, minimap: Rect) -> Result<String>;
+        fn detect_minimap_portals(&self, minimap: Rect) -> Result<Vec<Rect>>;
         fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect>;
         fn detect_player(&self, minimap: Rect) -> Result<Rect>;
         fn detect_player_in_cash_shop(&self) -> bool;
@@ -206,14 +216,19 @@ impl Detector for CachedDetector {
         detect_minimap_name(&self.mat, minimap)
     }
 
+    fn detect_minimap_portals(&self, minimap: Rect) -> Result<Vec<Rect>> {
+        let minimap_color = to_bgr(&self.mat.roi(minimap).unwrap());
+        detect_minimap_portals(minimap_color)
+    }
+
     fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect> {
         let minimap_grayscale = self.grayscale.roi(minimap).unwrap();
-        detect_minimap_rune(&minimap_grayscale, minimap.tl())
+        detect_minimap_rune(&minimap_grayscale)
     }
 
     fn detect_player(&self, minimap: Rect) -> Result<Rect> {
         let minimap_grayscale = self.grayscale.roi(minimap).unwrap();
-        let result = detect_player(&minimap_grayscale, minimap.tl());
+        let result = detect_player(&minimap_grayscale);
         #[cfg(debug_assertions)]
         {
             if let Ok(bbox) = result {
@@ -287,13 +302,79 @@ fn crop_to_buffs_region(mat: &Mat) -> BoxedRef<Mat> {
     mat.roi(crop_bbox).unwrap()
 }
 
-fn detect_minimap_rune(minimap: &impl ToInputArray, offset: Point) -> Result<Rect> {
+fn detect_minimap_portals(minimap: Mat) -> Result<Vec<Rect>> {
+    /// TODO: Support default ratio
+    static PORTAL: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("PORTAL_TEMPLATE")), IMREAD_COLOR).unwrap()
+    });
+    let template = LazyLock::force(&PORTAL);
+    let mut result = Mat::default();
+    let mut points = Vector::<Point>::new();
+    match_template(
+        &minimap,
+        template,
+        &mut result,
+        TM_CCOEFF_NORMED,
+        &no_array(),
+    )
+    .unwrap();
+    // SAFETY: threshold can be called inplace
+    unsafe {
+        result.modify_inplace(|mat, mat_mut| {
+            threshold(mat, mat_mut, 0.8, 1.0, THRESH_BINARY).unwrap();
+        });
+    }
+    find_non_zero(&result, &mut points).unwrap();
+    let portals = points
+        .into_iter()
+        .map(|point| {
+            let size = 4;
+            let x = (point.x - size).max(0);
+            let xd = point.x - x;
+            let y = (point.y - size).max(0);
+            let yd = point.y - y;
+            let width = template.cols() + xd * 2 + (size - xd);
+            let height = template.rows() + yd * 2 + (size - yd);
+            Rect::new(x, minimap.size().unwrap().height - y, width, height)
+        })
+        .collect::<Vec<_>>();
+    #[cfg(debug_assertions)]
+    {
+        debug_mat(
+            "Portals",
+            &minimap,
+            1,
+            &portals
+                .iter()
+                .copied()
+                .map(|rect| {
+                    Rect::new(
+                        rect.x,
+                        minimap.size().unwrap().height - rect.y,
+                        rect.width,
+                        rect.height,
+                    )
+                })
+                .collect::<Vec<_>>(),
+            &vec!["Portal"; portals.len()],
+        );
+    }
+    Ok(portals)
+}
+
+fn detect_minimap_rune(minimap: &impl ToInputArray) -> Result<Rect> {
     /// TODO: Support default ratio
     static RUNE: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("RUNE_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    detect_template(minimap, LazyLock::force(&RUNE), offset, 0.7, Some("rune"))
+    detect_template(
+        minimap,
+        LazyLock::force(&RUNE),
+        Point::default(),
+        0.7,
+        Some("rune"),
+    )
 }
 
 fn detect_cash_shop(mat: &impl ToInputArray) -> bool {
@@ -587,7 +668,7 @@ fn detect_erda_shower(mat: &Mat) -> Result<Rect> {
     )
 }
 
-fn detect_player(mat: &impl ToInputArray, offset: Point) -> Result<Rect> {
+fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
     const PLAYER_IDEAL_RATIO_THRESHOLD: f64 = 0.8;
     const PLAYER_DEFAULT_RATIO_THRESHOLD: f64 = 0.6;
     static PLAYER_IDEAL_RATIO: LazyLock<Mat> = LazyLock::new(|| {
@@ -617,7 +698,7 @@ fn detect_player(mat: &impl ToInputArray, offset: Point) -> Result<Rect> {
     } else {
         PLAYER_DEFAULT_RATIO_THRESHOLD
     };
-    let result = detect_template(mat, template, offset, threshold, None);
+    let result = detect_template(mat, template, Point::default(), threshold, None);
     if result.is_err() {
         WAS_IDEAL_RATIO.store(!was_ideal_ratio, Ordering::Release);
     }
@@ -961,7 +1042,7 @@ fn detect_minimap(mat: &Mat, border_threshold: u8) -> Result<Rect> {
             contour.area()
         );
         // the detected contour should be contained inside the detected yolo minimap when expanded
-        // <some value that i will change probably change again the future> is a
+        // <some value that i will probably change again the future> is a
         // fixed value for ensuring the contour is tight to the minimap white border
         if (bbox & contour) == contour && (bbox.area() - contour.area()) >= 1100 {
             Some(contour)
@@ -1161,7 +1242,7 @@ fn extract_text_bboxes(
         &mut text_low_score,
         LINK_SCORE_THRESHOLD,
         1.0,
-        0,
+        THRESH_BINARY,
     )
     .unwrap();
 
@@ -1180,7 +1261,7 @@ fn extract_text_bboxes(
     // SAFETY: can be modified in place
     unsafe {
         link_score.modify_inplace(|mat, mat_mut| {
-            threshold(mat, mat_mut, LINK_SCORE_THRESHOLD, 1.0, 0).unwrap();
+            threshold(mat, mat_mut, LINK_SCORE_THRESHOLD, 1.0, THRESH_BINARY).unwrap();
         });
     }
 

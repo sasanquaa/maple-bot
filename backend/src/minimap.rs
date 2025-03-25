@@ -7,6 +7,7 @@ use opencv::{
 use strsim::normalized_damerau_levenshtein;
 
 use crate::{
+    array::Array,
     context::{Context, Contextual, ControlFlow},
     database::{Action, ActionKey, ActionMove, Minimap as MinimapData, query_maps, upsert_map},
     detect::Detector,
@@ -23,6 +24,7 @@ pub struct MinimapState {
     pub data: MinimapData,
     data_task: Option<Task<Result<TaskData>>>,
     rune_task: Option<Task<Result<Point>>>,
+    portals_task: Option<Task<Result<Vec<Rect>>>>,
     has_elite_boss_task: Option<Task<Result<bool>>>,
 }
 
@@ -49,7 +51,12 @@ pub struct MinimapIdle {
     pub partially_overlapping: bool,
     /// The rune position
     pub rune: Option<Point>,
+    /// Whether there is an elite boss
+    /// This does not belong to minimap though...
     pub has_elite_boss: bool,
+    /// The portal positions
+    /// Praying each night that there won't be more than 8 portals...
+    pub portals: Array<Rect, 8>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -89,7 +96,7 @@ fn update_context(
 fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) -> Minimap {
     let detector = detector.clone();
     let Update::Complete(Ok((anchors, bbox, data, scale_w, scale_h))) =
-        update_task_repeatable(6000, &mut state.data_task, move || {
+        update_task_repeatable(2000, &mut state.data_task, move || {
             let bbox = detector.detect_minimap(MINIMAP_BORDER_WHITENESS_THRESHOLD)?;
             let name = detector.detect_minimap_name(bbox)?;
             let size = bbox.width.min(bbox.height) as usize;
@@ -114,6 +121,7 @@ fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) 
         partially_overlapping: false,
         rune: None,
         has_elite_boss: false,
+        portals: Array::new(),
     })
 }
 
@@ -130,6 +138,7 @@ fn update_idle_context(
         scale_h,
         rune,
         has_elite_boss,
+        mut portals,
         ..
     } = idle;
     let tl_pixel = pixel_at(detector.mat(), anchors.tl.0)?;
@@ -152,7 +161,7 @@ fn update_idle_context(
         update_task_repeatable(10000, &mut state.rune_task, move || {
             rune_detector
                 .detect_minimap_rune(bbox)
-                .map(|rune| center_of_rune(rune, bbox, scale_w, scale_h))
+                .map(|rune| center_of_bbox(rune, bbox, scale_w, scale_h))
         })
     };
     let rune = match rune_update {
@@ -168,10 +177,25 @@ fn update_idle_context(
         Update::Complete(has_elite_boss) => has_elite_boss.unwrap(),
         Update::Pending => has_elite_boss,
     };
+    let portals_detector = detector.clone();
+    let portals_update = update_task_repeatable(10000, &mut state.portals_task, move || {
+        portals_detector.detect_minimap_portals(bbox)
+    });
+    let portals = match portals_update {
+        Update::Complete(Ok(vec)) => {
+            if portals.len() < vec.len() {
+                portals.consume(vec);
+            }
+            portals
+        }
+        Update::Complete(_) | Update::Pending => portals,
+    };
+
     Some(Minimap::Idle(MinimapIdle {
         partially_overlapping: (tl_match && !br_match) || (!tl_match && br_match),
         rune,
         has_elite_boss,
+        portals,
         ..idle
     }))
 }
@@ -268,13 +292,12 @@ fn get_data_for_minimap(bbox: &Rect, name: &str) -> Result<(MinimapData, f32, f3
 }
 
 #[inline]
-fn center_of_rune(rune: Rect, bbox: Rect, scale_w: f32, scale_h: f32) -> Point {
-    let tl = rune.tl() - bbox.tl();
-    let br = rune.br() - bbox.tl();
+fn center_of_bbox(bbox: Rect, minimap: Rect, scale_w: f32, scale_h: f32) -> Point {
+    let tl = bbox.tl();
+    let br = bbox.br();
     let x = ((tl.x + br.x) / 2) as f32 / scale_w;
-    let y = (bbox.height - br.y + 1) as f32 / scale_h;
+    let y = (minimap.height - br.y + 1) as f32 / scale_h;
     let point = Point::new(x as i32, y as i32);
-    debug!(target: "minimap", "detected rune at {point:?}");
     point
 }
 
@@ -412,13 +435,14 @@ mod tests {
             partially_overlapping: false,
             rune: None,
             has_elite_boss: false,
+            portals: Array::new(),
         };
 
         let minimap = advance_task(Minimap::Idle(idle), &detector, &mut state).await;
         assert_matches!(minimap, Minimap::Idle(_));
         match minimap {
             Minimap::Idle(idle) => {
-                assert_eq!(idle.rune, Some(center_of_rune(rune_bbox, bbox, 1.0, 1.0)));
+                assert_eq!(idle.rune, Some(center_of_bbox(rune_bbox, bbox, 1.0, 1.0)));
             }
             _ => unreachable!(),
         }

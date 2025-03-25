@@ -116,7 +116,7 @@ mod tests {
         while !task.completed() {
             match task.poll_inner() {
                 TaskState::Complete(value) => assert_eq!(value, 0),
-                TaskState::Pending => continue,
+                TaskState::Pending => yield_now().await,
                 TaskState::Error => unreachable!(),
                 TaskState::AlreadyCompleted => unreachable!(),
             };

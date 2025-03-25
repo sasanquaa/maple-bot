@@ -13,6 +13,7 @@ fn main() {
     let player_ideal_ratio = dir.join("player_ideal_ratio.png");
     let player_default_ratio = dir.join("player_default_ratio.png");
     let erda_shower = dir.join("erda_shower_ideal_ratio.png");
+    let portal = dir.join("portal_ideal_ratio.png");
     let rune = dir.join("rune_ideal_ratio.png");
     let rune_buff = dir.join("rune_buff_ideal_ratio.png");
     let sayram_elixir_buff = dir.join("sayram_elixir_buff_ideal_ratio.png");
@@ -76,6 +77,10 @@ fn main() {
     println!(
         "cargo:rustc-env=ERDA_SHOWER_TEMPLATE={}",
         erda_shower.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=PORTAL_TEMPLATE={}",
+        portal.to_str().unwrap()
     );
     println!("cargo:rustc-env=RUNE_TEMPLATE={}", rune.to_str().unwrap());
     println!(

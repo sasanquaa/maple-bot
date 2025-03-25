@@ -468,6 +468,7 @@ impl Contextual for Player {
             let _ = context.keys.send_up(KeyKind::Left);
             let _ = context.keys.send_up(KeyKind::Right);
             state.rune_cash_shop = false;
+            state.reset_to_idle_next_update = false;
             return ControlFlow::Next(Player::CashShopThenExit(Timeout::default(), false, false));
         }
         let cur_pos = if state.ignore_pos_update {
@@ -1363,6 +1364,21 @@ fn update_up_jumping_context(
     const UP_JUMPED_THRESHOLD: i32 = 5;
 
     if !moving.timeout.started {
+        if state.has_auto_mob_action() && !state.has_priority_action() {
+            if let Minimap::Idle(idle) = context.minimap {
+                for portal in idle.portals {
+                    if portal.x <= cur_pos.x
+                        && cur_pos.x < portal.x + portal.width
+                        && portal.y >= cur_pos.y
+                        && portal.y - portal.height < cur_pos.y
+                    {
+                        debug!(target: "player", "abort auto mob action due to potential map moving");
+                        state.normal_action = None;
+                        return Player::Idle;
+                    }
+                }
+            }
+        }
         state.use_immediate_control_flow = true;
         state.last_movement = Some(PlayerLastMovement::UpJumping);
     }
@@ -1936,8 +1952,8 @@ fn update_state(
         reset_health(state);
         return None;
     };
-    let tl = bbox.tl() - minimap_bbox.tl();
-    let br = bbox.br() - minimap_bbox.tl();
+    let tl = bbox.tl();
+    let br = bbox.br();
     let x = ((tl.x + br.x) / 2) as f32 / idle.scale_w;
     let y = (minimap_bbox.height - br.y) as f32 / idle.scale_h;
     let pos = Point::new(x as i32, y as i32);
