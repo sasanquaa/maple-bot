@@ -133,7 +133,13 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         }
         if !*self.ignore_update_actions {
             self.minimap.data = minimap;
-            *self.player = PlayerState::default();
+            self.minimap.update_platforms = true;
+            self.player.rune_platforms_pathing = self.minimap.data.rune_platforms_pathing;
+            self.player.rune_platforms_pathing_up_jump_only =
+                self.minimap.data.rune_platforms_pathing_up_jump_only;
+            self.player.auto_mob_platforms_pathing = self.minimap.data.auto_mob_platforms_pathing;
+            self.player.auto_mob_platforms_pathing_up_jump_only =
+                self.minimap.data.auto_mob_platforms_pathing_up_jump_only;
             *self.actions = preset
                 .and_then(|preset| self.minimap.data.actions.get(&preset).cloned())
                 .unwrap_or_default();
@@ -182,6 +188,17 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             normal_action: self.player.normal_action_name(),
             priority_action: self.player.priority_action_name(),
             erda_shower_state: self.context.skills[ERDA_SHOWER_SKILL_POSITION].to_string(),
+            destinations: self
+                .player
+                .last_destinations
+                .clone()
+                .map(|points| {
+                    points
+                        .into_iter()
+                        .map(|point| (point.x, point.y))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
         }
     }
 
@@ -250,8 +267,8 @@ fn update_loop() {
         buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
         halting: true,
     };
-
     let mut ignore_update_actions = false;
+
     loop_with_fps(FPS, || {
         let Ok(mat) = capture.grab().map(OwnedMat::new) else {
             return;

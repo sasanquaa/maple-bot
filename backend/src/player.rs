@@ -8,11 +8,13 @@ use strum::Display;
 
 use crate::{
     Position,
+    array::Array,
     buff::Buff,
     context::{Context, Contextual, ControlFlow, MS_PER_TICK, RUNE_BUFF_POSITION},
     database::{Action, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, KeyBinding},
     detect::Detector,
     minimap::Minimap,
+    pathing::{PlatformWithNeighbors, find_points_with},
     task::{Task, Update, update_task_repeatable},
 };
 
@@ -28,8 +30,10 @@ const ADJUSTING_SHORT_THRESHOLD: i32 = 1;
 /// Minimum x distance from the destination required to walk
 const ADJUSTING_MEDIUM_THRESHOLD: i32 = 3;
 
+const ADJUSTING_INTERMEDIATE_THRESHOLD: i32 = 7;
+
 /// Minimum x distance from the destination required to perform a double jump
-const DOUBLE_JUMP_THRESHOLD: i32 = 25;
+pub const DOUBLE_JUMP_THRESHOLD: i32 = 25;
 
 /// Minimum x distance from the destination required to perform a double jump in auto mobbing
 const DOUBLE_JUMP_AUTO_MOB_THRESHOLD: i32 = 12;
@@ -39,6 +43,12 @@ const PLAYER_MOVE_TIMEOUT: u32 = 5;
 
 const PLAYER_VERTICAL_MOVE_THRESHOLD: i32 = 4;
 
+const PLAYER_GRAPPLING_THRESHOLD: i32 = 26;
+
+pub const PLAYER_GRAPPLING_MAX_THRESHOLD: i32 = 41;
+
+pub const PLAYER_JUMP_THRESHOLD: i32 = 7;
+
 /// The number of times a reachable y must successfuly make the player moves to that exact y
 /// Once the count is reached, it is considered "solidified" and guarantee that reachable y is always
 /// a valid y (one that has platform and player can stand on)
@@ -47,7 +57,7 @@ const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 4;
 /// The acceptable y range above and below the detected mob position to match with a reachable y
 const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 8;
 
-const MAX_RUNE_FAILED_COUNT: u32 = 2;
+const MAX_RUNE_FAILED_COUNT: u32 = 3;
 
 #[derive(Debug, Default)]
 pub struct PlayerState {
@@ -58,6 +68,10 @@ pub struct PlayerState {
     /// A priority action requested by `Rotator`, this action will override
     /// the normal action if it is in the middle of executing.
     priority_action: Option<PlayerAction>,
+    pub rune_platforms_pathing: bool,
+    pub rune_platforms_pathing_up_jump_only: bool,
+    pub auto_mob_platforms_pathing: bool,
+    pub auto_mob_platforms_pathing_up_jump_only: bool,
     /// The interact key
     pub interact_key: KeyKind,
     /// The RopeLift key
@@ -84,7 +98,10 @@ pub struct PlayerState {
     is_stationary: bool,
     /// Approximates the player direction for using key
     last_known_direction: ActionKeyDirection,
-    /// Last known position after each detection used for unstucking
+    /// Tracks last destination points for displaying to UI
+    /// Resets when all destinations are reached or in `Player::Idle`
+    pub last_destinations: Option<Vec<Point>>,
+    /// Last known position after each detection used for unstucking, also for displaying to UI
     pub last_known_pos: Option<Point>,
     /// Indicates whether to use `ControlFlow::Immediate` on this update
     use_immediate_control_flow: bool,
@@ -96,9 +113,13 @@ pub struct PlayerState {
     /// Helps for coordinating: use key with direction + double jumping and falling + double jumping
     /// Resets to `None` when the destination is reached or in `Player::Idle`
     last_movement: Option<PlayerLastMovement>,
-    /// Tracks `last_movement` to avoid looping when the position of the mob is not accurate
-    /// Clears when in `Player::Idle` if there is no priority and auto mob action
-    auto_mob_movement_map: HashMap<PlayerLastMovement, u32>,
+    // TODO: 2 maps fr?
+    /// Tracks `last_movement` to avoid looping when the position in normal action is not accurate
+    /// Clears when in `Player::Idle` if there is no normal action
+    last_movement_normal_map: HashMap<PlayerLastMovement, u32>,
+    /// Tracks `last_movement` to avoid looping when the position in priority action is not accurate
+    /// Clears when in `Player::Idle` if there is no priority action
+    last_movement_priority_map: HashMap<PlayerLastMovement, u32>,
     /// Tracks a map of "reachable" y. A y is reachable if there is a platform player can stand on.
     auto_mob_reachable_y_map: HashMap<i32, u32>,
     /// The reachable y and also the key in `auto_mob_reachable_y_map`
@@ -152,6 +173,11 @@ impl PlayerState {
     }
 
     #[inline]
+    pub fn has_rune_action(&self) -> bool {
+        matches!(self.priority_action, Some(PlayerAction::SolveRune))
+    }
+
+    #[inline]
     pub fn set_priority_action(&mut self, id: u32, action: PlayerAction) {
         let _ = self.replace_priority_action(id, action);
     }
@@ -180,8 +206,8 @@ impl PlayerState {
     }
 
     #[inline]
-    fn has_auto_mob_action(&self) -> bool {
-        matches!(self.normal_action, Some(PlayerAction::AutoMob(_)))
+    fn has_auto_mob_action_only(&self) -> bool {
+        matches!(self.normal_action, Some(PlayerAction::AutoMob(_))) && !self.has_priority_action()
     }
 
     #[inline]
@@ -193,7 +219,7 @@ impl PlayerState {
 
     #[inline]
     fn falling_threshold(&self) -> i32 {
-        if self.has_auto_mob_action() && !self.has_priority_action() {
+        if self.has_auto_mob_action_only() {
             AUTO_MOB_REACHABLE_Y_THRESHOLD
         } else {
             PLAYER_VERTICAL_MOVE_THRESHOLD
@@ -202,7 +228,7 @@ impl PlayerState {
 
     #[inline]
     fn double_jump_threshold(&self) -> i32 {
-        if self.has_auto_mob_action() && !self.has_priority_action() {
+        if self.has_auto_mob_action_only() {
             DOUBLE_JUMP_AUTO_MOB_THRESHOLD
         } else {
             DOUBLE_JUMP_THRESHOLD
@@ -322,6 +348,7 @@ pub struct PlayerMoving {
     /// after calling `update_moving_axis_timeout`
     pos: Point,
     /// The destination the player is moving to
+    /// When `intermediates` is `Some(...)`, this could be an intermediate point
     dest: Point,
     /// Whether to allow adjusting to precise destination
     exact: bool,
@@ -329,18 +356,27 @@ pub struct PlayerMoving {
     completed: bool,
     /// Current timeout ticks for checking if the player position's changed
     timeout: Timeout,
+    /// Intermediate points to move to before reaching the destination
+    /// When `Some(...)`, the last point is the destination
+    intermediates: Option<(usize, Array<(Point, bool), 16>)>,
 }
 
 /// Convenient implementations
 impl PlayerMoving {
     #[inline]
-    fn new(pos: Point, dest: Point, exact: bool) -> Self {
+    fn new(
+        pos: Point,
+        dest: Point,
+        exact: bool,
+        intermediates: Option<(usize, Array<(Point, bool), 16>)>,
+    ) -> Self {
         Self {
             pos,
             dest,
             exact,
             completed: false,
             timeout: Timeout::default(),
+            intermediates,
         }
     }
 
@@ -368,6 +404,11 @@ impl PlayerMoving {
             },
             ..self
         }
+    }
+
+    #[inline]
+    fn is_destination_intermediate(&self) -> bool {
+        is_destination_intermediates(self.intermediates)
     }
 }
 
@@ -437,7 +478,7 @@ pub enum Player {
     Detecting,
     Idle,
     UseKey(PlayerUseKey),
-    Moving(Point, bool),
+    Moving(Point, bool, Option<(usize, Array<(Point, bool), 16>)>),
     Adjusting(PlayerMoving),
     DoubleJumping(PlayerMoving, bool, bool),
     Grappling(PlayerMoving),
@@ -546,6 +587,7 @@ fn update_non_positional_context(
         Player::SolvingRune(solving_rune) => (!fail_to_detect).then_some(
             update_solving_rune_context(context, detector, state, solving_rune),
         ),
+        // TODO: Improve this?
         Player::CashShopThenExit(timeout, in_cash_shop, exitting) => {
             let next = match (in_cash_shop, exitting) {
                 (false, _) => {
@@ -587,7 +629,7 @@ fn update_non_positional_context(
         }
         Player::Detecting
         | Player::Idle
-        | Player::Moving(_, _)
+        | Player::Moving(_, _, _)
         | Player::Adjusting(_)
         | Player::DoubleJumping(_, _, _)
         | Player::Grappling(_)
@@ -607,7 +649,9 @@ fn update_positional_context(
     match contextual {
         Player::Detecting => Player::Idle,
         Player::Idle => update_idle_context(context, state, cur_pos),
-        Player::Moving(dest, exact) => update_moving_context(state, cur_pos, dest, exact),
+        Player::Moving(dest, exact, intermediates) => {
+            update_moving_context(state, cur_pos, dest, exact, intermediates)
+        }
         Player::Adjusting(moving) => update_adjusting_context(context, state, cur_pos, moving),
         Player::DoubleJumping(moving, forced, require_stationary) => update_double_jumping_context(
             context,
@@ -648,7 +692,12 @@ fn update_positional_context(
 }
 
 fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Point) -> Player {
-    fn ensure_reachable_y(state: &mut PlayerState, pos: Position) -> Player {
+    fn ensure_reachable_y(
+        context: &Context,
+        state: &mut PlayerState,
+        player_pos: Point,
+        mob_pos: Position,
+    ) -> Player {
         if state.auto_mob_reachable_y_map.is_empty() {
             if !state.is_stationary {
                 return Player::Idle;
@@ -664,11 +713,28 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
             .auto_mob_reachable_y_map
             .keys()
             .copied()
-            .min_by_key(|y| (pos.y - y).abs())
-            .filter(|y| (pos.y - y).abs() <= AUTO_MOB_REACHABLE_Y_THRESHOLD);
+            .min_by_key(|y| (mob_pos.y - y).abs())
+            .filter(|y| (mob_pos.y - y).abs() <= AUTO_MOB_REACHABLE_Y_THRESHOLD);
+        let point = Point::new(mob_pos.x, y.unwrap_or(mob_pos.y));
         state.auto_mob_reachable_y = y;
         debug!(target: "player", "auto mob reachable y {:?} {:?}", y, state.auto_mob_reachable_y_map);
-        Player::Moving(Point::new(pos.x, y.unwrap_or(pos.y)), pos.allow_adjusting)
+        if state.auto_mob_platforms_pathing {
+            if let Minimap::Idle(idle) = context.minimap {
+                if let Some((point, exact, index, array)) = find_points(
+                    &idle.platforms,
+                    player_pos,
+                    point,
+                    mob_pos.allow_adjusting,
+                    state.auto_mob_platforms_pathing_up_jump_only,
+                ) {
+                    state.last_destinations =
+                        Some(array.into_iter().map(|(point, _)| point).collect());
+                    return Player::Moving(point, exact, Some((index, array)));
+                }
+            }
+        }
+        state.last_destinations = Some(vec![point]);
+        Player::Moving(point, mob_pos.allow_adjusting, None)
     }
 
     fn on_player_action(
@@ -679,12 +745,16 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
     ) -> Option<(Player, bool)> {
         match action {
             PlayerAction::AutoMob(PlayerActionAutoMob { position, .. }) => {
-                Some((ensure_reachable_y(state, position), false))
+                Some((ensure_reachable_y(context, state, cur_pos, position), false))
             }
             PlayerAction::Move(PlayerActionMove { position, .. }) => {
                 debug!(target: "player", "handling move: {} {}", position.x, position.y);
                 Some((
-                    Player::Moving(Point::new(position.x, position.y), position.allow_adjusting),
+                    Player::Moving(
+                        Point::new(position.x, position.y),
+                        position.allow_adjusting,
+                        None,
+                    ),
                     false,
                 ))
             }
@@ -694,7 +764,11 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
             }) => {
                 debug!(target: "player", "handling move: {} {}", position.x, position.y);
                 Some((
-                    Player::Moving(Point::new(position.x, position.y), position.allow_adjusting),
+                    Player::Moving(
+                        Point::new(position.x, position.y),
+                        position.allow_adjusting,
+                        None,
+                    ),
                     false,
                 ))
             }
@@ -709,7 +783,7 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
                 {
                     Some((
                         Player::DoubleJumping(
-                            PlayerMoving::new(cur_pos, cur_pos, false),
+                            PlayerMoving::new(cur_pos, cur_pos, false, None),
                             true,
                             true,
                         ),
@@ -727,7 +801,27 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
             PlayerAction::SolveRune => {
                 if let Minimap::Idle(idle) = context.minimap {
                     if let Some(rune) = idle.rune {
-                        return Some((Player::Moving(rune, true), false));
+                        if state.rune_platforms_pathing {
+                            if !state.is_stationary {
+                                return Some((Player::Idle, false));
+                            }
+                            if let Some((point, exact, index, array)) = find_points(
+                                &idle.platforms,
+                                cur_pos,
+                                rune,
+                                true,
+                                state.rune_platforms_pathing_up_jump_only,
+                            ) {
+                                state.last_destinations =
+                                    Some(array.into_iter().map(|(point, _)| point).collect());
+                                return Some((
+                                    Player::Moving(point, exact, Some((index, array))),
+                                    false,
+                                ));
+                            }
+                        }
+                        state.last_destinations = Some(vec![rune]);
+                        return Some((Player::Moving(rune, true, None), false));
                     }
                 }
                 Some((Player::Idle, true))
@@ -735,10 +829,14 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
         }
     }
 
+    state.last_destinations = None;
     state.last_movement = None;
-    if !state.has_priority_action() && !state.has_auto_mob_action() {
+    if !state.has_normal_action() {
         state.auto_mob_reachable_y = None;
-        state.auto_mob_movement_map.clear();
+        state.last_movement_normal_map.clear();
+    }
+    if !state.has_priority_action() {
+        state.last_movement_priority_map.clear();
     }
     let _ = context.keys.send_up(KeyKind::Up);
     let _ = context.keys.send_up(KeyKind::Down);
@@ -807,7 +905,7 @@ fn update_use_key_context(
                         if !matches!(state.last_movement, Some(PlayerLastMovement::DoubleJumping)) {
                             let pos = state.last_known_pos.unwrap();
                             return Player::DoubleJumping(
-                                PlayerMoving::new(pos, pos, false),
+                                PlayerMoving::new(pos, pos, false, None),
                                 true,
                                 true,
                             );
@@ -833,10 +931,7 @@ fn update_use_key_context(
                     ..use_key
                 });
             }
-            if state.has_auto_mob_action()
-                && !state.has_priority_action()
-                && state.auto_mob_reachable_y_require_update()
-            {
+            if state.has_auto_mob_action_only() && state.auto_mob_reachable_y_require_update() {
                 return Player::Stalling(Timeout::default(), PLAYER_MOVE_TIMEOUT);
             }
             if use_key.wait_after_use_ticks > 0 {
@@ -864,44 +959,58 @@ fn update_moving_context(
     cur_pos: Point,
     dest: Point,
     exact: bool,
+    intermediates: Option<(usize, Array<(Point, bool), 16>)>,
 ) -> Player {
+    const ACTION_HORIZONTAL_STATE_REPEAT_COUNT: u32 = 20;
     const AUTO_MOB_HORIZONTAL_STATE_REPEAT_COUNT: u32 = 5;
+    const ACTION_VERTICAL_STATE_REPEAT_COUNT: u32 = 8;
     const AUTO_MOB_VERTICAL_STATE_REPEAT_COUNT: u32 = 2;
-    const PLAYER_GRAPPLING_THRESHOLD: i32 = 26;
     const PLAYER_UP_JUMP_THRESHOLD: i32 = 10;
-    const PLAYER_JUMP_THRESHOLD: i32 = 7;
     const PLAYER_JUMP_TO_UP_JUMP_RANGE_THRESHOLD: Range<i32> = const {
         debug_assert!(PLAYER_JUMP_THRESHOLD < PLAYER_UP_JUMP_THRESHOLD);
         PLAYER_JUMP_THRESHOLD..PLAYER_UP_JUMP_THRESHOLD
     };
 
-    /// Aborts the auto mob action when state starts looping.
-    ///
-    /// This function is due to detected mob position is not accurate and can cause erroneous state looping.
-    fn abort_auto_mob_on_state_repeat(next: Player, state: &mut PlayerState) -> Player {
-        if state.has_auto_mob_action() && !state.has_priority_action() {
-            if let Some(last_moving_state) = state.last_movement {
-                let count = state
-                    .auto_mob_movement_map
-                    .entry(last_moving_state)
-                    .or_insert(0);
-                let count_max = match last_moving_state {
-                    PlayerLastMovement::Adjusting | PlayerLastMovement::DoubleJumping => {
+    /// Aborts the action when state starts looping.
+    fn abort_action_on_state_repeat(next: Player, state: &mut PlayerState) -> Player {
+        if let Some(last_moving_state) = state.last_movement {
+            let count_max = match last_moving_state {
+                PlayerLastMovement::Adjusting | PlayerLastMovement::DoubleJumping => {
+                    if state.has_auto_mob_action_only() {
                         AUTO_MOB_HORIZONTAL_STATE_REPEAT_COUNT
+                    } else {
+                        ACTION_HORIZONTAL_STATE_REPEAT_COUNT
                     }
-                    PlayerLastMovement::Falling
-                    | PlayerLastMovement::Grappling
-                    | PlayerLastMovement::UpJumping
-                    | PlayerLastMovement::Jumping => AUTO_MOB_VERTICAL_STATE_REPEAT_COUNT,
-                };
-                *count += 1;
-                let count = *count;
-                debug!(target: "player", "auto mob {:?}", state.auto_mob_movement_map);
-                if count >= count_max {
-                    debug!(target: "player", "abort auto mob action due to repeated state");
-                    state.normal_action = None;
-                    return Player::Idle;
                 }
+                PlayerLastMovement::Falling
+                | PlayerLastMovement::Grappling
+                | PlayerLastMovement::UpJumping
+                | PlayerLastMovement::Jumping => {
+                    if state.has_auto_mob_action_only() {
+                        AUTO_MOB_VERTICAL_STATE_REPEAT_COUNT
+                    } else {
+                        ACTION_VERTICAL_STATE_REPEAT_COUNT
+                    }
+                }
+            };
+            let count_map = if state.has_priority_action() {
+                &mut state.last_movement_priority_map
+            } else {
+                &mut state.last_movement_normal_map
+            };
+            let count = count_map.entry(last_moving_state).or_insert(0);
+            debug_assert!(*count < count_max);
+            *count += 1;
+            let count = *count;
+            debug!(target: "player", "last movement {:?}", count_map);
+            if count >= count_max {
+                debug!(target: "player", "abort action due to repeated state");
+                if state.has_priority_action() {
+                    state.priority_action = None;
+                } else if state.has_normal_action() {
+                    state.normal_action = None;
+                }
+                return Player::Idle;
             }
         }
         next
@@ -949,6 +1058,7 @@ fn update_moving_context(
         }
     }
 
+    debug_assert!(intermediates.is_none() || intermediates.unwrap().0 > 0);
     state.use_immediate_control_flow = true;
     state.unstuck_counter += 1;
     if state.unstuck_counter >= UNSTUCK_TRACKER_THRESHOLD {
@@ -958,37 +1068,39 @@ fn update_moving_context(
 
     let (x_distance, _) = x_distance_direction(dest, cur_pos);
     let (y_distance, y_direction) = y_distance_direction(dest, cur_pos);
-    let moving = PlayerMoving::new(cur_pos, dest, exact);
+    let moving = PlayerMoving::new(cur_pos, dest, exact, intermediates);
 
     match (x_distance, y_direction, y_distance) {
         (d, _, _) if d >= state.double_jump_threshold() => {
-            abort_auto_mob_on_state_repeat(Player::DoubleJumping(moving, false, false), state)
+            abort_action_on_state_repeat(Player::DoubleJumping(moving, false, false), state)
         }
         (d, _, _)
-            if (exact && d >= ADJUSTING_SHORT_THRESHOLD)
+            if (is_destination_intermediates(intermediates)
+                && d >= ADJUSTING_INTERMEDIATE_THRESHOLD)
+                || (exact && d >= ADJUSTING_SHORT_THRESHOLD)
                 || (!exact && d >= ADJUSTING_MEDIUM_THRESHOLD) =>
         {
-            abort_auto_mob_on_state_repeat(Player::Adjusting(moving), state)
+            abort_action_on_state_repeat(Player::Adjusting(moving), state)
         }
         // y > 0: cur_pos is below dest
         // y < 0: cur_pos is above of dest
+        (_, y, d) if y > 0 && d >= PLAYER_GRAPPLING_THRESHOLD => {
+            abort_action_on_state_repeat(Player::Grappling(moving), state)
+        }
         (_, y, d)
             if y > 0
-                && (d >= PLAYER_GRAPPLING_THRESHOLD
+                && (d >= PLAYER_UP_JUMP_THRESHOLD
                     || PLAYER_JUMP_TO_UP_JUMP_RANGE_THRESHOLD.contains(&d)) =>
         {
-            abort_auto_mob_on_state_repeat(Player::Grappling(moving), state)
-        }
-        (_, y, d) if y > 0 && d >= PLAYER_UP_JUMP_THRESHOLD => {
-            abort_auto_mob_on_state_repeat(Player::UpJumping(moving), state)
+            abort_action_on_state_repeat(Player::UpJumping(moving), state)
         }
         (_, y, d) if y > 0 && d >= PLAYER_JUMP_THRESHOLD => {
-            abort_auto_mob_on_state_repeat(Player::Jumping(moving), state)
+            abort_action_on_state_repeat(Player::Jumping(moving), state)
         }
         // this probably won't work if the platforms are far apart,
         // which is weird to begin with and only happen in very rare place (e.g. Haven)
         (_, y, d) if y < 0 && d >= state.falling_threshold() => {
-            abort_auto_mob_on_state_repeat(Player::Falling(moving, cur_pos), state)
+            abort_action_on_state_repeat(Player::Falling(moving, cur_pos), state)
         }
         _ => {
             debug!(
@@ -997,6 +1109,19 @@ fn update_moving_context(
                 dest, cur_pos
             );
             state.last_movement = None;
+            if let Some((index, points)) = intermediates {
+                if index < points.len() {
+                    state.unstuck_counter = 0;
+                    if state.has_priority_action() {
+                        state.last_movement_priority_map.clear();
+                    } else if state.has_normal_action() {
+                        state.last_movement_normal_map.clear();
+                    }
+                    let (dest, exact) = points[index];
+                    return Player::Moving(dest, exact, Some((index + 1, points)));
+                }
+            }
+            state.last_destinations = None;
             let last_known_direction = state.last_known_direction;
             on_action(
                 state,
@@ -1056,8 +1181,7 @@ fn update_adjusting_context(
                 with: ActionKeyWith::Any,
                 ..
             }) => {
-                if state.has_auto_mob_action()
-                    && !state.has_priority_action()
+                if state.has_auto_mob_action_only()
                     && x_distance <= USE_KEY_AT_X_PROXIMITY_AUTO_MOB_THRESHOLD
                     && y_distance <= USE_KEY_AT_Y_PROXIMITY_AUTO_MOB_THRESHOLD
                 {
@@ -1081,14 +1205,16 @@ fn update_adjusting_context(
     let (y_distance, y_direction) = y_distance_direction(moving.dest, cur_pos);
     if x_distance >= state.double_jump_threshold() {
         state.use_immediate_control_flow = true;
-        return Player::Moving(moving.dest, moving.exact);
+        return Player::Moving(moving.dest, moving.exact, moving.intermediates);
     }
+    // TODO: ????????????
     if y_direction < 0
         && y_distance >= ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD
         && x_distance >= ADJUSTING_MEDIUM_THRESHOLD
         && state.is_stationary
         && !matches!(state.last_movement, Some(PlayerLastMovement::Falling))
         && !moving.timeout.started
+        && moving.intermediates.is_none()
     {
         return Player::Falling(moving.pos(cur_pos), cur_pos);
     }
@@ -1142,6 +1268,13 @@ fn update_adjusting_context(
                         moving = moving.completed(true);
                     }
                 }
+            }
+            if moving.is_destination_intermediate() {
+                return if x_distance < ADJUSTING_INTERMEDIATE_THRESHOLD {
+                    Player::Adjusting(moving.timeout_current(PLAYER_MOVE_TIMEOUT))
+                } else {
+                    Player::Adjusting(moving)
+                };
             }
             on_action_mut_state(
                 state,
@@ -1204,10 +1337,14 @@ fn update_double_jumping_context(
         }
     }
 
-    debug_assert!(
-        moving.timeout.started || (!moving.completed && moving.timeout == Timeout::default())
-    );
+    debug_assert!(moving.timeout.started || !moving.completed);
 
+    let ignore_grappling = (state.has_auto_mob_action_only()
+        && state.auto_mob_platforms_pathing
+        && state.auto_mob_platforms_pathing_up_jump_only)
+        || (state.has_rune_action()
+            && state.rune_platforms_pathing
+            && state.rune_platforms_pathing_up_jump_only);
     let x_changed = (cur_pos.x - moving.pos.x).abs();
     let (x_distance, x_direction) = x_distance_direction(moving.dest, cur_pos);
     let (y_distance, y_direction) = y_distance_direction(moving.dest, cur_pos);
@@ -1216,6 +1353,7 @@ fn update_double_jumping_context(
         && state.is_stationary
         && !matches!(state.last_movement, Some(PlayerLastMovement::Falling))
         && !moving.timeout.started
+        && moving.intermediates.is_none()
     {
         return Player::Falling(moving.pos(cur_pos), cur_pos);
     }
@@ -1287,15 +1425,16 @@ fn update_double_jumping_context(
                 state,
                 |action| on_player_action(forced, action, x_distance, y_distance, moving),
                 || {
-                    if moving.completed
+                    if !ignore_grappling
                         && !forced
+                        && moving.completed
                         && x_distance <= DOUBLE_JUMP_GRAPPLING_THRESHOLD
                         && y_direction > 0
                     {
                         debug!(target: "player", "performs grappling on double jump");
                         Player::Grappling(moving.completed(false).timeout(Timeout::default()))
                     } else if moving.completed && moving.timeout.current >= PLAYER_MOVE_TIMEOUT {
-                        Player::Moving(moving.dest, moving.exact)
+                        Player::Moving(moving.dest, moving.exact, moving.intermediates)
                     } else {
                         Player::DoubleJumping(moving, forced, require_stationary)
                     }
@@ -1342,7 +1481,7 @@ fn update_grappling_context(
                     let _ = context.keys.send(key);
                     moving = moving.completed(true);
                 }
-            } else if (state.has_auto_mob_action() && !state.has_priority_action())
+            } else if state.has_auto_mob_action_only()
                 || moving.timeout.current >= GRAPPLING_STOPPING_TIMEOUT
             {
                 moving = moving.timeout_current(GRAPPLING_TIMEOUT);
@@ -1364,7 +1503,7 @@ fn update_up_jumping_context(
     const UP_JUMPED_THRESHOLD: i32 = 5;
 
     if !moving.timeout.started {
-        if state.has_auto_mob_action() && !state.has_priority_action() {
+        if state.has_auto_mob_action_only() {
             if let Minimap::Idle(idle) = context.minimap {
                 for portal in idle.portals {
                     if portal.x <= cur_pos.x
@@ -1415,7 +1554,7 @@ fn update_up_jumping_context(
                 } else {
                     moving = moving.completed(true);
                 }
-            } else if (state.has_auto_mob_action() && !state.has_priority_action())
+            } else if state.has_auto_mob_action_only()
                 || (x_distance >= ADJUSTING_MEDIUM_THRESHOLD
                     && moving.timeout.current >= PLAYER_MOVE_TIMEOUT)
             {
@@ -1448,8 +1587,10 @@ fn update_falling_context(
         cur_pos,
         TIMEOUT,
         |moving| {
-            let _ = context.keys.send_down(KeyKind::Down);
-            let _ = context.keys.send(KeyKind::Space);
+            if state.is_stationary {
+                let _ = context.keys.send_down(KeyKind::Down);
+                let _ = context.keys.send(KeyKind::Space);
+            }
             Player::Falling(moving, anchor)
         },
         Some(|| {
@@ -1482,21 +1623,21 @@ fn update_unstucking_context(
         return Player::Detecting;
     };
 
-    debug_assert!(has_settings.is_some() || timeout == Timeout::default());
-    if has_settings.is_none() {
-        let detector = detector.clone();
-        let Update::Complete(Ok(has_settings)) =
-            update_task_repeatable(0, &mut state.unstuck_task, move || {
-                Ok(detector.detect_esc_settings())
-            })
-        else {
-            return Player::Unstucking(timeout, has_settings);
-        };
-        return Player::Unstucking(timeout, Some(has_settings));
-    }
-
-    debug_assert!(has_settings.is_some());
     if !timeout.started {
+        if state.unstuck_consecutive_counter + 1 < GAMBA_MODE_COUNT && has_settings.is_none() {
+            let detector = detector.clone();
+            let Update::Complete(Ok(has_settings)) =
+                update_task_repeatable(0, &mut state.unstuck_task, move || {
+                    Ok(detector.detect_esc_settings())
+                })
+            else {
+                return Player::Unstucking(timeout, has_settings);
+            };
+            return Player::Unstucking(timeout, Some(has_settings));
+        }
+        debug_assert!(
+            state.unstuck_consecutive_counter + 1 >= GAMBA_MODE_COUNT || has_settings.is_some()
+        );
         if state.unstuck_consecutive_counter < GAMBA_MODE_COUNT {
             state.unstuck_consecutive_counter += 1;
         }
@@ -1511,7 +1652,7 @@ fn update_unstucking_context(
         timeout,
         PLAYER_MOVE_TIMEOUT,
         |timeout| {
-            if has_settings.unwrap() || is_gamba_mode {
+            if has_settings.unwrap_or_default() || is_gamba_mode {
                 let _ = context.keys.send(KeyKind::Esc);
             }
             let to_right = match (is_gamba_mode, pos) {
@@ -1556,10 +1697,7 @@ fn update_stalling_context(state: &mut PlayerState, timeout: Timeout, max_timeou
         max_timeout,
         update,
         || {
-            if state.has_auto_mob_action()
-                && !state.has_priority_action()
-                && state.auto_mob_reachable_y_require_update()
-            {
+            if state.has_auto_mob_action_only() && state.auto_mob_reachable_y_require_update() {
                 if !state.is_stationary {
                     return Player::Stalling(Timeout::default(), max_timeout);
                 }
@@ -1579,10 +1717,7 @@ fn update_stalling_context(state: &mut PlayerState, timeout: Timeout, max_timeou
                     if *count < AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT {
                         *count += 1;
                     }
-                    debug_assert!(
-                        *count < AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT
-                            || *count == AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT
-                    );
+                    debug_assert!(*count <= AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT);
                     debug!(target: "player", "auto mob additional reachable y {} / {}", pos.y, count);
                 }
             }
@@ -1603,7 +1738,7 @@ fn update_solving_rune_context(
     state: &mut PlayerState,
     solving_rune: PlayerSolvingRune,
 ) -> Player {
-    const RUNE_SOLVING_TIMEOUT: u32 = 185;
+    const RUNE_SOLVING_TIMEOUT: u32 = 155;
     const PRESS_KEY_INTERVAL: u32 = 10;
 
     debug_assert!(state.rune_validate_timeout.is_none());
@@ -1714,6 +1849,7 @@ fn on_action_mut_state(
 ) -> Player {
     if let Some(action) = state.priority_action.or(state.normal_action) {
         if let Some((next, is_terminal)) = on_action_context(state, action) {
+            debug_assert!(state.has_normal_action() || state.has_priority_action());
             if is_terminal {
                 match action {
                     PlayerAction::AutoMob(_)
@@ -1852,7 +1988,7 @@ fn update_moving_axis_context(
             if let Some(callback) = on_timeout {
                 callback();
             }
-            Player::Moving(moving.dest, moving.exact)
+            Player::Moving(moving.dest, moving.exact, moving.intermediates)
         },
         |timeout| on_update(moving.pos(cur_pos).timeout(timeout)),
     )
@@ -1976,6 +2112,43 @@ fn update_state(
     update_health_state(context, detector, state);
     update_rune_validating_state(context, state);
     Some(pos)
+}
+
+#[inline]
+fn is_destination_intermediates(intermediates: Option<(usize, Array<(Point, bool), 16>)>) -> bool {
+    intermediates.is_some_and(|(index, points)| index < points.len())
+}
+
+// TODO: ??????
+#[inline]
+fn find_points(
+    platforms: &[PlatformWithNeighbors],
+    cur_pos: Point,
+    dest: Point,
+    exact: bool,
+    up_jump_only: bool,
+) -> Option<(Point, bool, usize, Array<(Point, bool), 16>)> {
+    let vertical_threshold = if up_jump_only {
+        PLAYER_GRAPPLING_THRESHOLD
+    } else {
+        PLAYER_GRAPPLING_MAX_THRESHOLD
+    };
+    let vec = find_points_with(
+        platforms,
+        cur_pos,
+        dest,
+        DOUBLE_JUMP_THRESHOLD,
+        PLAYER_JUMP_THRESHOLD,
+        vertical_threshold,
+    )?;
+    let len = vec.len();
+    let array = Array::from_iter(
+        vec.into_iter()
+            .enumerate()
+            .map(|(i, point)| (point, if i == len - 1 { exact } else { false })),
+    );
+    let (point, exact) = array[0];
+    Some((point, exact, 1, array))
 }
 
 // #[cfg(test)]

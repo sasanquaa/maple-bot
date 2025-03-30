@@ -30,9 +30,12 @@ pub fn Minimap(
         let lastHeight = canvas.height;
 
         while (true) {
-            const [buffer, width, height] = await dioxus.recv();
+            const [buffer, width, height, destinations] = await dioxus.recv();
             const data = new ImageData(new Uint8ClampedArray(buffer), width, height);
             const bitmap = await createImageBitmap(data);
+            canvasCtx.beginPath()
+            canvasCtx.fillStyle = "rgb(128, 255, 204)";
+            canvasCtx.strokeStyle = "rgb(128, 255, 204)";
             canvasCtx.drawImage(bitmap, 0, 0);
             if (lastWidth != width || lastHeight != height) {
                 lastWidth = width;
@@ -40,12 +43,28 @@ pub fn Minimap(
                 canvas.width = width;
                 canvas.height = height;
             }
+            // TODO: ??????????????????????????
+            let prevX = 0;
+            let prevY = 0;
+            for (let i = 0; i < destinations.length; i++) {
+                let [x, y] = destinations[i];
+                x = (x / width) * canvas.width;
+                y = ((height - y) / height) * canvas.height;
+                canvasCtx.fillRect(x - 2, y - 2, 2, 2);
+                if (i > 0) {
+                    canvasCtx.moveTo(prevX, prevY);
+                    canvasCtx.lineTo(x, y);
+                    canvasCtx.stroke();
+                }
+                prevX = x;
+                prevY = y;
+            }
         }
     "#;
     const MINIMAP_ACTIONS_JS: &str = r#"
         const canvas = document.getElementById("canvas-minimap-actions");
         const canvasCtx = canvas.getContext("2d");
-        const [width, height, actions, autoMobEnabled, autoMobBound] = await dioxus.recv();
+        const [width, height, actions, autoMobEnabled, autoMobBound, platforms] = await dioxus.recv();
         canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
         const anyActions = actions.filter((action) => action.condition === "Any");
         const erdaActions = actions.filter((action) => action.condition === "ErdaShowerOffCooldown");
@@ -61,6 +80,15 @@ pub fn Minimap(
             const h = (autoMobBound.height / height) * canvas.height;
             canvasCtx.beginPath();
             canvasCtx.rect(x, y, w, h);
+            canvasCtx.stroke();
+        }
+        for (const platform of platforms) {
+            const xStart = (platform.x_start / width) * canvas.width;
+            const xEnd = (platform.x_end / width) * canvas.width;
+            const y = ((height - platform.y) / height) * canvas.height;
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(xStart, y);
+            canvasCtx.lineTo(xEnd, y);
             canvasCtx.stroke();
         }
 
@@ -180,13 +208,14 @@ pub fn Minimap(
                 minimap.height,
                 bound.is_some(),
                 bound.unwrap_or_default(),
+                minimap.platforms,
             )
         });
         let actions = actions();
-        if let Some((width, height, enabled, bound)) = config {
+        if let Some((width, height, enabled, bound, platforms)) = config {
             spawn(async move {
                 document::eval(MINIMAP_ACTIONS_JS)
-                    .send((width, height, actions, enabled, bound))
+                    .send((width, height, actions, enabled, bound, platforms))
                     .unwrap();
             });
         }
@@ -194,9 +223,11 @@ pub fn Minimap(
     use_future(move || async move {
         let mut canvas = document::eval(MINIMAP_JS);
         loop {
-            state.set(Some(player_state().await));
+            let player = player_state().await;
+            let destinations = player.destinations.clone();
+            state.set(Some(player));
             let result = minimap_frame().await;
-            let Ok(frame) = result else {
+            let Ok((frame, width, height)) = result else {
                 let minimap = minimap.peek().clone();
                 if let Some(minimap) = minimap {
                     last_preset.set(minimap.id.zip(preset.peek().clone()));
@@ -207,7 +238,7 @@ pub fn Minimap(
             if minimap.peek().is_none() {
                 minimap.set(minimap_data().await.ok());
             }
-            let Err(error) = canvas.send(frame) else {
+            let Err(error) = canvas.send((frame, width, height, destinations)) else {
                 continue;
             };
             if matches!(error, EvalError::Finished) {

@@ -9,7 +9,7 @@ use std::string::ToString;
 use backend::{
     Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, AutoMobbing,
     Bound, Configuration as ConfigurationData, IntoEnumIterator, Minimap as MinimapData,
-    ParseError, Position, RotationMode, start_update_loop, upsert_map,
+    ParseError, Platform, Position, RotationMode, start_update_loop, upsert_map,
 };
 use configuration::Configuration;
 use dioxus::{
@@ -43,6 +43,7 @@ const INPUT_CLASS: &str = "w-22 h-full border border-gray-300 rounded text-xs te
 const TAILWIND_CSS: Asset = asset!("public/tailwind.css");
 const AUTO_NUMERIC_JS: Asset = asset!("assets/autoNumeric.min.js");
 
+// TODO: Fix spaghetti UI
 fn main() {
     LogTracer::init().unwrap();
     start_update_loop();
@@ -430,6 +431,7 @@ fn ActionInput(
 ) -> Element {
     const TAB_PRESET: &str = "Preset";
     const TAB_ROTATION_MODE: &str = "Rotation Mode";
+    const TAB_PLATFORMS: &str = "Platforms";
 
     let mut editing_action = use_signal::<Option<(Action, usize)>>(|| None);
     let mut value_action = use_signal(|| Action::Move(ActionMove::default()));
@@ -528,7 +530,11 @@ fn ActionInput(
 
     rsx! {
         Tab {
-            tabs: vec![TAB_PRESET.to_string(), TAB_ROTATION_MODE.to_string()],
+            tabs: vec![
+                TAB_PRESET.to_string(),
+                TAB_ROTATION_MODE.to_string(),
+                TAB_PLATFORMS.to_string(),
+            ],
             div_class: "px-2 pt-2 pb-2 mb-2",
             class: "text-xs px-2 pb-2 focus:outline-none",
             selected_class: "text-gray-800 border-b",
@@ -668,6 +674,14 @@ fn ActionInput(
                             on_rotation_mode(value);
                         },
                         value: minimap().map(|minimap| minimap.rotation_mode).unwrap_or_default(),
+                    }
+                },
+                TAB_PLATFORMS => rsx! {
+                    PlatformsInput {
+                        minimap,
+                        on_save: move |minimap| {
+                            save_minimap(minimap);
+                        },
                     }
                 },
                 _ => unreachable!(),
@@ -1077,6 +1091,180 @@ fn AutoMobbingInput(
 }
 
 #[component]
+fn PlatformsInput(
+    minimap: Signal<Option<MinimapData>>,
+    on_save: EventHandler<MinimapData>,
+) -> Element {
+    let mut editing = use_signal(|| Platform::default());
+
+    rsx! {
+        div { class: "flex flex-col space-y-2",
+            Checkbox {
+                label: "Rune Pathing Enabled",
+                label_class: "w-64 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400",
+                div_class: DIV_CLASS,
+                input_class: "flex items-center",
+                disabled: minimap().is_none(),
+                on_input: move |platforms_pathing| {
+                    if let Some(minimap) = minimap.write().deref_mut() {
+                        minimap.rune_platforms_pathing = platforms_pathing;
+                        on_save(minimap.clone());
+                    }
+                },
+                value: minimap().map(|data| data.rune_platforms_pathing).unwrap_or_default(),
+            }
+            Checkbox {
+                label: "Rune Pathing Up Jump Only",
+                label_class: "w-64 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400",
+                div_class: DIV_CLASS,
+                input_class: "flex items-center",
+                disabled: minimap().is_none(),
+                on_input: move |up_jump_only| {
+                    if let Some(minimap) = minimap.write().deref_mut() {
+                        minimap.rune_platforms_pathing_up_jump_only = up_jump_only;
+                        on_save(minimap.clone());
+                    }
+                },
+                value: minimap().map(|data| data.rune_platforms_pathing_up_jump_only).unwrap_or_default(),
+            }
+            Checkbox {
+                label: "Auto Mobbing Pathing Enabled",
+                label_class: "w-64 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400",
+                div_class: DIV_CLASS,
+                input_class: "flex items-center",
+                disabled: minimap().is_none(),
+                on_input: move |platforms_pathing| {
+                    if let Some(minimap) = minimap.write().deref_mut() {
+                        minimap.auto_mob_platforms_pathing = platforms_pathing;
+                        on_save(minimap.clone());
+                    }
+                },
+                value: minimap().map(|data| data.auto_mob_platforms_pathing).unwrap_or_default(),
+            }
+            Checkbox {
+                label: "Auto Mobbing Pathing Up Jump Only",
+                label_class: "w-64 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400",
+                div_class: DIV_CLASS,
+                input_class: "flex items-center",
+                disabled: minimap().is_none(),
+                on_input: move |up_jump_only| {
+                    if let Some(minimap) = minimap.write().deref_mut() {
+                        minimap.auto_mob_platforms_pathing_up_jump_only = up_jump_only;
+                        on_save(minimap.clone());
+                    }
+                },
+                value: minimap()
+                    .map(|data| data.auto_mob_platforms_pathing_up_jump_only)
+                    .unwrap_or_default(),
+            }
+            div { class: "flex items-center justify-between text-xs text-gray-700 border-b border-gray-300 mt-3 mb-2 data-[disabled]:text-gray-400",
+                p { class: "w-26", "X Start" }
+                p { class: "w-26", "X End" }
+                p { class: "w-26", "Y" }
+                div { class: "w-18" }
+            }
+            if let Some(MinimapData { platforms, .. }) = minimap() {
+                for (i , platform) in platforms.into_iter().enumerate() {
+                    PlatformInput {
+                        button_text: "Delete",
+                        button_delete: true,
+                        disabled: minimap().is_none(),
+                        on_click: move |_| {
+                            if let Some(minimap) = minimap.write().deref_mut() {
+                                minimap.platforms.remove(i);
+                                on_save(minimap.clone());
+                            }
+                        },
+                        on_input: move |value| {
+                            if let Some(minimap) = minimap.write().deref_mut() {
+                                *minimap.platforms.get_mut(i).unwrap() = value;
+                                on_save(minimap.clone());
+                            }
+                        },
+                        value: platform,
+                    }
+                }
+            }
+            PlatformInput {
+                button_text: "Add",
+                button_delete: false,
+                disabled: minimap().is_none(),
+                on_click: move |_| {
+                    if let Some(minimap) = minimap.write().deref_mut() {
+                        minimap.platforms.push(*editing.peek());
+                        on_save(minimap.clone());
+                    }
+                },
+                on_input: move |value| {
+                    editing.set(value);
+                },
+                value: editing(),
+            }
+        }
+    }
+}
+
+#[component]
+fn PlatformInput(
+    button_text: String,
+    button_delete: bool,
+    disabled: bool,
+    on_click: EventHandler,
+    on_input: EventHandler<Platform>,
+    value: Platform,
+) -> Element {
+    const INPUT_CLASS: &str = "w-26 h-6 px-1.5 border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
+
+    let Platform { x_start, x_end, y } = value;
+
+    rsx! {
+        div { class: "flex items-center justify-between text-xs text-gray-700",
+            NumberInputI32 {
+                label: "",
+                label_class: "hidden",
+                input_class: INPUT_CLASS,
+                disabled,
+                on_input: move |x_start| {
+                    on_input(Platform { x_start, ..value });
+                },
+                value: x_start,
+            }
+            NumberInputI32 {
+                label: "",
+                label_class: "hidden",
+                input_class: INPUT_CLASS,
+                disabled,
+                on_input: move |x_end| {
+                    on_input(Platform { x_end, ..value });
+                },
+                value: x_end,
+            }
+            NumberInputI32 {
+                label: "",
+                label_class: "hidden",
+                input_class: INPUT_CLASS,
+                disabled,
+                on_input: move |y| {
+                    on_input(Platform { y, ..value });
+                },
+                value: y,
+            }
+            button {
+                class: {
+                    let class = if button_delete { "button-danger" } else { "button-primary" };
+                    format!("{class} h-6 w-18")
+                },
+                disabled,
+                onclick: move |_| {
+                    on_click(());
+                },
+                {button_text}
+            }
+        }
+    }
+}
+
+#[component]
 fn RotationModeInput(
     disabled: bool,
     on_input: EventHandler<RotationMode>,
@@ -1096,18 +1284,10 @@ fn RotationModeInput(
     rsx! {
         div { class: "flex flex-col space-y-2",
             ul { class: "list-disc text-xs text-gray-700 pl-4",
-                li {
-                    "Other rotation modes apply only to Any condition action"
-                }
-                li {
-                    "Action in preset with Any condition is ignored when auto mobbing enabled"
-                }
-                li {
-                    "Mob detected outside of bound is ignored"
-                }
-                li {
-                    "Auto mobbing X,Y origin is top-left of minimap"
-                }
+                li { "Other rotation modes apply only to Any condition action" }
+                li { "Action in preset with Any condition is ignored when auto mobbing enabled" }
+                li { "Mob detected outside of bound is ignored" }
+                li { "Auto mobbing X,Y origin is top-left of minimap" }
             }
             div { class: "h-2 border-b border-gray-300 mb-2" }
             EnumSelect {

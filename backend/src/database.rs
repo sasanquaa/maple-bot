@@ -12,6 +12,8 @@ use rusqlite::{Connection, Params, Statement, types::Null};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use strum::{Display, EnumIter, EnumString};
 
+use crate::pathing;
+
 static CONNECTION: LazyLock<Mutex<Connection>> = LazyLock::new(|| {
     let path = env::current_exe()
         .unwrap()
@@ -145,7 +147,15 @@ pub struct Minimap {
     #[serde(default)]
     pub rotation_mode: RotationMode,
     #[serde(default)]
-    pub explorative_pathing: bool,
+    pub platforms: Vec<Platform>,
+    #[serde(default)]
+    pub rune_platforms_pathing: bool,
+    #[serde(default)]
+    pub rune_platforms_pathing_up_jump_only: bool,
+    #[serde(default)]
+    pub auto_mob_platforms_pathing: bool,
+    #[serde(default)]
+    pub auto_mob_platforms_pathing_up_jump_only: bool,
     pub actions: HashMap<String, Vec<Action>>,
 }
 
@@ -156,6 +166,19 @@ impl Identifiable for Minimap {
 
     fn set_id(&mut self, id: i64) {
         self.id = Some(id)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize)]
+pub struct Platform {
+    pub x_start: i32,
+    pub x_end: i32,
+    pub y: i32,
+}
+
+impl From<Platform> for pathing::Platform {
+    fn from(value: Platform) -> Self {
+        Self::new(value.x_start..value.x_end, value.y)
     }
 }
 

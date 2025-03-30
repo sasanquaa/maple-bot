@@ -11,7 +11,10 @@ use crate::{
     context::{Context, Contextual, ControlFlow},
     database::{Action, ActionKey, ActionMove, Minimap as MinimapData, query_maps, upsert_map},
     detect::Detector,
-    player::Player,
+    pathing::{Platform, PlatformWithNeighbors, find_neighbors},
+    player::{
+        DOUBLE_JUMP_THRESHOLD, PLAYER_GRAPPLING_MAX_THRESHOLD, PLAYER_JUMP_THRESHOLD, Player,
+    },
     task::{Task, Update, update_task_repeatable},
 };
 
@@ -26,6 +29,7 @@ pub struct MinimapState {
     rune_task: Option<Task<Result<Point>>>,
     portals_task: Option<Task<Result<Vec<Rect>>>>,
     has_elite_boss_task: Option<Task<Result<bool>>>,
+    pub update_platforms: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -55,8 +59,10 @@ pub struct MinimapIdle {
     /// This does not belong to minimap though...
     pub has_elite_boss: bool,
     /// The portal positions
-    /// Praying each night that there won't be more than 8 portals...
-    pub portals: Array<Rect, 8>,
+    /// Praying each night that there won't be more than 16 portals...
+    // initially it is only 8 until it crashes at Henesys with 10 portals smh
+    pub portals: Array<Rect, 16>,
+    pub platforms: Array<PlatformWithNeighbors, 24>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -103,7 +109,7 @@ fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) 
             let tl = anchor_at(detector.mat(), bbox.tl(), size, 1)?;
             let br = anchor_at(detector.mat(), bbox.br(), size, -1)?;
             let anchors = Anchors { tl, br };
-            let (data, scale_w, scale_h) = get_data_for_minimap(&bbox, &name)?;
+            let (data, scale_w, scale_h) = query_data_for_minimap(&bbox, &name)?;
             debug!(target: "minimap", "anchor points: {:?}", anchors);
             Ok((anchors, bbox, data, scale_w, scale_h))
         })
@@ -111,6 +117,7 @@ fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) 
         return Minimap::Detecting;
     };
     state.data = data;
+    state.update_platforms = false;
     state.rune_task = None;
     state.has_elite_boss_task = None;
     Minimap::Idle(MinimapIdle {
@@ -122,6 +129,7 @@ fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) 
         rune: None,
         has_elite_boss: false,
         portals: Array::new(),
+        platforms: platforms_from_data(&state.data),
     })
 }
 
@@ -139,6 +147,7 @@ fn update_idle_context(
         rune,
         has_elite_boss,
         mut portals,
+        mut platforms,
         ..
     } = idle;
     let tl_pixel = pixel_at(detector.mat(), anchors.tl.0)?;
@@ -184,23 +193,36 @@ fn update_idle_context(
     let portals = match portals_update {
         Update::Complete(Ok(vec)) => {
             if portals.len() < vec.len() {
-                portals.consume(vec);
+                portals.consume(vec.into_iter().map(|portal| {
+                    Rect::new(
+                        portal.x,
+                        bbox.height - portal.y,
+                        portal.width,
+                        portal.height,
+                    )
+                }));
             }
             portals
         }
         Update::Complete(_) | Update::Pending => portals,
     };
+    // TODO: any better way to read persistent state in other contextual?
+    if state.update_platforms {
+        state.update_platforms = false;
+        platforms = platforms_from_data(&state.data);
+    }
 
     Some(Minimap::Idle(MinimapIdle {
         partially_overlapping: (tl_match && !br_match) || (!tl_match && br_match),
         rune,
         has_elite_boss,
         portals,
+        platforms,
         ..idle
     }))
 }
 
-fn get_data_for_minimap(bbox: &Rect, name: &str) -> Result<(MinimapData, f32, f32)> {
+fn query_data_for_minimap(bbox: &Rect, name: &str) -> Result<(MinimapData, f32, f32)> {
     const MATCH_SCORE: f64 = 0.9;
 
     // TODO: Mock this
@@ -289,6 +311,20 @@ fn get_data_for_minimap(bbox: &Rect, name: &str) -> Result<(MinimapData, f32, f3
             Ok((map, 1.0, 1.0))
         }
     }
+}
+
+fn platforms_from_data(minimap: &MinimapData) -> Array<PlatformWithNeighbors, 24> {
+    Array::from_iter(find_neighbors(
+        &minimap
+            .platforms
+            .iter()
+            .copied()
+            .map(|platform| Platform::from(platform))
+            .collect::<Vec<_>>(),
+        DOUBLE_JUMP_THRESHOLD,
+        PLAYER_JUMP_THRESHOLD,
+        PLAYER_GRAPPLING_MAX_THRESHOLD,
+    ))
 }
 
 #[inline]
@@ -436,6 +472,7 @@ mod tests {
             rune: None,
             has_elite_boss: false,
             portals: Array::new(),
+            platforms: Array::new(),
         };
 
         let minimap = advance_task(Minimap::Idle(idle), &detector, &mut state).await;

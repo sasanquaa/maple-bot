@@ -6,11 +6,10 @@ use opencv::core::Rect;
 use opencv::core::Scalar;
 use opencv::core::Size;
 use opencv::core::add_weighted_def;
-use opencv::highgui::WINDOW_KEEPRATIO;
-use opencv::highgui::named_window;
 use opencv::imgproc::COLOR_BGRA2GRAY;
 use opencv::imgproc::LINE_8;
 use opencv::imgproc::cvt_color_def;
+use opencv::imgproc::line_def;
 use opencv::imgproc::rectangle;
 use opencv::imgproc::{FONT_HERSHEY_SIMPLEX, put_text_def};
 use opencv::{
@@ -33,6 +32,28 @@ static DATASET_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
     fs::create_dir_all(dir.clone()).unwrap();
     dir
 });
+
+#[allow(unused)]
+pub fn debug_pathing_points(mat: &impl MatTraitConst, minimap: Rect, points: &[Point]) {
+    let mut mat = mat.roi(minimap).unwrap().clone_pointee();
+    for i in 0..points.len() - 1 {
+        let pt1 = points[i];
+        let pt2 = points[i + 1];
+        line_def(
+            &mut mat,
+            Point::new(pt1.x, minimap.height - pt1.y),
+            Point::new(pt2.x, minimap.height - pt2.y),
+            Scalar::new(
+                rand::random_range(100.0..255.0),
+                rand::random_range(100.0..255.0),
+                rand::random_range(100.0..255.0),
+                0.0,
+            ),
+        )
+        .unwrap();
+    }
+    debug_mat("Pathing", &mat, 1, &[], &[""; 0]);
+}
 
 #[allow(unused)]
 pub fn debug_mat<T: AsRef<str>>(
@@ -61,7 +82,6 @@ pub fn debug_mat<T: AsRef<str>>(
             Scalar::new(0.0, 255.0, 0.0, 0.0),
         );
     }
-    named_window(name, WINDOW_KEEPRATIO).unwrap();
     imshow(name, &mat).unwrap();
     wait_key(wait).unwrap()
 }

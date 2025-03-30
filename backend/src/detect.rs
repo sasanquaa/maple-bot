@@ -50,7 +50,7 @@ pub trait Detector: 'static + Send + Sync + Clone {
 
     /// Detects a list of mobs.
     ///
-    /// Returns a list of mobs coordinate in minimap coordinate (need flip y for player coordinate).
+    /// Returns a list of mobs coordinate relative to minimap coordinate.
     fn detect_mobs(&self, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>>;
 
     /// Detects whether to press ESC for unstucking.
@@ -73,7 +73,7 @@ pub trait Detector: 'static + Send + Sync + Clone {
 
     /// Detects the portals from the given `minimap` rectangle.
     ///
-    /// Returns `Vec<Rect>` relative to `minimap` coordinate.
+    /// Returns `Rect` relative to `minimap` coordinate.
     fn detect_minimap_portals(&self, minimap: Rect) -> Result<Vec<Rect>>;
 
     /// Detects the rune from the given `minimap` rectangle.
@@ -81,7 +81,7 @@ pub trait Detector: 'static + Send + Sync + Clone {
     /// Returns `Rect` relative to `minimap` coordinate.
     fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect>;
 
-    /// Detects whether the player in the provided `minimap` rectangle.
+    /// Detects the player in the provided `minimap` rectangle.
     ///
     /// Returns `Rect` relative to `minimap` coordinate.
     fn detect_player(&self, minimap: Rect) -> Result<Rect>;
@@ -232,9 +232,7 @@ impl Detector for CachedDetector {
         #[cfg(debug_assertions)]
         {
             if let Ok(bbox) = result {
-                debug_mat("Minimap", &minimap_grayscale, 1, &[bbox - minimap.tl()], &[
-                    "Player",
-                ]);
+                debug_mat("Minimap", &minimap_grayscale, 1, &[bbox], &["Player"]);
             }
         }
         result
@@ -335,29 +333,15 @@ fn detect_minimap_portals(minimap: Mat) -> Result<Vec<Rect>> {
             let yd = point.y - y;
             let width = template.cols() + xd * 2 + (size - xd);
             let height = template.rows() + yd * 2 + (size - yd);
-            Rect::new(x, minimap.size().unwrap().height - y, width, height)
+            Rect::new(x, y, width, height)
         })
         .collect::<Vec<_>>();
     #[cfg(debug_assertions)]
     {
-        debug_mat(
-            "Portals",
-            &minimap,
-            1,
-            &portals
-                .iter()
-                .copied()
-                .map(|rect| {
-                    Rect::new(
-                        rect.x,
-                        minimap.size().unwrap().height - rect.y,
-                        rect.width,
-                        rect.height,
-                    )
-                })
-                .collect::<Vec<_>>(),
-            &vec!["Portal"; portals.len()],
-        );
+        debug_mat("Portals", &minimap, 1, &portals, &vec![
+            "Portal";
+            portals.len()
+        ]);
     }
     Ok(portals)
 }
@@ -368,13 +352,7 @@ fn detect_minimap_rune(minimap: &impl ToInputArray) -> Result<Rect> {
         imgcodecs::imdecode(include_bytes!(env!("RUNE_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    detect_template(
-        minimap,
-        LazyLock::force(&RUNE),
-        Point::default(),
-        0.7,
-        Some("rune"),
-    )
+    detect_template(minimap, LazyLock::force(&RUNE), Point::default(), 0.7, None)
 }
 
 fn detect_cash_shop(mat: &impl ToInputArray) -> bool {
@@ -388,7 +366,7 @@ fn detect_cash_shop(mat: &impl ToInputArray) -> bool {
         LazyLock::force(&CASH_SHOP),
         Point::default(),
         0.9,
-        Some("cash shop"),
+        None,
     )
     .is_ok()
 }
@@ -514,7 +492,7 @@ fn detect_player_rune_buff(mat: &impl ToInputArray) -> bool {
         LazyLock::force(&RUNE_BUFF),
         Point::default(),
         0.75,
-        Some("rune buff"),
+        None,
     )
     .is_ok()
 }
@@ -534,7 +512,7 @@ fn detect_player_sayram_elixir_buff(mat: &impl ToInputArray) -> bool {
         LazyLock::force(&SAYRAM_ELIXIR_BUFF),
         Point::default(),
         0.75,
-        Some("sayram's elixir buff"),
+        None,
     )
     .is_ok()
 }
@@ -554,7 +532,7 @@ fn detect_player_aurelia_elixir_buff(mat: &impl ToInputArray) -> bool {
         LazyLock::force(&AURELIA_ELIXIR_BUFF),
         Point::default(),
         0.9,
-        Some("aurelia's elixir buff"),
+        None,
     )
     .is_ok()
 }
@@ -574,7 +552,7 @@ fn detect_player_exp_coupon_x3_buff(mat: &impl ToInputArray) -> bool {
         LazyLock::force(&EXP_COUPON_X3_BUFF),
         Point::default(),
         0.75,
-        Some("exp coupon x3 buff"),
+        None,
     )
     .is_ok()
 }
@@ -594,7 +572,7 @@ fn detect_player_bonus_exp_coupon_buff(mat: &impl ToInputArray) -> bool {
         LazyLock::force(&BONUS_EXP_COUPON_BUFF),
         Point::default(),
         0.75,
-        Some("bonus exp coupon buff"),
+        None,
     )
     .is_ok()
 }
@@ -614,7 +592,7 @@ fn detect_player_legion_wealth_buff(mat: &impl ToInputArray) -> bool {
         LazyLock::force(&LEGION_WEALTH_BUFF),
         Point::default(),
         0.75,
-        Some("legion wealth buff"),
+        None,
     )
     .is_ok()
 }
@@ -634,7 +612,7 @@ fn detect_player_legion_luck_buff(mat: &impl ToInputArray) -> bool {
         LazyLock::force(&LEGION_WEALTH_BUFF),
         Point::default(),
         0.75,
-        Some("legion luck buff"),
+        None,
     )
     .is_ok()
 }
@@ -664,7 +642,7 @@ fn detect_erda_shower(mat: &Mat) -> Result<Rect> {
         LazyLock::force(&ERDA_SHOWER),
         crop_bbox.tl(),
         0.96,
-        Some("erda shower"),
+        None,
     )
 }
 
@@ -873,14 +851,7 @@ fn detect_elite_boss_bar(mat: &Mat) -> bool {
     let crop_bbox = Rect::new(0, 0, size.width, crop_y);
     let boss_bar = mat.roi(crop_bbox).unwrap();
     let template = LazyLock::force(&ELITE_BOSS_BAR);
-    detect_template(
-        &boss_bar,
-        template,
-        Point::default(),
-        0.9,
-        Some("elite boss bar"),
-    )
-    .is_ok()
+    detect_template(&boss_bar, template, Point::default(), 0.9, None).is_ok()
 }
 
 /// Detects the `template` from the given BGRA image `Mat`.

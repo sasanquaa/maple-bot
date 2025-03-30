@@ -1,6 +1,7 @@
 #![feature(str_from_raw_parts)]
 #![feature(maybe_uninit_uninit_array)]
 #![feature(iter_array_chunks)]
+#![feature(new_range_api)]
 #![feature(slice_pattern)]
 #![feature(variant_count)]
 #![feature(let_chains)]
@@ -26,6 +27,7 @@ mod debug;
 mod detect;
 mod mat;
 mod minimap;
+mod pathing;
 mod player;
 mod rotator;
 mod skill;
@@ -35,8 +37,8 @@ pub use {
     context::start_update_loop,
     database::{
         Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
-        AutoMobbing, Bound, Configuration, KeyBinding, KeyBindingConfiguration, Minimap, Position,
-        PotionMode, RotationMode, delete_map, query_configs, upsert_config, upsert_map,
+        AutoMobbing, Bound, Configuration, KeyBinding, KeyBindingConfiguration, Minimap, Platform,
+        Position, PotionMode, RotationMode, delete_map, query_configs, upsert_config, upsert_map,
     },
     rotator::RotatorMode,
     strum::{IntoEnumIterator, ParseError},
@@ -107,6 +109,7 @@ pub struct PlayerState {
     pub normal_action: Option<String>,
     pub priority_action: Option<String>,
     pub erda_shower_state: String,
+    pub destinations: Vec<(i32, i32)>,
 }
 
 pub async fn rotate_actions(halting: bool) {
