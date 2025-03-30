@@ -114,6 +114,8 @@ pub struct AutoMobbing {
     pub bound: Bound,
     pub key: KeyBinding,
     pub key_count: u32,
+    pub key_wait_before_millis: u64,
+    pub key_wait_after_millis: u64,
 }
 
 #[derive(

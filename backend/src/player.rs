@@ -83,10 +83,10 @@ pub struct PlayerState {
     /// The cash shop key
     pub cash_shop_key: KeyKind,
     pub potion_key: KeyKind,
-    /// The player current health and max health
-    pub health: Option<(u32, u32)>,
     pub use_potion_below_percent: Option<f32>,
     pub update_health_millis: Option<u64>,
+    /// The player current health and max health
+    pub health: Option<(u32, u32)>,
     /// The task to update health
     health_task: Option<Task<Result<(u32, u32)>>>,
     health_bar: Option<Rect>,
@@ -137,9 +137,35 @@ pub struct PlayerState {
     rune_failed_count: u32,
     rune_cash_shop: bool,
     rune_validate_timeout: Option<Timeout>,
+    /// A state to return to after stalling
+    /// Resets when `Player::Stalling` timed out
+    stalling_timeout_state: Option<Player>,
 }
 
 impl PlayerState {
+    #[inline]
+    pub fn reset_non_configuration_states(&mut self) {
+        *self = PlayerState {
+            normal_action: self.normal_action,
+            priority_action_id: self.priority_action_id,
+            priority_action: self.priority_action,
+            rune_platforms_pathing: self.rune_platforms_pathing,
+            rune_platforms_pathing_up_jump_only: self.rune_platforms_pathing_up_jump_only,
+            auto_mob_platforms_pathing: self.auto_mob_platforms_pathing,
+            auto_mob_platforms_pathing_up_jump_only: self.auto_mob_platforms_pathing_up_jump_only,
+            interact_key: self.interact_key,
+            grappling_key: self.grappling_key,
+            teleport_key: self.teleport_key,
+            upjump_key: self.upjump_key,
+            cash_shop_key: self.cash_shop_key,
+            potion_key: self.potion_key,
+            use_potion_below_percent: self.use_potion_below_percent,
+            update_health_millis: self.update_health_millis,
+            reset_to_idle_next_update: true,
+            ..PlayerState::default()
+        };
+    }
+
     #[inline]
     pub fn normal_action_name(&self) -> Option<String> {
         self.normal_action.map(|action| action.to_string())
@@ -310,6 +336,8 @@ impl From<ActionMove> for PlayerActionMove {
 pub struct PlayerActionAutoMob {
     pub key: KeyBinding,
     pub count: u32,
+    pub wait_before_ticks: u32,
+    pub wait_after_ticks: u32,
     pub position: Position,
 }
 
@@ -419,10 +447,11 @@ pub struct PlayerUseKey {
     current_count: u32,
     direction: ActionKeyDirection,
     with: ActionKeyWith,
+    wait_before: bool,
     wait_before_use_ticks: u32,
     wait_after_use_ticks: u32,
+    wait_after: bool,
     timeout: Timeout,
-    using: bool,
 }
 
 impl PlayerUseKey {
@@ -443,10 +472,11 @@ impl PlayerUseKey {
                 current_count: 0,
                 direction,
                 with,
+                wait_before: false,
                 wait_before_use_ticks,
                 wait_after_use_ticks,
+                wait_after: false,
                 timeout: Timeout::default(),
-                using: false,
             },
             PlayerAction::AutoMob(mob) => Self {
                 key: mob.key,
@@ -454,10 +484,11 @@ impl PlayerUseKey {
                 current_count: 0,
                 direction: ActionKeyDirection::Any,
                 with: ActionKeyWith::Any,
-                wait_before_use_ticks: 5,
-                wait_after_use_ticks: 5,
+                wait_before: false,
+                wait_before_use_ticks: mob.wait_before_ticks,
+                wait_after_use_ticks: mob.wait_after_ticks,
                 timeout: Timeout::default(),
-                using: false,
+                wait_after: false,
             },
             PlayerAction::SolveRune | PlayerAction::Move { .. } => {
                 unreachable!()
@@ -886,47 +917,61 @@ fn update_use_key_context(
 
     let next = update_with_timeout(
         use_key.timeout,
-        USE_KEY_TIMEOUT + use_key.count + use_key.wait_before_use_ticks,
+        USE_KEY_TIMEOUT,
         |timeout| Player::UseKey(PlayerUseKey { timeout, ..use_key }),
         || Player::Idle,
         |timeout| {
-            if !use_key.using {
-                if !update_direction(context, state, timeout, use_key.direction) {
-                    return Player::UseKey(PlayerUseKey { timeout, ..use_key });
-                }
-                match use_key.with {
-                    ActionKeyWith::Any => (),
-                    ActionKeyWith::Stationary => {
-                        if !state.is_stationary {
-                            return Player::UseKey(PlayerUseKey { timeout, ..use_key });
-                        }
-                    }
-                    ActionKeyWith::DoubleJump => {
-                        if !matches!(state.last_movement, Some(PlayerLastMovement::DoubleJumping)) {
-                            let pos = state.last_known_pos.unwrap();
-                            return Player::DoubleJumping(
-                                PlayerMoving::new(pos, pos, false, None),
-                                true,
-                                true,
-                            );
-                        }
-                    }
-                }
-                if timeout.current < use_key.wait_before_use_ticks {
-                    return Player::UseKey(PlayerUseKey { timeout, ..use_key });
-                }
-                return Player::UseKey(PlayerUseKey {
-                    timeout,
-                    using: true,
-                    ..use_key
-                });
+            if !update_direction(context, state, timeout, use_key.direction) {
+                return Player::UseKey(PlayerUseKey { timeout, ..use_key });
             }
-            debug_assert!(use_key.using);
+            match use_key.with {
+                ActionKeyWith::Any => (),
+                ActionKeyWith::Stationary => {
+                    if !state.is_stationary {
+                        return Player::UseKey(PlayerUseKey { timeout, ..use_key });
+                    }
+                }
+                ActionKeyWith::DoubleJump => {
+                    if !matches!(state.last_movement, Some(PlayerLastMovement::DoubleJumping)) {
+                        let pos = state.last_known_pos.unwrap();
+                        return Player::DoubleJumping(
+                            PlayerMoving::new(pos, pos, false, None),
+                            true,
+                            true,
+                        );
+                    }
+                }
+            }
+            if !use_key.wait_before {
+                state.stalling_timeout_state = Some(Player::UseKey(PlayerUseKey {
+                    timeout,
+                    wait_before: true,
+                    ..use_key
+                }));
+                return Player::Stalling(Timeout::default(), use_key.wait_before_use_ticks);
+            }
             debug_assert!(use_key.current_count < use_key.count);
+            debug_assert!(use_key.wait_before);
+            debug_assert!(state.stalling_timeout_state.is_none());
             let _ = context.keys.send(use_key.key.into());
+            if !use_key.wait_after {
+                state.stalling_timeout_state = Some(Player::UseKey(PlayerUseKey {
+                    timeout,
+                    wait_after: true,
+                    ..use_key
+                }));
+                return Player::Stalling(Timeout::default(), use_key.wait_after_use_ticks);
+            }
+            debug_assert!(use_key.wait_after);
+            debug_assert!(state.stalling_timeout_state.is_none());
             if use_key.current_count + 1 < use_key.count {
                 return Player::UseKey(PlayerUseKey {
-                    timeout,
+                    timeout: Timeout {
+                        started: true,
+                        ..Timeout::default()
+                    },
+                    wait_before: false,
+                    wait_after: false,
                     current_count: use_key.current_count + 1,
                     ..use_key
                 });
@@ -934,11 +979,7 @@ fn update_use_key_context(
             if state.has_auto_mob_action_only() && state.auto_mob_reachable_y_require_update() {
                 return Player::Stalling(Timeout::default(), PLAYER_MOVE_TIMEOUT);
             }
-            if use_key.wait_after_use_ticks > 0 {
-                Player::Stalling(Timeout::default(), use_key.wait_after_use_ticks)
-            } else {
-                Player::Idle
-            }
+            Player::Idle
         },
     );
 
@@ -1697,7 +1738,10 @@ fn update_stalling_context(state: &mut PlayerState, timeout: Timeout, max_timeou
         max_timeout,
         update,
         || {
-            if state.has_auto_mob_action_only() && state.auto_mob_reachable_y_require_update() {
+            if state.stalling_timeout_state.is_none()
+                && state.has_auto_mob_action_only()
+                && state.auto_mob_reachable_y_require_update()
+            {
                 if !state.is_stationary {
                     return Player::Stalling(Timeout::default(), max_timeout);
                 }
@@ -1721,7 +1765,7 @@ fn update_stalling_context(state: &mut PlayerState, timeout: Timeout, max_timeou
                     debug!(target: "player", "auto mob additional reachable y {} / {}", pos.y, count);
                 }
             }
-            Player::Idle
+            state.stalling_timeout_state.take().unwrap_or(Player::Idle)
         },
         update,
     );

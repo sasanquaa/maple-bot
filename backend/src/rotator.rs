@@ -13,7 +13,7 @@ use std::{
 use crate::{
     ActionKeyDirection, ActionKeyWith, AutoMobbing, KeyBinding, Position, RotationMode,
     buff::Buff,
-    context::{Context, ERDA_SHOWER_SKILL_POSITION, RUNE_BUFF_POSITION},
+    context::{Context, ERDA_SHOWER_SKILL_POSITION, MS_PER_TICK, RUNE_BUFF_POSITION},
     database::{Action, ActionCondition, ActionKey, ActionMove},
     detect::Detector,
     minimap::Minimap,
@@ -46,6 +46,8 @@ pub enum RotatorMode {
         bound: Rect,
         key: KeyBinding,
         key_count: u32,
+        key_wait_before_millis: u64,
+        key_wait_after_millis: u64,
     },
 }
 
@@ -58,10 +60,14 @@ impl From<RotationMode> for RotatorMode {
                 bound,
                 key,
                 key_count,
+                key_wait_before_millis,
+                key_wait_after_millis,
             }) => RotatorMode::AutoMobbing {
                 bound: bound.into(),
                 key,
                 key_count,
+                key_wait_before_millis,
+                key_wait_after_millis,
             },
         }
     }
@@ -156,7 +162,18 @@ impl Rotator {
                     bound,
                     key,
                     key_count,
-                } => self.rotate_auto_mobbing(context, detector, player, bound, key, key_count),
+                    key_wait_before_millis,
+                    key_wait_after_millis,
+                } => self.rotate_auto_mobbing(
+                    context,
+                    detector,
+                    player,
+                    bound,
+                    key,
+                    key_count,
+                    key_wait_before_millis,
+                    key_wait_after_millis,
+                ),
             }
         }
     }
@@ -217,7 +234,7 @@ impl Rotator {
         if self.priority_actions_queue.is_empty() {
             return;
         }
-        if player.has_normal_action() && is_player_stalling_or_use_key(context) {
+        if is_player_stalling_or_use_key(context) {
             return;
         }
         let id = self.priority_actions_queue.pop_front().unwrap();
@@ -251,6 +268,8 @@ impl Rotator {
         bound: opencv::core::Rect_<i32>,
         key: KeyBinding,
         key_count: u32,
+        key_wait_before_millis: u64,
+        key_wait_after_millis: u64,
     ) {
         let Minimap::Idle(idle) = context.minimap else {
             return;
@@ -272,6 +291,8 @@ impl Rotator {
         player.set_normal_action(PlayerAction::AutoMob(PlayerActionAutoMob {
             key,
             count: if key_count == 0 { 1 } else { key_count },
+            wait_before_ticks: (key_wait_before_millis / MS_PER_TICK) as u32,
+            wait_after_ticks: (key_wait_after_millis / MS_PER_TICK) as u32,
             position: Position {
                 x: point.x,
                 y: idle.bbox.height - point.y,

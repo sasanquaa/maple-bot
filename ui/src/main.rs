@@ -1006,11 +1006,13 @@ fn AutoMobbingInput(
         bound,
         key,
         key_count,
+        key_wait_before_millis,
+        key_wait_after_millis,
     } = value;
 
     rsx! {
         KeyBindingInput {
-            label: "Mobbing Key",
+            label: "Key",
             label_class: LABEL_CLASS,
             div_class: DIV_CLASS,
             input_class: INPUT_CLASS,
@@ -1021,7 +1023,7 @@ fn AutoMobbingInput(
             value: key,
         }
         NumberInputU32 {
-            label: "Mobbing Key Count",
+            label: "Key Count",
             div_class: DIV_CLASS,
             label_class: LABEL_CLASS,
             input_class: INPUT_CLASS,
@@ -1030,6 +1032,34 @@ fn AutoMobbingInput(
                 on_input(AutoMobbing { key_count, ..value });
             },
             value: key_count,
+        }
+        MillisInput {
+            label: "Key Wait Before",
+            div_class: DIV_CLASS,
+            label_class: LABEL_CLASS,
+            input_class: INPUT_CLASS,
+            disabled,
+            on_input: move |key_wait_before_millis| {
+                on_input(AutoMobbing {
+                    key_wait_before_millis,
+                    ..value
+                });
+            },
+            value: key_wait_before_millis,
+        }
+        MillisInput {
+            label: "Key Wait After",
+            div_class: DIV_CLASS,
+            label_class: LABEL_CLASS,
+            input_class: INPUT_CLASS,
+            disabled,
+            on_input: move |key_wait_after_millis| {
+                on_input(AutoMobbing {
+                    key_wait_after_millis,
+                    ..value
+                });
+            },
+            value: key_wait_after_millis,
         }
         NumberInputI32 {
             label: "X",

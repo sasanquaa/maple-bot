@@ -134,6 +134,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         if !*self.ignore_update_actions {
             self.minimap.data = minimap;
             self.minimap.update_platforms = true;
+            self.player.reset_non_configuration_states();
             self.player.rune_platforms_pathing = self.minimap.data.rune_platforms_pathing;
             self.player.rune_platforms_pathing_up_jump_only =
                 self.minimap.data.rune_platforms_pathing_up_jump_only;
@@ -157,6 +158,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         if !*self.ignore_update_actions {
             *self.config = config;
             *self.buffs = config_buffs(self.config);
+            self.player.reset_non_configuration_states();
             self.player.interact_key = self.config.interact_key.key.into();
             self.player.grappling_key = self.config.ropelift_key.key.into();
             self.player.teleport_key = self.config.teleport_key.map(|key| key.key.into());
