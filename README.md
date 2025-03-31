@@ -12,6 +12,8 @@
 ## Showcase
 #### Rotation
 https://github.com/user-attachments/assets/3c66dcb9-7196-4245-a7ea-4253f214bba6
+https://github.com/user-attachments/assets/463b9844-0950-4371-9644-14fad5e1fab9
 #### Auto Mobbing & Platforms Pathing
 https://github.com/user-attachments/assets/3f087f83-f956-4ee1-84b0-1a31286413ef
 #### Rune Solving
+
