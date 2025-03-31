@@ -9,7 +9,7 @@ use std::{
 };
 
 use log::info;
-use opencv::core::{Mat, MatTraitConst, MatTraitConstManual, Vec4b};
+use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
 use platforms::windows::{self, Capture, Handle, Keys};
 use strum::IntoEnumIterator;
 
@@ -306,7 +306,7 @@ fn update_loop() {
 }
 
 #[inline]
-fn extract_minimap(context: &Context, mat: &Mat) -> Option<(Vec<u8>, usize, usize)> {
+fn extract_minimap(context: &Context, mat: &impl MatTraitConst) -> Option<(Vec<u8>, usize, usize)> {
     if let Minimap::Idle(idle) = context.minimap {
         let minimap = mat
             .roi(idle.bbox)

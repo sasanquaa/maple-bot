@@ -46,7 +46,7 @@ use crate::debug::debug_mat;
 use crate::mat::OwnedMat;
 
 pub trait Detector: 'static + Send + Sync + Clone {
-    fn mat(&self) -> &Mat;
+    fn mat(&self) -> &OwnedMat;
 
     /// Detects a list of mobs.
     ///
@@ -131,7 +131,7 @@ mock! {
     pub Detector {}
 
     impl Detector for Detector {
-        fn mat(&self) -> &Mat;
+        fn mat(&self) -> &OwnedMat;
         fn detect_mobs(&self, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>>;
         fn detect_esc_settings(&self) -> bool;
         fn detect_elite_boss_bar(&self) -> bool;
@@ -181,7 +181,7 @@ impl CachedDetector {
         })));
         let buffs_grayscale = grayscale.clone();
         let buffs_grayscale = Arc::new(LazyLock::<Mat, MatFn>::new(Box::new(move || {
-            crop_to_buffs_region(&buffs_grayscale).clone_pointee()
+            crop_to_buffs_region(&**buffs_grayscale).clone_pointee()
         })));
         Self {
             mat,
@@ -192,12 +192,12 @@ impl CachedDetector {
 }
 
 impl Detector for CachedDetector {
-    fn mat(&self) -> &Mat {
+    fn mat(&self) -> &OwnedMat {
         &self.mat
     }
 
     fn detect_mobs(&self, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>> {
-        detect_mobs(&self.mat, minimap, bound, player)
+        detect_mobs(&*self.mat, minimap, bound, player)
     }
 
     fn detect_esc_settings(&self) -> bool {
@@ -205,15 +205,15 @@ impl Detector for CachedDetector {
     }
 
     fn detect_elite_boss_bar(&self) -> bool {
-        detect_elite_boss_bar(&self.grayscale)
+        detect_elite_boss_bar(&**self.grayscale)
     }
 
     fn detect_minimap(&self, border_threshold: u8) -> Result<Rect> {
-        detect_minimap(&self.mat, border_threshold)
+        detect_minimap(&*self.mat, border_threshold)
     }
 
     fn detect_minimap_name(&self, minimap: Rect) -> Result<String> {
-        detect_minimap_name(&self.mat, minimap)
+        detect_minimap_name(&*self.mat, minimap)
     }
 
     fn detect_minimap_portals(&self, minimap: Rect) -> Result<Vec<Rect>> {
@@ -247,7 +247,7 @@ impl Detector for CachedDetector {
     }
 
     fn detect_player_current_max_health_bars(&self, health_bar: Rect) -> Result<(Rect, Rect)> {
-        detect_player_health_bars(&self.mat, &self.grayscale, health_bar)
+        detect_player_health_bars(&*self.mat, &**self.grayscale, health_bar)
     }
 
     fn detect_player_health(&self, current_bar: Rect, max_bar: Rect) -> Result<(u32, u32)> {
@@ -275,23 +275,23 @@ impl Detector for CachedDetector {
     }
 
     fn detect_player_legion_wealth_buff(&self) -> bool {
-        detect_player_legion_wealth_buff(&to_bgr(&crop_to_buffs_region(&self.mat)))
+        detect_player_legion_wealth_buff(&to_bgr(&crop_to_buffs_region(&*self.mat)))
     }
 
     fn detect_player_legion_luck_buff(&self) -> bool {
-        detect_player_legion_luck_buff(&to_bgr(&crop_to_buffs_region(&self.mat)))
+        detect_player_legion_luck_buff(&to_bgr(&crop_to_buffs_region(&*self.mat)))
     }
 
     fn detect_rune_arrows(&self) -> Result<[KeyKind; 4]> {
-        detect_rune_arrows(&self.mat)
+        detect_rune_arrows(&*self.mat)
     }
 
     fn detect_erda_shower(&self) -> Result<Rect> {
-        detect_erda_shower(&self.grayscale)
+        detect_erda_shower(&**self.grayscale)
     }
 }
 
-fn crop_to_buffs_region(mat: &Mat) -> BoxedRef<Mat> {
+fn crop_to_buffs_region(mat: &impl MatTraitConst) -> BoxedRef<Mat> {
     let size = mat.size().unwrap();
     // crop to top right of the image for buffs region
     let crop_x = size.width / 3;
@@ -300,7 +300,7 @@ fn crop_to_buffs_region(mat: &Mat) -> BoxedRef<Mat> {
     mat.roi(crop_bbox).unwrap()
 }
 
-fn detect_minimap_portals(minimap: Mat) -> Result<Vec<Rect>> {
+fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Result<Vec<Rect>> {
     /// TODO: Support default ratio
     static PORTAL: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("PORTAL_TEMPLATE")), IMREAD_COLOR).unwrap()
@@ -391,7 +391,11 @@ fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
     ))
 }
 
-fn detect_player_health_bars(mat: &Mat, grayscale: &Mat, hp_bar: Rect) -> Result<(Rect, Rect)> {
+fn detect_player_health_bars(
+    mat: &impl MatTraitConst,
+    grayscale: &impl MatTraitConst,
+    hp_bar: Rect,
+) -> Result<(Rect, Rect)> {
     /// TODO: Support default ratio
     static HP_SEPARATOR: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
@@ -617,7 +621,7 @@ fn detect_player_legion_luck_buff(mat: &impl ToInputArray) -> bool {
     .is_ok()
 }
 
-fn detect_erda_shower(mat: &Mat) -> Result<Rect> {
+fn detect_erda_shower(mat: &impl MatTraitConst) -> Result<Rect> {
     /// TODO: Support default ratio
     static ERDA_SHOWER: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
@@ -684,7 +688,12 @@ fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
 }
 
 // TODO: need to divide by scale w scale h
-fn detect_mobs(mat: &Mat, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>> {
+fn detect_mobs(
+    mat: &impl MatTraitConst,
+    minimap: Rect,
+    bound: Rect,
+    player: Point,
+) -> Result<Vec<Point>> {
     static MOB_MODEL: LazyLock<Session> = LazyLock::new(|| {
         Session::builder()
             .and_then(|b| b.commit_from_memory(include_bytes!(env!("MOB_MODEL"))))
@@ -835,7 +844,7 @@ fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
     false
 }
 
-fn detect_elite_boss_bar(mat: &Mat) -> bool {
+fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {
     /// TODO: Support default ratio
     static ELITE_BOSS_BAR: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
@@ -856,9 +865,9 @@ fn detect_elite_boss_bar(mat: &Mat) -> bool {
 
 /// Detects the `template` from the given BGRA image `Mat`.
 #[inline]
-fn detect_template(
+fn detect_template<T: ToInputArray + MatTraitConst>(
     mat: &impl ToInputArray,
-    template: &Mat,
+    template: &T,
     offset: Point,
     threshold: f64,
     log: Option<&str>,
@@ -890,7 +899,7 @@ fn detect_template(
     }
 }
 
-fn detect_rune_arrows(mat: &Mat) -> Result<[KeyKind; 4]> {
+fn detect_rune_arrows(mat: &impl MatTraitConst) -> Result<[KeyKind; 4]> {
     static RUNE_MODEL: LazyLock<Session> = LazyLock::new(|| {
         Session::builder()
             .and_then(|b| b.commit_from_memory(include_bytes!(env!("RUNE_MODEL"))))
@@ -940,7 +949,7 @@ fn detect_rune_arrows(mat: &Mat) -> Result<[KeyKind; 4]> {
     Ok([first, second, third, fourth])
 }
 
-fn detect_minimap(mat: &Mat, border_threshold: u8) -> Result<Rect> {
+fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect> {
     static MINIMAP_MODEL: LazyLock<Session> = LazyLock::new(|| {
         Session::builder()
             .and_then(|b| b.commit_from_memory(include_bytes!(env!("MINIMAP_MODEL"))))
@@ -1060,7 +1069,7 @@ fn detect_minimap(mat: &Mat, border_threshold: u8) -> Result<Rect> {
     .ok_or(anyhow!("minimap not found"))
 }
 
-fn detect_minimap_name(mat: &Mat, minimap: Rect) -> Result<String> {
+fn detect_minimap_name(mat: &impl MatTraitConst, minimap: Rect) -> Result<String> {
     let (mat_in, w_ratio, h_ratio, x_offset, y_offset) = preprocess_for_minimap_name(mat, minimap);
     let bboxes = extract_text_bboxes(&mat_in, w_ratio, h_ratio, x_offset, y_offset);
     // find the text boxes with y
@@ -1176,7 +1185,7 @@ fn extract_texts(mat: &impl MatTraitConst, bboxes: &[Rect]) -> Vec<String> {
 /// https://github.com/clovaai/CRAFT-pytorch/blob/e332dd8b718e291f51b66ff8f9ef2c98ee4474c8/craft_utils.py#L19
 /// with minor changes
 fn extract_text_bboxes(
-    mat_in: &Mat,
+    mat_in: &impl MatTraitConst,
     w_ratio: f32,
     h_ratio: f32,
     x_offset: i32,
@@ -1360,8 +1369,8 @@ fn remap_from_yolo(pred: &[f32], size: Size, w_ratio: f32, h_ratio: f32) -> Rect
 /// Returns a triplet of `(Mat, width_ratio, height_ratio)` with the ratios calculed from
 /// `old_size / new_size`.
 #[inline]
-fn preprocess_for_yolo(mat: &Mat) -> (Mat, f32, f32) {
-    let mut mat = mat.clone();
+fn preprocess_for_yolo(mat: &impl MatTraitConst) -> (Mat, f32, f32) {
+    let mut mat = mat.try_clone().unwrap();
     let (w_ratio, h_ratio) = resize_w_h_ratio(mat.size().unwrap(), 640.0, 640.0);
     // SAFETY: all of the functions below can be called in place.
     unsafe {
@@ -1378,7 +1387,10 @@ fn preprocess_for_yolo(mat: &Mat) -> (Mat, f32, f32) {
 ///
 /// Returns a `(Mat, width_ratio, height_ratio, x_offset, y_offset)`.
 #[inline]
-fn preprocess_for_minimap_name(mat: &Mat, minimap: Rect) -> (Mat, f32, f32, i32, i32) {
+fn preprocess_for_minimap_name(
+    mat: &impl MatTraitConst,
+    minimap: Rect,
+) -> (Mat, f32, f32, i32, i32) {
     let x_offset = minimap.x;
     let y_offset = (minimap.y - minimap.height).max(0);
     let bbox = Rect::from_points(
@@ -1395,8 +1407,8 @@ fn preprocess_for_minimap_name(mat: &Mat, minimap: Rect) -> (Mat, f32, f32, i32,
 ///
 /// Returns a `(Mat, width_ratio, height_ratio)`.
 #[inline]
-fn preprocess_for_text_bboxes(mat: &BoxedRef<Mat>) -> (Mat, f32, f32) {
-    let mut mat = mat.clone_pointee();
+fn preprocess_for_text_bboxes(mat: &impl MatTraitConst) -> (Mat, f32, f32) {
+    let mut mat = mat.try_clone().unwrap();
     let size = mat.size().unwrap();
     let size_w = size.width as f32;
     let size_h = size.height as f32;
@@ -1490,7 +1502,7 @@ fn from_output_value<'a>(result: &SessionOutputs) -> BoxedRef<'a, Mat> {
 /// The input `Mat` is assumed to be continuous, normalized RGB `f32` data type and will panic if not.
 /// The `Mat` is reshaped to single channel, tranposed to `[1, 3, H, W]` and converted to `SessionInputValue`.
 #[inline]
-fn norm_rgb_to_input_value(mat: &Mat) -> SessionInputValue {
+fn norm_rgb_to_input_value(mat: &impl MatTraitConst) -> SessionInputValue {
     let mat = mat.reshape_nd(1, &[1, mat.rows(), mat.cols(), 3]).unwrap();
     let mut mat_t = Mat::default();
     transpose_nd(&mat, &Vector::from_slice(&[0, 3, 1, 2]), &mut mat_t).unwrap();

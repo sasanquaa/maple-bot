@@ -1,6 +1,6 @@
 use anyhow::Result;
 use log::debug;
-use opencv::core::{Mat, MatTraitConst, Point, Rect, Vec4b};
+use opencv::core::{MatTraitConst, Point, Rect, Vec4b};
 use strum::{Display, EnumIter};
 
 use crate::{
@@ -101,7 +101,7 @@ fn update_detection(
 }
 
 #[inline]
-fn get_anchor(mat: &Mat, bbox: Rect) -> (Point, Vec4b) {
+fn get_anchor(mat: &impl MatTraitConst, bbox: Rect) -> (Point, Vec4b) {
     let point = (bbox.tl() + bbox.br()) / 2;
     let pixel = mat.at_pt::<Vec4b>(point).unwrap();
     let anchor = (point, *pixel);
@@ -134,7 +134,7 @@ mod tests {
         detector
             .expect_clone()
             .returning(move || create_mock_detector(center_pixel, error).0);
-        detector.expect_mat().return_const(mat);
+        detector.expect_mat().return_const(mat.into());
         if let Some(error) = error {
             detector
                 .expect_detect_erda_shower()

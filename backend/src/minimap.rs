@@ -1,9 +1,6 @@
 use anyhow::{Result, anyhow};
 use log::debug;
-use opencv::{
-    core::{MatTraitConst, Point, Rect, Vec4b},
-    prelude::Mat,
-};
+use opencv::core::{MatTraitConst, Point, Rect, Vec4b};
 use strsim::normalized_damerau_levenshtein;
 
 use crate::{
@@ -338,12 +335,17 @@ fn center_of_bbox(bbox: Rect, minimap: Rect, scale_w: f32, scale_h: f32) -> Poin
 }
 
 #[inline]
-fn pixel_at(mat: &Mat, point: Point) -> Option<Vec4b> {
+fn pixel_at(mat: &impl MatTraitConst, point: Point) -> Option<Vec4b> {
     mat.at_pt::<Vec4b>(point).ok().copied()
 }
 
 #[inline]
-fn anchor_at(mat: &Mat, offset: Point, size: usize, sign: i32) -> Result<(Point, Vec4b)> {
+fn anchor_at(
+    mat: &impl MatTraitConst,
+    offset: Point,
+    size: usize,
+    sign: i32,
+) -> Result<(Point, Vec4b)> {
     (0..size)
         .find_map(|i| {
             let value = sign * i as i32;
@@ -414,7 +416,7 @@ mod tests {
             .expect_detect_minimap_name()
             .with(eq(bbox))
             .returning(|_| Ok("TestMap".to_string()));
-        detector.expect_mat().return_const(mat);
+        detector.expect_mat().return_const(mat.into());
         (detector, bbox, anchors, data, rune_bbox)
     }
 

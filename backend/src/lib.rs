@@ -29,6 +29,7 @@ mod mat;
 mod minimap;
 mod pathing;
 mod player;
+mod player_actions;
 mod rotator;
 mod skill;
 mod task;

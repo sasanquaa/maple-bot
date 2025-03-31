@@ -18,7 +18,8 @@ use crate::{
     database::{Action, ActionCondition, ActionKey, ActionMove},
     detect::Detector,
     minimap::Minimap,
-    player::{Player, PlayerAction, PlayerActionAutoMob, PlayerActionKey, PlayerState},
+    player::{Player, PlayerState},
+    player_actions::{PlayerAction, PlayerActionAutoMob, PlayerActionKey},
     skill::Skill,
     task::{Task, Update, update_task_repeatable},
 };

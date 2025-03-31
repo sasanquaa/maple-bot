@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug, ops::Range};
+use std::{collections::HashMap, ops::Range};
 
 use anyhow::Result;
 use log::debug;
@@ -10,11 +10,12 @@ use crate::{
     Position,
     array::Array,
     buff::Buff,
-    context::{Context, Contextual, ControlFlow, MS_PER_TICK, RUNE_BUFF_POSITION},
-    database::{Action, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, KeyBinding},
+    context::{Context, Contextual, ControlFlow, RUNE_BUFF_POSITION},
+    database::{ActionKeyDirection, ActionKeyWith, KeyBinding},
     detect::Detector,
     minimap::Minimap,
     pathing::{PlatformWithNeighbors, find_points_with},
+    player_actions::{PlayerAction, PlayerActionAutoMob, PlayerActionKey, PlayerActionMove},
     task::{Task, Update, update_task_repeatable},
 };
 
@@ -262,7 +263,7 @@ impl PlayerState {
     }
 }
 
-/// The player previous movement-related conextual state.
+/// The player previous movement-related contextual state.
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
 enum PlayerLastMovement {
     Adjusting,
@@ -271,102 +272,6 @@ enum PlayerLastMovement {
     Grappling,
     UpJumping,
     Jumping,
-}
-
-/// Represents the fixed key action
-#[derive(Clone, Copy, Debug)]
-pub struct PlayerActionKey {
-    pub key: KeyBinding,
-    pub count: u32,
-    pub position: Option<Position>,
-    pub direction: ActionKeyDirection,
-    pub with: ActionKeyWith,
-    pub wait_before_use_ticks: u32,
-    pub wait_after_use_ticks: u32,
-}
-
-impl From<ActionKey> for PlayerActionKey {
-    fn from(
-        ActionKey {
-            key,
-            count,
-            position,
-            direction,
-            with,
-            wait_before_use_millis,
-            wait_after_use_millis,
-            ..
-        }: ActionKey,
-    ) -> Self {
-        Self {
-            key,
-            count,
-            position,
-            direction,
-            with,
-            wait_before_use_ticks: (wait_before_use_millis / MS_PER_TICK) as u32,
-            wait_after_use_ticks: (wait_after_use_millis / MS_PER_TICK) as u32,
-        }
-    }
-}
-
-/// Represents the fixed move action
-#[derive(Clone, Copy, Debug)]
-pub struct PlayerActionMove {
-    position: Position,
-    wait_after_move_ticks: u32,
-}
-
-impl From<ActionMove> for PlayerActionMove {
-    fn from(
-        ActionMove {
-            position,
-            wait_after_move_millis,
-            ..
-        }: ActionMove,
-    ) -> Self {
-        Self {
-            position,
-            wait_after_move_ticks: (wait_after_move_millis / MS_PER_TICK) as u32,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct PlayerActionAutoMob {
-    pub key: KeyBinding,
-    pub count: u32,
-    pub wait_before_ticks: u32,
-    pub wait_after_ticks: u32,
-    pub position: Position,
-}
-
-impl std::fmt::Display for PlayerActionAutoMob {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}, {}", self.position.x, self.position.y)
-    }
-}
-
-/// Represents an action the `Rotator` can use
-#[derive(Clone, Copy, Debug, Display)]
-pub enum PlayerAction {
-    /// Fixed key action provided by the user
-    Key(PlayerActionKey),
-    /// Fixed move action provided by the user
-    Move(PlayerActionMove),
-    /// Solve rune action
-    SolveRune,
-    #[strum(to_string = "AutoMob({0})")]
-    AutoMob(PlayerActionAutoMob),
-}
-
-impl From<Action> for PlayerAction {
-    fn from(action: Action) -> Self {
-        match action {
-            Action::Move(action) => PlayerAction::Move(action.into()),
-            Action::Key(action) => PlayerAction::Key(action.into()),
-        }
-    }
 }
 
 /// A contextual state that stores moving-related data.
@@ -499,7 +404,7 @@ impl PlayerUseKey {
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct PlayerSolvingRune {
-    solve_timeout: Timeout,
+    timeout: Timeout,
     keys: Option<[KeyKind; 4]>,
     key_index: usize,
 }
@@ -509,6 +414,7 @@ pub enum Player {
     Detecting,
     Idle,
     UseKey(PlayerUseKey),
+    /// Movement-related coordinator state
     Moving(Point, bool, Option<(usize, Array<(Point, bool), 16>)>),
     Adjusting(PlayerMoving),
     DoubleJumping(PlayerMoving, bool, bool),
@@ -599,11 +505,11 @@ fn update_non_positional_context(
     context: &Context,
     detector: &impl Detector,
     state: &mut PlayerState,
-    fail_to_detect: bool,
+    failed_to_detect: bool,
 ) -> Option<Player> {
     match contextual {
         Player::UseKey(use_key) => {
-            (!fail_to_detect).then_some(update_use_key_context(context, state, use_key))
+            (!failed_to_detect).then_some(update_use_key_context(context, state, use_key))
         }
         Player::Unstucking(timeout, has_settings) => Some(update_unstucking_context(
             context,
@@ -613,9 +519,9 @@ fn update_non_positional_context(
             has_settings,
         )),
         Player::Stalling(timeout, max_timeout) => {
-            (!fail_to_detect).then_some(update_stalling_context(state, timeout, max_timeout))
+            (!failed_to_detect).then_some(update_stalling_context(state, timeout, max_timeout))
         }
-        Player::SolvingRune(solving_rune) => (!fail_to_detect).then_some(
+        Player::SolvingRune(solving_rune) => (!failed_to_detect).then_some(
             update_solving_rune_context(context, detector, state, solving_rune),
         ),
         // TODO: Improve this?
@@ -723,7 +629,7 @@ fn update_positional_context(
 }
 
 fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Point) -> Player {
-    fn ensure_reachable_y(
+    fn ensure_reachable_auto_mob_y(
         context: &Context,
         state: &mut PlayerState,
         player_pos: Point,
@@ -739,6 +645,7 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
                 AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT - 1,
             );
         }
+
         debug_assert!(!state.auto_mob_reachable_y_map.is_empty());
         let y = state
             .auto_mob_reachable_y_map
@@ -775,9 +682,10 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
         cur_pos: Point,
     ) -> Option<(Player, bool)> {
         match action {
-            PlayerAction::AutoMob(PlayerActionAutoMob { position, .. }) => {
-                Some((ensure_reachable_y(context, state, cur_pos, position), false))
-            }
+            PlayerAction::AutoMob(PlayerActionAutoMob { position, .. }) => Some((
+                ensure_reachable_auto_mob_y(context, state, cur_pos, position),
+                false,
+            )),
             PlayerAction::Move(PlayerActionMove { position, .. }) => {
                 debug!(target: "player", "handling move: {} {}", position.x, position.y);
                 Some((
@@ -1380,9 +1288,10 @@ fn update_double_jumping_context(
 
     debug_assert!(moving.timeout.started || !moving.completed);
 
-    let ignore_grappling = (state.has_auto_mob_action_only()
-        && state.auto_mob_platforms_pathing
-        && state.auto_mob_platforms_pathing_up_jump_only)
+    let ignore_grappling = forced
+        || (state.has_auto_mob_action_only()
+            && state.auto_mob_platforms_pathing
+            && state.auto_mob_platforms_pathing_up_jump_only)
         || (state.has_rune_action()
             && state.rune_platforms_pathing
             && state.rune_platforms_pathing_up_jump_only);
@@ -1467,7 +1376,6 @@ fn update_double_jumping_context(
                 |action| on_player_action(forced, action, x_distance, y_distance, moving),
                 || {
                     if !ignore_grappling
-                        && !forced
                         && moving.completed
                         && x_distance <= DOUBLE_JUMP_GRAPPLING_THRESHOLD
                         && y_direction > 0
@@ -1571,8 +1479,8 @@ fn update_up_jumping_context(
         cur_pos,
         UP_JUMP_TIMEOUT,
         |moving| {
+            let _ = context.keys.send_down(KeyKind::Up);
             if key.is_none() {
-                let _ = context.keys.send_down(KeyKind::Up);
                 let _ = context.keys.send(KeyKind::Space);
             }
             Player::UpJumping(moving)
@@ -1656,7 +1564,7 @@ fn update_unstucking_context(
 ) -> Player {
     const Y_IGNORE_THRESHOLD: i32 = 18;
     // what is gamba mode? i am disappointed if you don't know
-    const GAMBA_MODE_COUNT: u32 = 2;
+    const GAMBA_MODE_COUNT: u32 = 3;
     /// Random threshold to choose unstucking direction
     const X_TO_RIGHT_THRESHOLD: i32 = 10;
 
@@ -1790,12 +1698,12 @@ fn update_solving_rune_context(
     debug_assert!(!state.rune_cash_shop);
     let detector = detector.clone();
     let next = update_with_timeout(
-        solving_rune.solve_timeout,
+        solving_rune.timeout,
         RUNE_SOLVING_TIMEOUT,
         |timeout| {
             let _ = context.keys.send(state.interact_key);
             Player::SolvingRune(PlayerSolvingRune {
-                solve_timeout: timeout,
+                timeout,
                 ..solving_rune
             })
         },
@@ -1816,13 +1724,13 @@ fn update_solving_rune_context(
                     })
                 else {
                     return Player::SolvingRune(PlayerSolvingRune {
-                        solve_timeout: timeout,
+                        timeout,
                         ..solving_rune
                     });
                 };
                 return Player::SolvingRune(PlayerSolvingRune {
                     // reset current timeout for pressing keys
-                    solve_timeout: Timeout {
+                    timeout: Timeout {
                         current: 1, // starts at 1 instead of 0 to avoid immediate key press
                         total: 1,
                         started: true,
@@ -1833,7 +1741,7 @@ fn update_solving_rune_context(
             }
             if timeout.current % PRESS_KEY_INTERVAL != 0 {
                 return Player::SolvingRune(PlayerSolvingRune {
-                    solve_timeout: timeout,
+                    timeout,
                     ..solving_rune
                 });
             }
@@ -1852,7 +1760,7 @@ fn update_solving_rune_context(
                 Player::Idle
             } else {
                 Player::SolvingRune(PlayerSolvingRune {
-                    solve_timeout: timeout,
+                    timeout,
                     key_index,
                     ..solving_rune
                 })

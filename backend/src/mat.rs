@@ -1,13 +1,10 @@
-use std::{
-    ffi::c_void,
-    ops::{Deref, DerefMut},
-};
+use std::ffi::c_void;
 
 use opencv::{
     boxed_ref::{BoxedRef, BoxedRefMut},
     core::{
-        _InputArray, _InputOutputArray, _OutputArray, CV_8UC4, Mat, MatTraitConst, ToInputArray,
-        ToInputOutputArray, ToOutputArray,
+        _InputArray, _InputOutputArray, _OutputArray, CV_8UC4, Mat, MatTrait, MatTraitConst,
+        ToInputArray, ToInputOutputArray, ToOutputArray,
     },
 };
 use platforms::windows::Frame;
@@ -15,7 +12,7 @@ use platforms::windows::Frame;
 // A Mat that owns the external buffer.
 #[derive(Debug)]
 pub struct OwnedMat {
-    mat: Mat,
+    mat: BoxedRefMut<'static, Mat>,
     #[allow(unused)]
     data: Vec<u8>,
 }
@@ -23,15 +20,25 @@ pub struct OwnedMat {
 impl OwnedMat {
     pub fn new(frame: Frame) -> Self {
         let data = frame.data;
-        let mat = unsafe {
+        let mat = BoxedRefMut::from(unsafe {
             Mat::new_nd_with_data_unsafe_def(
                 &[frame.height, frame.width],
                 CV_8UC4,
                 data.as_ptr().cast_mut().cast(),
             )
-        }
-        .expect("failed to convert Frame to Mat");
+            .unwrap()
+        });
         Self { mat, data }
+    }
+}
+
+#[cfg(test)]
+impl From<Mat> for OwnedMat {
+    fn from(value: Mat) -> Self {
+        Self {
+            mat: BoxedRefMut::from(value),
+            data: vec![],
+        }
     }
 }
 
@@ -53,21 +60,14 @@ impl ToInputOutputArray for OwnedMat {
     }
 }
 
+impl MatTrait for OwnedMat {
+    fn as_raw_mut_Mat(&mut self) -> *mut c_void {
+        self.mat.as_raw_mut_Mat()
+    }
+}
+
 impl MatTraitConst for OwnedMat {
     fn as_raw_Mat(&self) -> *const c_void {
         self.mat.as_raw_Mat()
-    }
-}
-
-impl Deref for OwnedMat {
-    type Target = Mat;
-    fn deref(&self) -> &Self::Target {
-        &self.mat
-    }
-}
-
-impl DerefMut for OwnedMat {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.mat
     }
 }
