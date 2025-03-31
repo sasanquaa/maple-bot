@@ -861,7 +861,11 @@ fn update_use_key_context(
             debug_assert!(use_key.current_count < use_key.count);
             debug_assert!(use_key.wait_before_use_ticks == 0 || use_key.wait_before);
             debug_assert!(state.stalling_timeout_state.is_none());
-            let _ = context.keys.send(use_key.key.into());
+            if use_key.wait_after_use_ticks == 0 || !use_key.wait_after {
+                // only send key when wait_after_use_ticks is 0 or wait_after is false
+                // to avoid sending twice after returning from stalling
+                let _ = context.keys.send(use_key.key.into());
+            }
             if !use_key.wait_after && use_key.wait_after_use_ticks > 0 {
                 state.stalling_timeout_state = Some(Player::UseKey(PlayerUseKey {
                     timeout,
@@ -1091,7 +1095,7 @@ fn update_adjusting_context(
     const USE_KEY_AT_X_PROXIMITY_AUTO_MOB_THRESHOLD: i32 = 10;
     const USE_KEY_AT_Y_PROXIMITY_THRESHOLD: i32 = 2;
     const USE_KEY_AT_Y_PROXIMITY_AUTO_MOB_THRESHOLD: i32 = 5;
-    const ADJUSTING_SHORT_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT - 2;
+    const ADJUSTING_SHORT_TIMEOUT: u32 = 3;
 
     fn on_player_action(
         context: &Context,
@@ -1448,6 +1452,7 @@ fn update_up_jumping_context(
     moving: PlayerMoving,
 ) -> Player {
     const UP_JUMP_SPAM_DELAY: u32 = 7;
+    const UP_JUMP_STOP_UP_KEY_THRESHOLD: u32 = 2;
     const UP_JUMP_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 2;
     const UP_JUMPED_THRESHOLD: i32 = 5;
 
@@ -1485,29 +1490,38 @@ fn update_up_jumping_context(
             }
             Player::UpJumping(moving)
         },
-        Some(|| {
-            let _ = context.keys.send_up(KeyKind::Up);
-        }),
+        None::<fn()>,
         |mut moving| {
-            if !moving.completed {
-                if let Some(key) = key {
+            match (moving.completed, key) {
+                (false, Some(key)) => {
                     let _ = context.keys.send(key);
                     moving = moving.completed(true);
-                } else if y_changed <= UP_JUMPED_THRESHOLD {
-                    // spamming space until the player y changes
-                    // above a threshold as sending space twice
-                    // doesn't work
-                    if moving.timeout.total >= UP_JUMP_SPAM_DELAY {
-                        let _ = context.keys.send(KeyKind::Space);
-                    }
-                } else {
-                    moving = moving.completed(true);
                 }
-            } else if state.has_auto_mob_action_only()
-                || (x_distance >= ADJUSTING_MEDIUM_THRESHOLD
-                    && moving.timeout.current >= PLAYER_MOVE_TIMEOUT)
-            {
-                moving = moving.timeout_current(UP_JUMP_TIMEOUT);
+                (false, None) => {
+                    if y_changed <= UP_JUMPED_THRESHOLD {
+                        // spamming space until the player y changes
+                        // above a threshold as sending space twice
+                        // doesn't work
+                        if moving.timeout.total >= UP_JUMP_SPAM_DELAY {
+                            let _ = context.keys.send(KeyKind::Space);
+                        }
+                    } else {
+                        moving = moving.completed(true);
+                    }
+                }
+                (true, _) => {
+                    // this is when up jump like blaster still requires up key
+                    // cancel early to avoid stucking to a rope
+                    if key.is_some() && moving.timeout.total >= UP_JUMP_STOP_UP_KEY_THRESHOLD {
+                        let _ = context.keys.send_up(KeyKind::Up);
+                    }
+                    if state.has_auto_mob_action_only()
+                        || (x_distance >= ADJUSTING_MEDIUM_THRESHOLD
+                            && moving.timeout.current >= PLAYER_MOVE_TIMEOUT)
+                    {
+                        moving = moving.timeout_current(UP_JUMP_TIMEOUT);
+                    }
+                }
             }
             Player::UpJumping(moving)
         },
@@ -1522,8 +1536,9 @@ fn update_falling_context(
     moving: PlayerMoving,
     anchor: Point,
 ) -> Player {
+    const STOP_DOWN_KEY_TICK: u32 = 2;
     const TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 2;
-    const TIMEOUT_EARLY_THRESHOLD: i32 = -4;
+    const TIMEOUT_EARLY_THRESHOLD: i32 = -3;
 
     let y_changed = cur_pos.y - anchor.y;
     let (x_distance, _) = x_distance_direction(moving.dest, cur_pos);
@@ -1542,10 +1557,11 @@ fn update_falling_context(
             }
             Player::Falling(moving, anchor)
         },
-        Some(|| {
-            let _ = context.keys.send_up(KeyKind::Down);
-        }),
+        None::<fn()>,
         |mut moving| {
+            if moving.timeout.total >= STOP_DOWN_KEY_TICK {
+                let _ = context.keys.send_up(KeyKind::Down);
+            }
             if x_distance >= ADJUSTING_MEDIUM_THRESHOLD && y_changed <= TIMEOUT_EARLY_THRESHOLD {
                 moving = moving.timeout_current(TIMEOUT);
             }
