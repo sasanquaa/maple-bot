@@ -113,12 +113,12 @@ fn get_anchor(mat: &Mat, bbox: Rect) -> (Point, Vec4b) {
 mod tests {
     use std::{assert_matches::assert_matches, time::Duration};
 
-    use crate::detect::MockDetector;
-
-    use super::*;
     use anyhow::{Context, anyhow};
     use opencv::core::{CV_8UC4, Mat, MatExprTraitConst, MatTrait};
     use tokio::time;
+
+    use super::*;
+    use crate::detect::MockDetector;
 
     fn create_test_mat_bbox(center_pixel: u8) -> (Mat, Rect) {
         let mut mat = Mat::zeros(100, 100, CV_8UC4).unwrap().to_mat().unwrap();

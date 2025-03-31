@@ -1,10 +1,9 @@
-use dioxus::{document::EvalError, prelude::*};
-
 use backend::{
     Action, ActionKey, ActionMove, Configuration, Minimap as MinimapData, PlayerState,
     RotationMode, delete_map, minimap_data, minimap_frame, player_state, redetect_minimap,
     rotate_actions, update_configuration, update_minimap,
 };
+use dioxus::{document::EvalError, prelude::*};
 use serde::Serialize;
 use tokio::task::spawn_blocking;
 

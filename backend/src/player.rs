@@ -942,7 +942,7 @@ fn update_use_key_context(
                     }
                 }
             }
-            if !use_key.wait_before {
+            if !use_key.wait_before && use_key.wait_before_use_ticks > 0 {
                 state.stalling_timeout_state = Some(Player::UseKey(PlayerUseKey {
                     timeout,
                     wait_before: true,
@@ -951,10 +951,10 @@ fn update_use_key_context(
                 return Player::Stalling(Timeout::default(), use_key.wait_before_use_ticks);
             }
             debug_assert!(use_key.current_count < use_key.count);
-            debug_assert!(use_key.wait_before);
+            debug_assert!(use_key.wait_before_use_ticks == 0 || use_key.wait_before);
             debug_assert!(state.stalling_timeout_state.is_none());
             let _ = context.keys.send(use_key.key.into());
-            if !use_key.wait_after {
+            if !use_key.wait_after && use_key.wait_after_use_ticks > 0 {
                 state.stalling_timeout_state = Some(Player::UseKey(PlayerUseKey {
                     timeout,
                     wait_after: true,
@@ -962,7 +962,7 @@ fn update_use_key_context(
                 }));
                 return Player::Stalling(Timeout::default(), use_key.wait_after_use_ticks);
             }
-            debug_assert!(use_key.wait_after);
+            debug_assert!(use_key.wait_after_use_ticks == 0 || use_key.wait_after);
             debug_assert!(state.stalling_timeout_state.is_none());
             if use_key.current_count + 1 < use_key.count {
                 return Player::UseKey(PlayerUseKey {

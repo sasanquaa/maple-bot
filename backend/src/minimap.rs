@@ -365,11 +365,12 @@ fn anchor_at(mat: &Mat, offset: Point, size: usize, sign: i32) -> Result<(Point,
 mod tests {
     use std::{assert_matches::assert_matches, time::Duration};
 
-    use super::*;
-    use crate::detect::MockDetector;
     use mockall::predicate::eq;
     use opencv::core::{Mat, MatExprTraitConst, MatTrait, Point, Rect, Vec4b};
     use tokio::time;
+
+    use super::*;
+    use crate::detect::MockDetector;
 
     fn create_test_mat() -> (Mat, Anchors) {
         let mut mat = Mat::zeros(100, 100, opencv::core::CV_8UC4)

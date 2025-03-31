@@ -1,14 +1,15 @@
-use anyhow::Result;
-use log::debug;
-use opencv::core::{Point, Rect};
-use ordered_hash_map::OrderedHashMap;
-use rand::seq::IndexedRandom;
 use std::{
     assert_matches::debug_assert_matches,
     collections::VecDeque,
     sync::atomic::{AtomicU32, Ordering},
     time::Instant,
 };
+
+use anyhow::Result;
+use log::debug;
+use opencv::core::{Point, Rect};
+use ordered_hash_map::OrderedHashMap;
+use rand::seq::IndexedRandom;
 
 use crate::{
     ActionKeyDirection, ActionKeyWith, AutoMobbing, KeyBinding, Position, RotationMode,
@@ -472,11 +473,12 @@ fn should_queue_fixed_action(
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use opencv::core::{Point, Vec4b};
 
     use super::*;
     use crate::{Position, detect::MockDetector, minimap::MinimapIdle};
-    use std::time::{Duration, Instant};
 
     const NORMAL_ACTION: Action = Action::Move(ActionMove {
         position: Position {

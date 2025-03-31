@@ -1,3 +1,7 @@
+use std::env;
+use std::sync::LazyLock;
+use std::{fs, path::PathBuf};
+
 use opencv::core::Mat;
 use opencv::core::MatTraitConst;
 use opencv::core::ModifyInplace;
@@ -17,10 +21,6 @@ use opencv::{
     imgcodecs::imwrite_def,
 };
 use platforms::windows::KeyKind;
-use std::env;
-use std::sync::LazyLock;
-use std::{fs, path::PathBuf};
-
 use rand::distr::{Alphanumeric, SampleString};
 
 static DATASET_DIR: LazyLock<PathBuf> = LazyLock::new(|| {

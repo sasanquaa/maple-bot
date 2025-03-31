@@ -1,13 +1,12 @@
 use std::{fmt, time::Duration};
 
+use anyhow::Result;
 use tokio::{
     spawn,
     sync::oneshot::{self, Receiver, error::TryRecvError},
     task::spawn_blocking,
     time::{self},
 };
-
-use anyhow::Result;
 
 /// An asynchronous task.
 ///
@@ -104,9 +103,10 @@ where
 mod tests {
     use std::assert_matches::assert_matches;
 
-    use crate::task::{Task, TaskState, Update, update_task_repeatable};
     use anyhow::Result;
     use tokio::task::yield_now;
+
+    use crate::task::{Task, TaskState, Update, update_task_repeatable};
 
     #[tokio::test(start_paused = true)]
     async fn spawn_state() {
