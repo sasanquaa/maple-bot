@@ -43,7 +43,7 @@ impl Contextual for Skill {
         detector: &impl Detector,
         state: &mut SkillState,
     ) -> ControlFlow<Self> {
-        let next = if matches!(context.player, Player::CashShopThenExit(_, _, _)) {
+        let next = if matches!(context.player, Player::CashShopThenExit(_, _)) {
             self
         } else {
             update_context(self, detector, state)

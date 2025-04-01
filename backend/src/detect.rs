@@ -41,8 +41,6 @@ use ort::{
 };
 use platforms::windows::KeyKind;
 
-#[cfg(debug_assertions)]
-use crate::debug::debug_mat;
 use crate::mat::OwnedMat;
 
 pub trait Detector: 'static + Send + Clone {
@@ -228,14 +226,7 @@ impl Detector for CachedDetector {
 
     fn detect_player(&self, minimap: Rect) -> Result<Rect> {
         let minimap_grayscale = self.grayscale.roi(minimap).unwrap();
-        let result = detect_player(&minimap_grayscale);
-        #[cfg(debug_assertions)]
-        {
-            if let Ok(bbox) = result {
-                debug_mat("Minimap", &minimap_grayscale, 1, &[bbox], &["Player"]);
-            }
-        }
-        result
+        detect_player(&minimap_grayscale)
     }
 
     fn detect_player_in_cash_shop(&self) -> bool {
@@ -337,13 +328,6 @@ fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Result
             Rect::new(x, y, width, height)
         })
         .collect::<Vec<_>>();
-    #[cfg(debug_assertions)]
-    {
-        debug_mat("Portals", &minimap, 1, &portals, &vec![
-            "Portal";
-            portals.len()
-        ]);
-    }
     Ok(portals)
 }
 
@@ -438,23 +422,6 @@ fn detect_player_health_bars(
     .into_iter()
     .next()
     .ok_or(anyhow!("failed to detect max health bar"))?;
-    #[cfg(debug_assertions)]
-    {
-        debug_mat(
-            "Current Health",
-            &mat.roi(left_bbox).unwrap(),
-            1,
-            &[],
-            &[""; 0],
-        );
-        debug_mat(
-            "Max Health",
-            &mat.roi(right_bbox).unwrap(),
-            1,
-            &[],
-            &[""; 0],
-        );
-    }
     Ok((left_bbox, right_bbox))
 }
 
@@ -582,10 +549,6 @@ fn detect_erda_shower(mat: &impl MatTraitConst) -> Result<Rect> {
     let crop_y = size.height / 5;
     let crop_bbox = Rect::new(size.width - crop_x, size.height - crop_y, crop_x, crop_y);
     let skill_bar = mat.roi(crop_bbox).unwrap();
-    #[cfg(debug_assertions)]
-    {
-        debug_mat("Skill bar", &skill_bar, 1, &[], &[""; 0]);
-    }
     detect_template(&skill_bar, &*ERDA_SHOWER, crop_bbox.tl(), 0.96, None)
 }
 
@@ -863,7 +826,7 @@ fn detect_rune_arrows(mat: &impl MatTraitConst) -> Result<[KeyKind; 4]> {
         .map(|i| unsafe { mat_out.at_row_unchecked::<f32>(i).unwrap() })
         .filter(|&pred| {
             // pred has shapes [bbox(4) + conf + class]
-            pred[4] >= 0.7
+            pred[4] >= 0.8
         })
         .collect::<Vec<_>>();
     if preds.len() != 4 {

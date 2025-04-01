@@ -136,6 +136,9 @@ fn update_idle_context(
     state: &mut MinimapState,
     idle: MinimapIdle,
 ) -> Option<Minimap> {
+    if matches!(context.player, Player::CashShopThenExit(_, _)) {
+        return Some(Minimap::Idle(idle));
+    }
     let MinimapIdle {
         anchors,
         bbox,

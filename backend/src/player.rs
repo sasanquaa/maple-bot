@@ -37,7 +37,7 @@ const ADJUSTING_INTERMEDIATE_THRESHOLD: i32 = 7;
 pub const DOUBLE_JUMP_THRESHOLD: i32 = 25;
 
 /// Minimum x distance from the destination required to perform a double jump in auto mobbing
-const DOUBLE_JUMP_AUTO_MOB_THRESHOLD: i32 = 12;
+const DOUBLE_JUMP_AUTO_MOB_THRESHOLD: i32 = 15;
 
 /// Maximum amount of ticks a change in x or y direction must be detected
 const PLAYER_MOVE_TIMEOUT: u32 = 5;
@@ -58,7 +58,7 @@ const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 4;
 /// The acceptable y range above and below the detected mob position to match with a reachable y
 const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 8;
 
-const MAX_RUNE_FAILED_COUNT: u32 = 3;
+const MAX_RUNE_FAILED_COUNT: u32 = 2;
 
 #[derive(Debug, Default)]
 pub struct PlayerState {
@@ -245,8 +245,8 @@ impl PlayerState {
     }
 
     #[inline]
-    fn falling_threshold(&self) -> i32 {
-        if self.has_auto_mob_action_only() {
+    fn falling_threshold(&self, is_intermediate: bool) -> i32 {
+        if self.has_auto_mob_action_only() && !is_intermediate {
             AUTO_MOB_REACHABLE_Y_THRESHOLD
         } else {
             PLAYER_VERTICAL_MOVE_THRESHOLD
@@ -254,8 +254,8 @@ impl PlayerState {
     }
 
     #[inline]
-    fn double_jump_threshold(&self) -> i32 {
-        if self.has_auto_mob_action_only() {
+    fn double_jump_threshold(&self, is_intermediate: bool) -> i32 {
+        if self.has_auto_mob_action_only() && !is_intermediate {
             DOUBLE_JUMP_AUTO_MOB_THRESHOLD
         } else {
             DOUBLE_JUMP_THRESHOLD
@@ -341,7 +341,8 @@ impl PlayerMoving {
 
     #[inline]
     fn is_destination_intermediate(&self) -> bool {
-        is_destination_intermediates(self.intermediates)
+        self.intermediates
+            .is_some_and(|(index, points)| index < points.len())
     }
 }
 
@@ -409,6 +410,15 @@ pub struct PlayerSolvingRune {
     key_index: usize,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum PlayerCashShop {
+    Entering,
+    Entered,
+    Exitting,
+    Exitted,
+    Stalling,
+}
+
 #[derive(Clone, Copy, Debug, Display)]
 pub enum Player {
     Detecting,
@@ -425,7 +435,7 @@ pub enum Player {
     Unstucking(Timeout, Option<bool>),
     Stalling(Timeout, u32),
     SolvingRune(PlayerSolvingRune),
-    CashShopThenExit(Timeout, bool, bool),
+    CashShopThenExit(Timeout, PlayerCashShop),
 }
 
 impl Contextual for Player {
@@ -447,7 +457,10 @@ impl Contextual for Player {
             let _ = context.keys.send_up(KeyKind::Right);
             state.rune_cash_shop = false;
             state.reset_to_idle_next_update = false;
-            return ControlFlow::Next(Player::CashShopThenExit(Timeout::default(), false, false));
+            return ControlFlow::Next(Player::CashShopThenExit(
+                Timeout::default(),
+                PlayerCashShop::Entering,
+            ));
         }
         let cur_pos = if state.ignore_pos_update {
             state.last_known_pos
@@ -525,44 +538,55 @@ fn update_non_positional_context(
             update_solving_rune_context(context, detector, state, solving_rune),
         ),
         // TODO: Improve this?
-        Player::CashShopThenExit(timeout, in_cash_shop, exitting) => {
-            let next = match (in_cash_shop, exitting) {
-                (false, _) => {
+        Player::CashShopThenExit(timeout, cash_shop) => {
+            let next = match cash_shop {
+                PlayerCashShop::Entering => {
                     let _ = context.keys.send(state.cash_shop_key);
-                    Player::CashShopThenExit(
-                        timeout,
-                        detector.detect_player_in_cash_shop(),
-                        exitting,
-                    )
+                    let next = if detector.detect_player_in_cash_shop() {
+                        PlayerCashShop::Entered
+                    } else {
+                        PlayerCashShop::Entering
+                    };
+                    Player::CashShopThenExit(timeout, next)
                 }
-                (true, false) => {
+                PlayerCashShop::Entered => {
                     update_with_timeout(
                         timeout,
                         305, // exits after 10 secs
-                        |timeout| Player::CashShopThenExit(timeout, in_cash_shop, exitting),
-                        || Player::CashShopThenExit(timeout, in_cash_shop, true),
-                        |timeout| Player::CashShopThenExit(timeout, in_cash_shop, exitting),
+                        |timeout| Player::CashShopThenExit(timeout, cash_shop),
+                        || Player::CashShopThenExit(timeout, PlayerCashShop::Exitting),
+                        |timeout| Player::CashShopThenExit(timeout, cash_shop),
                     )
                 }
-                (true, true) => {
-                    if detector.detect_player_in_cash_shop() {
-                        let _ = context.keys.send_click_to_focus();
-                        let _ = context.keys.send(KeyKind::Esc);
-                        let _ = context.keys.send(KeyKind::Enter);
-                        Player::CashShopThenExit(timeout, in_cash_shop, exitting)
+                PlayerCashShop::Exitting => {
+                    let next = if detector.detect_player_in_cash_shop() {
+                        PlayerCashShop::Exitting
                     } else {
-                        Player::Idle
+                        PlayerCashShop::Exitted
+                    };
+                    let _ = context.keys.send_click_to_focus();
+                    let _ = context.keys.send(KeyKind::Esc);
+                    let _ = context.keys.send(KeyKind::Enter);
+                    Player::CashShopThenExit(timeout, next)
+                }
+                PlayerCashShop::Exitted => {
+                    if failed_to_detect {
+                        Player::CashShopThenExit(timeout, cash_shop)
+                    } else {
+                        Player::CashShopThenExit(Timeout::default(), PlayerCashShop::Stalling)
                     }
                 }
+                PlayerCashShop::Stalling => {
+                    update_with_timeout(
+                        timeout,
+                        90, // returns after 3 secs
+                        |timeout| Player::CashShopThenExit(timeout, cash_shop),
+                        || Player::Idle,
+                        |timeout| Player::CashShopThenExit(timeout, cash_shop),
+                    )
+                }
             };
-            Some(on_action(
-                state,
-                |action| match action {
-                    PlayerAction::AutoMob(_) | PlayerAction::Key(_) | PlayerAction::Move(_) => None,
-                    PlayerAction::SolveRune => Some((next, false)),
-                },
-                || next,
-            ))
+            Some(next)
         }
         Player::Detecting
         | Player::Idle
@@ -624,7 +648,7 @@ fn update_positional_context(
         | Player::Unstucking(_, _)
         | Player::Stalling(_, _)
         | Player::SolvingRune(_)
-        | Player::CashShopThenExit(_, _, _) => unreachable!(),
+        | Player::CashShopThenExit(_, _) => unreachable!(),
     }
 }
 
@@ -915,9 +939,8 @@ fn update_moving_context(
     intermediates: Option<(usize, Array<(Point, bool), 16>)>,
 ) -> Player {
     const ACTION_HORIZONTAL_STATE_REPEAT_COUNT: u32 = 20;
-    const AUTO_MOB_HORIZONTAL_STATE_REPEAT_COUNT: u32 = 5;
+    const AUTO_MOB_HORIZONTAL_STATE_REPEAT_COUNT: u32 = 8;
     const ACTION_VERTICAL_STATE_REPEAT_COUNT: u32 = 8;
-    const AUTO_MOB_VERTICAL_STATE_REPEAT_COUNT: u32 = 2;
     const PLAYER_UP_JUMP_THRESHOLD: i32 = 10;
 
     /// Aborts the action when state starts looping.
@@ -934,13 +957,7 @@ fn update_moving_context(
                 PlayerLastMovement::Falling
                 | PlayerLastMovement::Grappling
                 | PlayerLastMovement::UpJumping
-                | PlayerLastMovement::Jumping => {
-                    if state.has_auto_mob_action_only() {
-                        AUTO_MOB_VERTICAL_STATE_REPEAT_COUNT
-                    } else {
-                        ACTION_VERTICAL_STATE_REPEAT_COUNT
-                    }
-                }
+                | PlayerLastMovement::Jumping => ACTION_VERTICAL_STATE_REPEAT_COUNT,
             };
             let count_map = if state.has_priority_action() {
                 &mut state.last_movement_priority_map
@@ -1018,14 +1035,14 @@ fn update_moving_context(
     let (x_distance, _) = x_distance_direction(dest, cur_pos);
     let (y_distance, y_direction) = y_distance_direction(dest, cur_pos);
     let moving = PlayerMoving::new(cur_pos, dest, exact, intermediates);
+    let is_intermediate = moving.is_destination_intermediate();
 
     match (x_distance, y_direction, y_distance) {
-        (d, _, _) if d >= state.double_jump_threshold() => {
+        (d, _, _) if d >= state.double_jump_threshold(is_intermediate) => {
             abort_action_on_state_repeat(Player::DoubleJumping(moving, false, false), state)
         }
         (d, _, _)
-            if (is_destination_intermediates(intermediates)
-                && d >= ADJUSTING_INTERMEDIATE_THRESHOLD)
+            if (is_intermediate && d >= ADJUSTING_INTERMEDIATE_THRESHOLD)
                 || (exact && d >= ADJUSTING_SHORT_THRESHOLD)
                 || (!exact && d >= ADJUSTING_MEDIUM_THRESHOLD) =>
         {
@@ -1044,7 +1061,7 @@ fn update_moving_context(
         }
         // this probably won't work if the platforms are far apart,
         // which is weird to begin with and only happen in very rare place (e.g. Haven)
-        (_, y, d) if y < 0 && d >= state.falling_threshold() => {
+        (_, y, d) if y < 0 && d >= state.falling_threshold(is_intermediate) => {
             abort_action_on_state_repeat(Player::Falling(moving, cur_pos), state)
         }
         _ => {
@@ -1083,7 +1100,6 @@ fn update_adjusting_context(
     cur_pos: Point,
     moving: PlayerMoving,
 ) -> Player {
-    const USE_KEY_AT_Y_DOUBLE_JUMP_THRESHOLD: i32 = 0;
     const USE_KEY_AT_X_PROXIMITY_AUTO_MOB_THRESHOLD: i32 = 10;
     const USE_KEY_AT_Y_PROXIMITY_THRESHOLD: i32 = 2;
     const USE_KEY_AT_Y_PROXIMITY_AUTO_MOB_THRESHOLD: i32 = 5;
@@ -1103,7 +1119,7 @@ fn update_adjusting_context(
                 direction,
                 ..
             }) => {
-                if !moving.completed || y_distance > USE_KEY_AT_Y_DOUBLE_JUMP_THRESHOLD {
+                if !moving.completed || y_distance > 0 {
                     return None;
                 }
                 if matches!(direction, ActionKeyDirection::Any)
@@ -1148,7 +1164,7 @@ fn update_adjusting_context(
 
     let (x_distance, x_direction) = x_distance_direction(moving.dest, cur_pos);
     let (y_distance, y_direction) = y_distance_direction(moving.dest, cur_pos);
-    if x_distance >= state.double_jump_threshold() {
+    if x_distance >= state.double_jump_threshold(moving.is_destination_intermediate()) {
         state.use_immediate_control_flow = true;
         return Player::Moving(moving.dest, moving.exact, moving.intermediates);
     }
@@ -1268,6 +1284,7 @@ fn update_double_jumping_context(
                 with: ActionKeyWith::DoubleJump | ActionKeyWith::Any,
                 ..
             }) => (moving.completed
+                && !moving.is_destination_intermediate()
                 && ((!moving.exact
                     && x_distance <= DOUBLE_JUMP_USE_KEY_X_PROXIMITY_THRESHOLD
                     && y_distance <= DOUBLE_JUMP_USE_KEY_Y_PROXIMITY_THRESHOLD)
@@ -1355,7 +1372,9 @@ fn update_double_jumping_context(
                         }
                     }
                 }
-                if (!forced && x_distance >= state.double_jump_threshold())
+                if (!forced
+                    && x_distance
+                        >= state.double_jump_threshold(moving.is_destination_intermediate()))
                     || x_changed <= DOUBLE_JUMP_FORCE_THRESHOLD
                 {
                     let _ = context
@@ -1398,7 +1417,7 @@ fn update_grappling_context(
 ) -> Player {
     const GRAPPLING_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 10;
     const GRAPPLING_STOPPING_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 3;
-    const GRAPPLING_STOPPING_THRESHOLD: i32 = 2;
+    const GRAPPLING_STOPPING_THRESHOLD: i32 = 3;
 
     if !moving.timeout.started {
         state.last_movement = Some(PlayerLastMovement::Grappling);
@@ -1444,7 +1463,7 @@ fn update_up_jumping_context(
     moving: PlayerMoving,
 ) -> Player {
     const UP_JUMP_SPAM_DELAY: u32 = 7;
-    const UP_JUMP_STOP_UP_KEY_THRESHOLD: u32 = 2;
+    const UP_JUMP_STOP_UP_KEY_THRESHOLD: u32 = 3;
     const UP_JUMP_TIMEOUT: u32 = PLAYER_MOVE_TIMEOUT * 2;
     const UP_JUMPED_THRESHOLD: i32 = 5;
 
@@ -1699,12 +1718,11 @@ fn update_solving_rune_context(
     solving_rune: PlayerSolvingRune,
 ) -> Player {
     const RUNE_SOLVING_TIMEOUT: u32 = 155;
-    const PRESS_KEY_INTERVAL: u32 = 10;
+    const PRESS_KEY_INTERVAL: u32 = 12;
 
     debug_assert!(state.rune_validate_timeout.is_none());
     debug_assert!(state.rune_failed_count < MAX_RUNE_FAILED_COUNT);
     debug_assert!(!state.rune_cash_shop);
-    let detector = detector.clone();
     let next = update_with_timeout(
         solving_rune.timeout,
         RUNE_SOLVING_TIMEOUT,
@@ -1726,8 +1744,9 @@ fn update_solving_rune_context(
         },
         |timeout| {
             if solving_rune.keys.is_none() {
+                let detector = detector.clone();
                 let Update::Complete(Ok(keys)) =
-                    update_task_repeatable(1000, &mut state.rune_task, move || {
+                    update_task_repeatable(500, &mut state.rune_task, move || {
                         detector.detect_rune_arrows()
                     })
                 else {
@@ -2072,11 +2091,6 @@ fn update_state(
     update_health_state(context, detector, state);
     update_rune_validating_state(context, state);
     Some(pos)
-}
-
-#[inline]
-fn is_destination_intermediates(intermediates: Option<(usize, Array<(Point, bool), 16>)>) -> bool {
-    intermediates.is_some_and(|(index, points)| index < points.len())
 }
 
 // TODO: ??????

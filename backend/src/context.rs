@@ -100,7 +100,6 @@ struct DefaultRequestHandler<'a> {
     detector: &'a CachedDetector,
     player: &'a mut PlayerState,
     minimap: &'a mut MinimapState,
-    ignore_update_actions: &'a mut bool,
 }
 
 impl DefaultRequestHandler<'_> {
@@ -128,54 +127,38 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_update_minimap(&mut self, preset: Option<String>, minimap: crate::Minimap) {
-        if matches!(self.context.player, Player::CashShopThenExit(_, _, _)) {
-            *self.ignore_update_actions = true;
-        }
-        if !*self.ignore_update_actions {
-            self.minimap.data = minimap;
-            self.minimap.update_platforms = true;
-            self.player.reset_non_configuration_states();
-            self.player.rune_platforms_pathing = self.minimap.data.rune_platforms_pathing;
-            self.player.rune_platforms_pathing_up_jump_only =
-                self.minimap.data.rune_platforms_pathing_up_jump_only;
-            self.player.auto_mob_platforms_pathing = self.minimap.data.auto_mob_platforms_pathing;
-            self.player.auto_mob_platforms_pathing_up_jump_only =
-                self.minimap.data.auto_mob_platforms_pathing_up_jump_only;
-            *self.actions = preset
-                .and_then(|preset| self.minimap.data.actions.get(&preset).cloned())
-                .unwrap_or_default();
-            self.update_rotator_actions(self.minimap.data.rotation_mode.into());
-        }
-        if *self.ignore_update_actions && matches!(self.context.minimap, Minimap::Idle(_)) {
-            *self.ignore_update_actions = false;
-        }
+        self.minimap.data = minimap;
+        self.minimap.update_platforms = true;
+        self.player.reset_non_configuration_states();
+        self.player.rune_platforms_pathing = self.minimap.data.rune_platforms_pathing;
+        self.player.rune_platforms_pathing_up_jump_only =
+            self.minimap.data.rune_platforms_pathing_up_jump_only;
+        self.player.auto_mob_platforms_pathing = self.minimap.data.auto_mob_platforms_pathing;
+        self.player.auto_mob_platforms_pathing_up_jump_only =
+            self.minimap.data.auto_mob_platforms_pathing_up_jump_only;
+        *self.actions = preset
+            .and_then(|preset| self.minimap.data.actions.get(&preset).cloned())
+            .unwrap_or_default();
+        self.update_rotator_actions(self.minimap.data.rotation_mode.into());
     }
 
     fn on_update_configuration(&mut self, config: Configuration) {
-        if matches!(self.context.player, Player::CashShopThenExit(_, _, _)) {
-            *self.ignore_update_actions = true;
-        }
-        if !*self.ignore_update_actions {
-            *self.config = config;
-            *self.buffs = config_buffs(self.config);
-            self.player.reset_non_configuration_states();
-            self.player.interact_key = self.config.interact_key.key.into();
-            self.player.grappling_key = self.config.ropelift_key.key.into();
-            self.player.teleport_key = self.config.teleport_key.map(|key| key.key.into());
-            self.player.upjump_key = self.config.up_jump_key.map(|key| key.key.into());
-            self.player.cash_shop_key = self.config.cash_shop_key.key.into();
-            self.player.potion_key = self.config.potion_key.key.into();
-            self.player.use_potion_below_percent =
-                match (self.config.potion_key.enabled, self.config.potion_mode) {
-                    (false, _) | (_, PotionMode::EveryMillis(_)) => None,
-                    (_, PotionMode::Percentage(percent)) => Some(percent / 100.0),
-                };
-            self.player.update_health_millis = Some(self.config.health_update_millis);
-            self.update_rotator_actions(self.minimap.data.rotation_mode.into());
-        }
-        if *self.ignore_update_actions && matches!(self.context.minimap, Minimap::Idle(_)) {
-            *self.ignore_update_actions = false;
-        }
+        *self.config = config;
+        *self.buffs = config_buffs(self.config);
+        self.player.reset_non_configuration_states();
+        self.player.interact_key = self.config.interact_key.key.into();
+        self.player.grappling_key = self.config.ropelift_key.key.into();
+        self.player.teleport_key = self.config.teleport_key.map(|key| key.key.into());
+        self.player.upjump_key = self.config.up_jump_key.map(|key| key.key.into());
+        self.player.cash_shop_key = self.config.cash_shop_key.key.into();
+        self.player.potion_key = self.config.potion_key.key.into();
+        self.player.use_potion_below_percent =
+            match (self.config.potion_key.enabled, self.config.potion_mode) {
+                (false, _) | (_, PotionMode::EveryMillis(_)) => None,
+                (_, PotionMode::Percentage(percent)) => Some(percent / 100.0),
+            };
+        self.player.update_health_millis = Some(self.config.health_update_millis);
+        self.update_rotator_actions(self.minimap.data.rotation_mode.into());
     }
 
     fn on_redetect_minimap(&mut self) {
@@ -269,7 +252,6 @@ fn update_loop() {
         buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
         halting: true,
     };
-    let mut ignore_update_actions = false;
 
     loop_with_fps(FPS, || {
         let Ok(mat) = capture.grab().map(OwnedMat::new) else {
@@ -299,7 +281,6 @@ fn update_loop() {
             detector: &detector,
             player: &mut player_state,
             minimap: &mut minimap_state,
-            ignore_update_actions: &mut ignore_update_actions,
         };
         poll_request(&mut handler);
     });

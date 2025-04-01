@@ -151,7 +151,7 @@ impl Rotator {
         detector: &impl Detector,
         player: &mut PlayerState,
     ) {
-        if context.halting || matches!(context.player, Player::CashShopThenExit(_, _, _)) {
+        if context.halting || matches!(context.player, Player::CashShopThenExit(_, _)) {
             return;
         }
         self.rotate_priority_actions(context, player);
