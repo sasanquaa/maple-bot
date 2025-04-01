@@ -2,10 +2,7 @@ use std::ffi::c_void;
 
 use opencv::{
     boxed_ref::{BoxedRef, BoxedRefMut},
-    core::{
-        _InputArray, _InputOutputArray, _OutputArray, CV_8UC4, Mat, MatTrait, MatTraitConst,
-        ToInputArray, ToInputOutputArray, ToOutputArray,
-    },
+    core::{_InputArray, CV_8UC4, Mat, MatTraitConst, ToInputArray},
 };
 use platforms::windows::Frame;
 
@@ -45,24 +42,6 @@ impl From<Mat> for OwnedMat {
 impl ToInputArray for OwnedMat {
     fn input_array(&self) -> opencv::Result<BoxedRef<_InputArray>> {
         self.mat.input_array()
-    }
-}
-
-impl ToOutputArray for OwnedMat {
-    fn output_array(&mut self) -> opencv::Result<BoxedRefMut<_OutputArray>> {
-        self.mat.output_array()
-    }
-}
-
-impl ToInputOutputArray for OwnedMat {
-    fn input_output_array(&mut self) -> opencv::Result<BoxedRefMut<_InputOutputArray>> {
-        self.mat.input_output_array()
-    }
-}
-
-impl MatTrait for OwnedMat {
-    fn as_raw_mut_Mat(&mut self) -> *mut c_void {
-        self.mat.as_raw_mut_Mat()
     }
 }
 

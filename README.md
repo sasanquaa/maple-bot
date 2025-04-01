@@ -1,13 +1,27 @@
+- [Features](#features)
+- [How to use](#how-to-use)
+- [Troubleshooting](#troubleshooting)
+- [Showcase](#showcase)
+  - [Rotation](#rotation)
+  - [Auto Mobbing & Platforms Pathing](#auto-mobbing-%26-platforms-pathing)
+  - [Rune Solving](#rune-solving)
+
 ## Features
 - More like a rotation maker than a bot?
 - Run around and hit random mobs mode (literally a bot)
 - Auto buffs for common farming-related buffs
 - Auto potion (periodically or somewhat functional Auto HP-like pet skill)
-- Automically solve rune (for spinning rune, it uses the lost ancient technique of AFK-ing in cash shop for 10 seconds)
+- Solve rune (for spinning rune, it uses the lost ancient technique of AFK-ing in cash shop for 10 seconds)
 - Platforms pathing (find a path to reach a platform)
 - ~~Barely maintainable~~ UI ~~(please help)~~
 - Work by taking an image and send key inputs (no memory hacking)
-- Not a feature but currently only work in GMS
+- Not a feature but currently only work in GMS (haven't tested MSEA but it is in English...)
+
+## How to use
+TODO
+
+## Troubleshooting
+TODO
 
 ## Showcase
 #### Rotation

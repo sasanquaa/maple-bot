@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Range};
+use std::collections::HashMap;
 
 use anyhow::Result;
 use log::debug;
@@ -919,10 +919,6 @@ fn update_moving_context(
     const ACTION_VERTICAL_STATE_REPEAT_COUNT: u32 = 8;
     const AUTO_MOB_VERTICAL_STATE_REPEAT_COUNT: u32 = 2;
     const PLAYER_UP_JUMP_THRESHOLD: i32 = 10;
-    const PLAYER_JUMP_TO_UP_JUMP_RANGE_THRESHOLD: Range<i32> = const {
-        debug_assert!(PLAYER_JUMP_THRESHOLD < PLAYER_UP_JUMP_THRESHOLD);
-        PLAYER_JUMP_THRESHOLD..PLAYER_UP_JUMP_THRESHOLD
-    };
 
     /// Aborts the action when state starts looping.
     fn abort_action_on_state_repeat(next: Player, state: &mut PlayerState) -> Player {
@@ -1040,11 +1036,7 @@ fn update_moving_context(
         (_, y, d) if y > 0 && d >= PLAYER_GRAPPLING_THRESHOLD => {
             abort_action_on_state_repeat(Player::Grappling(moving), state)
         }
-        (_, y, d)
-            if y > 0
-                && (d >= PLAYER_UP_JUMP_THRESHOLD
-                    || PLAYER_JUMP_TO_UP_JUMP_RANGE_THRESHOLD.contains(&d)) =>
-        {
+        (_, y, d) if y > 0 && d >= PLAYER_UP_JUMP_THRESHOLD => {
             abort_action_on_state_repeat(Player::UpJumping(moving), state)
         }
         (_, y, d) if y > 0 && d >= PLAYER_JUMP_THRESHOLD => {

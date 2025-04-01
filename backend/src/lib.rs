@@ -1,12 +1,7 @@
-#![feature(str_from_raw_parts)]
-#![feature(maybe_uninit_uninit_array)]
-#![feature(iter_array_chunks)]
 #![feature(new_range_api)]
 #![feature(slice_pattern)]
 #![feature(variant_count)]
 #![feature(let_chains)]
-#![feature(box_into_inner)]
-#![feature(downcast_unchecked)]
 #![feature(associated_type_defaults)]
 #![feature(assert_matches)]
 

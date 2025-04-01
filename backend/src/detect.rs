@@ -45,7 +45,7 @@ use platforms::windows::KeyKind;
 use crate::debug::debug_mat;
 use crate::mat::OwnedMat;
 
-pub trait Detector: 'static + Send + Sync + Clone {
+pub trait Detector: 'static + Send + Clone {
     fn mat(&self) -> &OwnedMat;
 
     /// Detects a list of mobs.
@@ -305,7 +305,8 @@ fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Result
     static PORTAL: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("PORTAL_TEMPLATE")), IMREAD_COLOR).unwrap()
     });
-    let template = LazyLock::force(&PORTAL);
+
+    let template = &*PORTAL;
     let mut result = Mat::default();
     let mut points = Vector::<Point>::new();
     match_template(
@@ -352,7 +353,7 @@ fn detect_minimap_rune(minimap: &impl ToInputArray) -> Result<Rect> {
         imgcodecs::imdecode(include_bytes!(env!("RUNE_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    detect_template(minimap, LazyLock::force(&RUNE), Point::default(), 0.7, None)
+    detect_template(minimap, &*RUNE, Point::default(), 0.7, None)
 }
 
 fn detect_cash_shop(mat: &impl ToInputArray) -> bool {
@@ -361,14 +362,7 @@ fn detect_cash_shop(mat: &impl ToInputArray) -> bool {
         imgcodecs::imdecode(include_bytes!(env!("CASH_SHOP_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    detect_template(
-        mat,
-        LazyLock::force(&CASH_SHOP),
-        Point::default(),
-        0.9,
-        None,
-    )
-    .is_ok()
+    detect_template(mat, &*CASH_SHOP, Point::default(), 0.9, None).is_ok()
 }
 
 fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
@@ -380,9 +374,9 @@ fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
         imgcodecs::imdecode(include_bytes!(env!("HP_END_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    let hp_start = detect_template(mat, LazyLock::force(&HP_START), Point::default(), 0.9, None)?;
+    let hp_start = detect_template(mat, &*HP_START, Point::default(), 0.9, None)?;
     let hp_start_to_edge_x = hp_start.x + hp_start.width;
-    let hp_end = detect_template(mat, LazyLock::force(&HP_END), Point::default(), 0.9, None)?;
+    let hp_end = detect_template(mat, &*HP_END, Point::default(), 0.9, None)?;
     Ok(Rect::new(
         hp_start_to_edge_x,
         hp_start.y,
@@ -407,7 +401,7 @@ fn detect_player_health_bars(
 
     let hp_separator = detect_template(
         &grayscale.roi(hp_bar).unwrap(),
-        LazyLock::force(&HP_SEPARATOR),
+        &*HP_SEPARATOR,
         hp_bar.tl(),
         0.9,
         None,
@@ -491,14 +485,7 @@ fn detect_player_rune_buff(mat: &impl ToInputArray) -> bool {
         imgcodecs::imdecode(include_bytes!(env!("RUNE_BUFF_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    detect_template(
-        mat,
-        LazyLock::force(&RUNE_BUFF),
-        Point::default(),
-        0.75,
-        None,
-    )
-    .is_ok()
+    detect_template(mat, &*RUNE_BUFF, Point::default(), 0.75, None).is_ok()
 }
 
 fn detect_player_sayram_elixir_buff(mat: &impl ToInputArray) -> bool {
@@ -511,14 +498,7 @@ fn detect_player_sayram_elixir_buff(mat: &impl ToInputArray) -> bool {
         .unwrap()
     });
 
-    detect_template(
-        mat,
-        LazyLock::force(&SAYRAM_ELIXIR_BUFF),
-        Point::default(),
-        0.75,
-        None,
-    )
-    .is_ok()
+    detect_template(mat, &*SAYRAM_ELIXIR_BUFF, Point::default(), 0.75, None).is_ok()
 }
 
 fn detect_player_aurelia_elixir_buff(mat: &impl ToInputArray) -> bool {
@@ -531,14 +511,7 @@ fn detect_player_aurelia_elixir_buff(mat: &impl ToInputArray) -> bool {
         .unwrap()
     });
 
-    detect_template(
-        mat,
-        LazyLock::force(&AURELIA_ELIXIR_BUFF),
-        Point::default(),
-        0.9,
-        None,
-    )
-    .is_ok()
+    detect_template(mat, &*AURELIA_ELIXIR_BUFF, Point::default(), 0.9, None).is_ok()
 }
 
 fn detect_player_exp_coupon_x3_buff(mat: &impl ToInputArray) -> bool {
@@ -551,14 +524,7 @@ fn detect_player_exp_coupon_x3_buff(mat: &impl ToInputArray) -> bool {
         .unwrap()
     });
 
-    detect_template(
-        mat,
-        LazyLock::force(&EXP_COUPON_X3_BUFF),
-        Point::default(),
-        0.75,
-        None,
-    )
-    .is_ok()
+    detect_template(mat, &*EXP_COUPON_X3_BUFF, Point::default(), 0.75, None).is_ok()
 }
 
 fn detect_player_bonus_exp_coupon_buff(mat: &impl ToInputArray) -> bool {
@@ -571,14 +537,7 @@ fn detect_player_bonus_exp_coupon_buff(mat: &impl ToInputArray) -> bool {
         .unwrap()
     });
 
-    detect_template(
-        mat,
-        LazyLock::force(&BONUS_EXP_COUPON_BUFF),
-        Point::default(),
-        0.75,
-        None,
-    )
-    .is_ok()
+    detect_template(mat, &*BONUS_EXP_COUPON_BUFF, Point::default(), 0.75, None).is_ok()
 }
 
 fn detect_player_legion_wealth_buff(mat: &impl ToInputArray) -> bool {
@@ -591,14 +550,7 @@ fn detect_player_legion_wealth_buff(mat: &impl ToInputArray) -> bool {
         .unwrap()
     });
 
-    detect_template(
-        mat,
-        LazyLock::force(&LEGION_WEALTH_BUFF),
-        Point::default(),
-        0.75,
-        None,
-    )
-    .is_ok()
+    detect_template(mat, &*LEGION_WEALTH_BUFF, Point::default(), 0.75, None).is_ok()
 }
 
 fn detect_player_legion_luck_buff(mat: &impl ToInputArray) -> bool {
@@ -611,14 +563,7 @@ fn detect_player_legion_luck_buff(mat: &impl ToInputArray) -> bool {
         .unwrap()
     });
 
-    detect_template(
-        mat,
-        LazyLock::force(&LEGION_WEALTH_BUFF),
-        Point::default(),
-        0.75,
-        None,
-    )
-    .is_ok()
+    detect_template(mat, &*LEGION_WEALTH_BUFF, Point::default(), 0.75, None).is_ok()
 }
 
 fn detect_erda_shower(mat: &impl MatTraitConst) -> Result<Rect> {
@@ -641,13 +586,7 @@ fn detect_erda_shower(mat: &impl MatTraitConst) -> Result<Rect> {
     {
         debug_mat("Skill bar", &skill_bar, 1, &[], &[""; 0]);
     }
-    detect_template(
-        &skill_bar,
-        LazyLock::force(&ERDA_SHOWER),
-        crop_bbox.tl(),
-        0.96,
-        None,
-    )
+    detect_template(&skill_bar, &*ERDA_SHOWER, crop_bbox.tl(), 0.96, None)
 }
 
 fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
@@ -671,9 +610,9 @@ fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
 
     let was_ideal_ratio = WAS_IDEAL_RATIO.load(Ordering::Acquire);
     let template = if was_ideal_ratio {
-        LazyLock::force(&PLAYER_IDEAL_RATIO)
+        &*PLAYER_IDEAL_RATIO
     } else {
-        LazyLock::force(&PLAYER_DEFAULT_RATIO)
+        &*PLAYER_DEFAULT_RATIO
     };
     let threshold = if was_ideal_ratio {
         PLAYER_IDEAL_RATIO_THRESHOLD
@@ -836,7 +775,7 @@ fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
         ]
     });
 
-    for template in LazyLock::force(&ESC_SETTINGS) {
+    for template in &*ESC_SETTINGS {
         if detect_template(mat, template, Point::default(), 0.85, None).is_ok() {
             return true;
         }
@@ -859,7 +798,7 @@ fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {
     let crop_y = size.height / 5;
     let crop_bbox = Rect::new(0, 0, size.width, crop_y);
     let boss_bar = mat.roi(crop_bbox).unwrap();
-    let template = LazyLock::force(&ELITE_BOSS_BAR);
+    let template = &*ELITE_BOSS_BAR;
     detect_template(&boss_bar, template, Point::default(), 0.9, None).is_ok()
 }
 
@@ -924,7 +863,7 @@ fn detect_rune_arrows(mat: &impl MatTraitConst) -> Result<[KeyKind; 4]> {
         .map(|i| unsafe { mat_out.at_row_unchecked::<f32>(i).unwrap() })
         .filter(|&pred| {
             // pred has shapes [bbox(4) + conf + class]
-            pred[4] >= 0.8
+            pred[4] >= 0.7
         })
         .collect::<Vec<_>>();
     if preds.len() != 4 {

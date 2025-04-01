@@ -50,7 +50,6 @@ pub struct Configuration {
     pub id: Option<i64>,
     pub name: String,
     pub ropelift_key: KeyBindingConfiguration,
-    #[serde(default)]
     pub teleport_key: Option<KeyBindingConfiguration>,
     pub up_jump_key: Option<KeyBindingConfiguration>,
     pub interact_key: KeyBindingConfiguration,
@@ -146,10 +145,9 @@ pub struct Minimap {
     pub name: String,
     pub width: i32,
     pub height: i32,
-    #[serde(default)]
     pub rotation_mode: RotationMode,
     #[serde(default)]
-    pub platforms: Vec<Platform>,
+    pub platforms: Vec<Platform>, // TODO: bound check to match with the one in minimap.rs
     #[serde(default)]
     pub rune_platforms_pathing: bool,
     #[serde(default)]
@@ -195,7 +193,6 @@ pub struct Position {
 pub struct ActionMove {
     pub position: Position,
     pub condition: ActionCondition,
-    #[serde(alias = "wait_after_move_ticks")]
     pub wait_after_move_millis: u64,
 }
 
@@ -208,9 +205,7 @@ pub struct ActionKey {
     pub condition: ActionCondition,
     pub direction: ActionKeyDirection,
     pub with: ActionKeyWith,
-    #[serde(alias = "wait_before_use_ticks")]
     pub wait_before_use_millis: u64,
-    #[serde(alias = "wait_after_use_ticks")]
     pub wait_after_use_millis: u64,
     pub queue_to_front: Option<bool>,
 }
