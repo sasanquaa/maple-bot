@@ -166,6 +166,9 @@ pub fn Minimap(
     });
 
     use_effect(move || {
+        copy_position.set(state().and_then(|state| state.position));
+    });
+    use_effect(move || {
         #[allow(clippy::single_match)]
         match (minimap(), preset()) {
             (Some(minimap), preset) => {
@@ -268,13 +271,7 @@ pub fn Minimap(
                 }
             }
             div { class: "flex flex-col text-gray-700 text-xs space-y-1 font-mono",
-                p {
-                    class: "text-center hover:bg-gray-100",
-                    onclick: move |_| {
-                        if let Some(pos) = state.peek().as_ref().and_then(|state| state.position) {
-                            copy_position.set(Some(pos));
-                        }
-                    },
+                p { class: "text-center",
                     {
                         state()
                             .and_then(|state| state.position)

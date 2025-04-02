@@ -1528,7 +1528,7 @@ fn update_up_jumping_context(
                     if key.is_some() && moving.timeout.total >= UP_JUMP_STOP_UP_KEY_THRESHOLD {
                         let _ = context.keys.send_up(KeyKind::Up);
                     }
-                    if state.has_auto_mob_action_only()
+                    if (state.has_auto_mob_action_only() && !moving.is_destination_intermediate())
                         || (x_distance >= ADJUSTING_MEDIUM_THRESHOLD
                             && moving.timeout.current >= PLAYER_MOVE_TIMEOUT)
                     {

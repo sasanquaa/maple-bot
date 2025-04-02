@@ -337,7 +337,7 @@ fn detect_minimap_rune(minimap: &impl ToInputArray) -> Result<Rect> {
         imgcodecs::imdecode(include_bytes!(env!("RUNE_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    detect_template(minimap, &*RUNE, Point::default(), 0.7, None)
+    detect_template(minimap, &*RUNE, Point::default(), 0.6, None)
 }
 
 fn detect_cash_shop(mat: &impl ToInputArray) -> bool {

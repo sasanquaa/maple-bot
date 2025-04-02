@@ -211,7 +211,7 @@ pub fn MillisInput(
     }
 }
 
-// FIXME: Please fix this god-tier UI for me. SOMEONE! ANYONE! PLEASE! HLEP MEM!
+// FIXME: :smiling-doge:
 #[component]
 pub fn PercentageInput(
     GenericInputProps {

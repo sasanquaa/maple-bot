@@ -8,7 +8,7 @@ use dioxus::prelude::*;
 use tokio::task::spawn_blocking;
 
 use crate::{
-    icons::XMark,
+    icons::XIcon,
     input::{MillisInput, PercentageInput},
     key::KeyInput,
     select::{EnumSelect, TextSelect},
@@ -484,7 +484,7 @@ fn KeyBindingConfigurationInput(props: KeyBindingConfigurationInputProps) -> Ele
                                 onclick: move |_| {
                                     on_key_input(None);
                                 },
-                                XMark { class: "w-2 h-2 text-red-400 fill-current" }
+                                XIcon { class: "w-2 h-2 text-red-400 fill-current" }
                             }
                         }
                     }

@@ -236,7 +236,7 @@ impl Rotator {
         if self.priority_actions_queue.is_empty() {
             return;
         }
-        if !can_add_priority_action(context) {
+        if !can_override_player_state(context) {
             return;
         }
         let id = self.priority_actions_queue.pop_front().unwrap();
@@ -436,7 +436,7 @@ fn buff_priority_action(buff_index: usize, key: KeyBinding) -> PriorityAction {
 }
 
 #[inline]
-fn can_add_priority_action(context: &Context) -> bool {
+fn can_override_player_state(context: &Context) -> bool {
     !matches!(
         context.player,
         Player::UseKey(_) | Player::Stalling(_, _) | Player::DoubleJumping(_, false, _)

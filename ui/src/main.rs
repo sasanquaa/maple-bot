@@ -7,9 +7,9 @@ use std::str::FromStr;
 use std::string::ToString;
 
 use backend::{
-    Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, AutoMobbing,
-    Bound, Configuration as ConfigurationData, IntoEnumIterator, Minimap as MinimapData,
-    ParseError, Platform, Position, RotationMode, start_update_loop, upsert_map,
+    Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
+    Configuration as ConfigurationData, IntoEnumIterator, Minimap as MinimapData, ParseError,
+    Position, start_update_loop, upsert_map,
 };
 use configuration::Configuration;
 use dioxus::{
@@ -20,12 +20,14 @@ use dioxus::{
     },
     prelude::*,
 };
-use icons::XMark;
+use icons::{PositionIcon, XIcon};
 use input::{
     Checkbox, KeyBindingInput, MillisInput, NumberInputI32, NumberInputU32, use_auto_numeric,
 };
 use minimap::Minimap;
+use platforms::Platforms;
 use rand::distr::{Alphanumeric, SampleString};
+use rotation::Rotations;
 use select::{EnumSelect, TextSelect};
 use tokio::task::spawn_blocking;
 use tracing_log::LogTracer;
@@ -35,6 +37,8 @@ mod icons;
 mod input;
 mod key;
 mod minimap;
+mod platforms;
+mod rotation;
 mod select;
 
 const DIV_CLASS: &str = "flex h-6 items-center space-x-2";
@@ -416,7 +420,7 @@ fn ActionItem(
                         e.stop_propagation();
                         on_remove(());
                     },
-                    XMark { class: "w-[10px] h-[10px] text-red-400 fill-current" }
+                    XIcon { class: "w-[10px] h-[10px] text-red-400 fill-current" }
                 }
             }
         }
@@ -427,7 +431,7 @@ fn ActionItem(
 fn ActionInput(
     minimap: Signal<Option<MinimapData>>,
     preset: Signal<Option<String>>,
-    copy_position: Signal<Option<(i32, i32)>>,
+    copy_position: ReadOnlySignal<Option<(i32, i32)>>,
 ) -> Element {
     const TAB_PRESET: &str = "Preset";
     const TAB_ROTATION_MODE: &str = "Rotation Mode";
@@ -499,32 +503,6 @@ fn ActionInput(
     use_effect(move || {
         if preset().is_none() {
             editing_action.set(None);
-            copy_position.set(None);
-        }
-    });
-    use_effect(move || {
-        if let Some((x, y)) = copy_position() {
-            let mut action = *value_action.peek();
-            match &mut action {
-                Action::Move(action_move) => {
-                    action_move.position = Position {
-                        x,
-                        y,
-                        ..action_move.position
-                    }
-                }
-                Action::Key(action_key) => {
-                    action_key.position = action_key.position.map_or(
-                        Some(Position {
-                            x,
-                            y,
-                            ..Position::default()
-                        }),
-                        |pos| Some(Position { x, y, ..pos }),
-                    );
-                }
-            }
-            on_edit(action);
         }
     });
 
@@ -588,6 +566,7 @@ fn ActionInput(
                                     match value_action() {
                                         Action::Move(_) => rsx! {
                                             ActionMoveInput {
+                                                copy_position,
                                                 on_input: move |action| {
                                                     on_edit(action);
                                                 },
@@ -668,7 +647,7 @@ fn ActionInput(
                     }
                 },
                 TAB_ROTATION_MODE => rsx! {
-                    RotationModeInput {
+                    Rotations {
                         disabled: minimap().is_none(),
                         on_input: move |value| {
                             on_rotation_mode(value);
@@ -677,11 +656,12 @@ fn ActionInput(
                     }
                 },
                 TAB_PLATFORMS => rsx! {
-                    PlatformsInput {
+                    Platforms {
                         minimap,
                         on_save: move |minimap| {
                             save_minimap(minimap);
                         },
+                        copy_position
                     }
                 },
                 _ => unreachable!(),
@@ -698,42 +678,89 @@ struct InputConfigProps<T: 'static + Clone + PartialEq> {
 }
 
 #[component]
-fn PositionInput(props: InputConfigProps<Position>) -> Element {
+fn PositionNumberInput(
+    label: String,
+    on_icon_click: EventHandler,
+    on_input: EventHandler<i32>,
+    disabled: bool,
+    value: i32,
+) -> Element {
+    let mut is_hovering = use_signal(|| false);
+
+    rsx! {
+        div {
+            class: "relative",
+            onmouseover: move |_| {
+                is_hovering.set(true);
+            },
+            onmouseout: move |_| {
+                is_hovering.set(false);
+            },
+            NumberInputI32 {
+                label,
+                div_class: DIV_CLASS,
+                label_class: LABEL_CLASS,
+                input_class: "{INPUT_CLASS} p-1",
+                disabled,
+                on_input: move |value| {
+                    on_input(value);
+                },
+                value,
+            }
+            button {
+                class: {
+                    let hidden = if is_hovering() && !disabled { "visible" } else { "invisible" };
+                    let hover = if disabled { "" } else { "hover:visible" };
+                    format!("absolute right-1 top-0 flex items-center h-full w-4 {hover} {hidden}")
+                },
+                disabled,
+                onclick: move |e| {
+                    e.stop_propagation();
+                    on_icon_click(());
+                },
+                PositionIcon { class: "w-3 h-3 text-blue-500 fill-current" }
+            }
+        }
+    }
+}
+
+#[component]
+fn PositionInput(
+    copy_position: ReadOnlySignal<Option<(i32, i32)>>,
+    on_input: EventHandler<Position>,
+    disabled: bool,
+    value: Position,
+) -> Element {
     let Position {
         x,
         y,
         allow_adjusting,
-    } = props.value;
-    let submit = use_callback(move |position: Position| (props.on_input)(position));
-    let set_x = use_callback(move |x| submit(Position { x, ..props.value }));
-    let set_y = use_callback(move |y| submit(Position { y, ..props.value }));
-    let set_allow_adjusting = use_callback(move |allow_adjusting| {
-        submit(Position {
-            allow_adjusting,
-            ..props.value
-        })
-    });
+    } = value;
 
     rsx! {
-        NumberInputI32 {
+        PositionNumberInput {
             label: "X",
-            div_class: DIV_CLASS,
-            label_class: LABEL_CLASS,
-            input_class: "{INPUT_CLASS} p-1",
-            disabled: props.disabled,
-            on_input: move |value| {
-                set_x(value);
+            disabled,
+            on_icon_click: move |_| {
+                if let Some((x, _)) = *copy_position.peek() {
+                    on_input(Position { x, ..value });
+                }
+            },
+            on_input: move |x| {
+                on_input(Position { x, ..value });
             },
             value: x,
         }
-        NumberInputI32 {
+        PositionNumberInput {
             label: "Y",
-            div_class: DIV_CLASS,
-            label_class: LABEL_CLASS,
-            input_class: "{INPUT_CLASS} p-1",
-            disabled: props.disabled,
-            on_input: move |value| {
-                set_y(value);
+            disabled,
+            on_icon_click: move |_| {
+                if let Some((_, y)) = *copy_position.peek() {
+                    on_input(Position { y, ..value });
+                }
+            },
+            on_input: move |y| {
+                on_input(Position { y, ..value });
             },
             value: y,
         }
@@ -742,9 +769,12 @@ fn PositionInput(props: InputConfigProps<Position>) -> Element {
             div_class: DIV_CLASS,
             label_class: LABEL_CLASS,
             input_class: "w-22 flex items-center",
-            disabled: props.disabled,
-            on_input: move |checked| {
-                set_allow_adjusting(checked);
+            disabled,
+            on_input: move |allow_adjusting| {
+                on_input(Position {
+                    allow_adjusting,
+                    ..value
+                });
             },
             value: allow_adjusting,
         }
@@ -752,8 +782,13 @@ fn PositionInput(props: InputConfigProps<Position>) -> Element {
 }
 
 #[component]
-fn ActionMoveInput(props: InputConfigProps<Action>) -> Element {
-    let Action::Move(value) = props.value else {
+fn ActionMoveInput(
+    copy_position: ReadOnlySignal<Option<(i32, i32)>>,
+    on_input: EventHandler<Action>,
+    disabled: bool,
+    value: Action,
+) -> Element {
+    let Action::Move(value) = value else {
         unreachable!()
     };
     let ActionMove {
@@ -761,8 +796,7 @@ fn ActionMoveInput(props: InputConfigProps<Action>) -> Element {
         condition,
         wait_after_move_millis,
     } = value;
-    let submit =
-        use_callback(move |action_move: ActionMove| (props.on_input)(Action::Move(action_move)));
+    let submit = use_callback(move |action_move: ActionMove| on_input(Action::Move(action_move)));
     let set_position = use_callback(move |position| submit(ActionMove { position, ..value }));
     let set_condition = use_callback(move |condition| submit(ActionMove { condition, ..value }));
     let set_wait_after_move_millis = use_callback(move |wait_after_move_millis| {
@@ -775,17 +809,18 @@ fn ActionMoveInput(props: InputConfigProps<Action>) -> Element {
     rsx! {
         div { class: "flex flex-col space-y-3",
             PositionInput {
+                copy_position,
                 on_input: move |position| {
                     set_position(position);
                 },
-                disabled: props.disabled,
+                disabled,
                 value: position,
             }
             ActionConditionInput {
                 on_input: move |condition| {
                     set_condition(condition);
                 },
-                disabled: props.disabled,
+                disabled,
                 value: condition,
             }
             MillisInput {
@@ -793,7 +828,7 @@ fn ActionMoveInput(props: InputConfigProps<Action>) -> Element {
                 label_class: LABEL_CLASS,
                 div_class: DIV_CLASS,
                 input_class: "{INPUT_CLASS} p-1",
-                disabled: props.disabled,
+                disabled,
                 on_input: move |value| {
                     set_wait_after_move_millis(value);
                 },
@@ -986,357 +1021,6 @@ fn ActionConditionInput(
                     on_input(ActionCondition::EveryMillis(millis));
                 },
                 value: millis,
-            }
-        }
-    }
-}
-
-#[component]
-fn AutoMobbingInput(
-    disabled: bool,
-    on_input: EventHandler<AutoMobbing>,
-    value: AutoMobbing,
-) -> Element {
-    const DIV_CLASS: &str = "flex py-2 border-b border-gray-100 space-x-2";
-    const LABEL_CLASS: &str =
-        "flex-1 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400";
-    const INPUT_CLASS: &str = "w-28 px-1.5 h-6 border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
-
-    let AutoMobbing {
-        bound,
-        key,
-        key_count,
-        key_wait_before_millis,
-        key_wait_after_millis,
-    } = value;
-
-    rsx! {
-        KeyBindingInput {
-            label: "Key",
-            label_class: LABEL_CLASS,
-            div_class: DIV_CLASS,
-            input_class: INPUT_CLASS,
-            disabled,
-            on_input: move |key| {
-                on_input(AutoMobbing { key, ..value });
-            },
-            value: key,
-        }
-        NumberInputU32 {
-            label: "Key Count",
-            div_class: DIV_CLASS,
-            label_class: LABEL_CLASS,
-            input_class: INPUT_CLASS,
-            disabled,
-            on_input: move |key_count| {
-                on_input(AutoMobbing { key_count, ..value });
-            },
-            value: key_count,
-        }
-        MillisInput {
-            label: "Key Wait Before",
-            div_class: DIV_CLASS,
-            label_class: LABEL_CLASS,
-            input_class: INPUT_CLASS,
-            disabled,
-            on_input: move |key_wait_before_millis| {
-                on_input(AutoMobbing {
-                    key_wait_before_millis,
-                    ..value
-                });
-            },
-            value: key_wait_before_millis,
-        }
-        MillisInput {
-            label: "Key Wait After",
-            div_class: DIV_CLASS,
-            label_class: LABEL_CLASS,
-            input_class: INPUT_CLASS,
-            disabled,
-            on_input: move |key_wait_after_millis| {
-                on_input(AutoMobbing {
-                    key_wait_after_millis,
-                    ..value
-                });
-            },
-            value: key_wait_after_millis,
-        }
-        NumberInputI32 {
-            label: "X",
-            div_class: DIV_CLASS,
-            label_class: LABEL_CLASS,
-            input_class: INPUT_CLASS,
-            disabled,
-            on_input: move |x| {
-                on_input(AutoMobbing {
-                    bound: Bound { x, ..bound },
-                    ..value
-                });
-            },
-            value: bound.x,
-        }
-        NumberInputI32 {
-            label: "Y",
-            div_class: DIV_CLASS,
-            label_class: LABEL_CLASS,
-            input_class: INPUT_CLASS,
-            disabled,
-            on_input: move |y| {
-                on_input(AutoMobbing {
-                    bound: Bound { y, ..bound },
-                    ..value
-                });
-            },
-            value: bound.y,
-        }
-        NumberInputI32 {
-            label: "Width",
-            div_class: DIV_CLASS,
-            label_class: LABEL_CLASS,
-            input_class: INPUT_CLASS,
-            disabled,
-            on_input: move |width| {
-                on_input(AutoMobbing {
-                    bound: Bound { width, ..bound },
-                    ..value
-                });
-            },
-            value: bound.width,
-        }
-        NumberInputI32 {
-            label: "Height",
-            div_class: DIV_CLASS,
-            label_class: LABEL_CLASS,
-            input_class: INPUT_CLASS,
-            disabled,
-            on_input: move |height| {
-                on_input(AutoMobbing {
-                    bound: Bound { height, ..bound },
-                    ..value
-                });
-            },
-            value: bound.height,
-        }
-    }
-}
-
-#[component]
-fn PlatformsInput(
-    minimap: Signal<Option<MinimapData>>,
-    on_save: EventHandler<MinimapData>,
-) -> Element {
-    let mut editing = use_signal(|| Platform::default());
-
-    rsx! {
-        div { class: "flex flex-col space-y-2",
-            Checkbox {
-                label: "Rune Pathing Enabled",
-                label_class: "w-64 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400",
-                div_class: DIV_CLASS,
-                input_class: "flex items-center",
-                disabled: minimap().is_none(),
-                on_input: move |platforms_pathing| {
-                    if let Some(minimap) = minimap.write().deref_mut() {
-                        minimap.rune_platforms_pathing = platforms_pathing;
-                        on_save(minimap.clone());
-                    }
-                },
-                value: minimap().map(|data| data.rune_platforms_pathing).unwrap_or_default(),
-            }
-            Checkbox {
-                label: "Rune Pathing Up Jump Only",
-                label_class: "w-64 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400",
-                div_class: DIV_CLASS,
-                input_class: "flex items-center",
-                disabled: minimap().is_none(),
-                on_input: move |up_jump_only| {
-                    if let Some(minimap) = minimap.write().deref_mut() {
-                        minimap.rune_platforms_pathing_up_jump_only = up_jump_only;
-                        on_save(minimap.clone());
-                    }
-                },
-                value: minimap().map(|data| data.rune_platforms_pathing_up_jump_only).unwrap_or_default(),
-            }
-            Checkbox {
-                label: "Auto Mobbing Pathing Enabled",
-                label_class: "w-64 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400",
-                div_class: DIV_CLASS,
-                input_class: "flex items-center",
-                disabled: minimap().is_none(),
-                on_input: move |platforms_pathing| {
-                    if let Some(minimap) = minimap.write().deref_mut() {
-                        minimap.auto_mob_platforms_pathing = platforms_pathing;
-                        on_save(minimap.clone());
-                    }
-                },
-                value: minimap().map(|data| data.auto_mob_platforms_pathing).unwrap_or_default(),
-            }
-            Checkbox {
-                label: "Auto Mobbing Pathing Up Jump Only",
-                label_class: "w-64 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400",
-                div_class: DIV_CLASS,
-                input_class: "flex items-center",
-                disabled: minimap().is_none(),
-                on_input: move |up_jump_only| {
-                    if let Some(minimap) = minimap.write().deref_mut() {
-                        minimap.auto_mob_platforms_pathing_up_jump_only = up_jump_only;
-                        on_save(minimap.clone());
-                    }
-                },
-                value: minimap()
-                    .map(|data| data.auto_mob_platforms_pathing_up_jump_only)
-                    .unwrap_or_default(),
-            }
-            div { class: "flex items-center justify-between text-xs text-gray-700 border-b border-gray-300 mt-3 mb-2 data-[disabled]:text-gray-400",
-                p { class: "w-26", "X Start" }
-                p { class: "w-26", "X End" }
-                p { class: "w-26", "Y" }
-                div { class: "w-18" }
-            }
-            if let Some(MinimapData { platforms, .. }) = minimap() {
-                for (i , platform) in platforms.into_iter().enumerate() {
-                    PlatformInput {
-                        button_text: "Delete",
-                        button_delete: true,
-                        disabled: minimap().is_none(),
-                        on_click: move |_| {
-                            if let Some(minimap) = minimap.write().deref_mut() {
-                                minimap.platforms.remove(i);
-                                on_save(minimap.clone());
-                            }
-                        },
-                        on_input: move |value| {
-                            if let Some(minimap) = minimap.write().deref_mut() {
-                                *minimap.platforms.get_mut(i).unwrap() = value;
-                                on_save(minimap.clone());
-                            }
-                        },
-                        value: platform,
-                    }
-                }
-            }
-            PlatformInput {
-                button_text: "Add",
-                button_delete: false,
-                disabled: minimap().is_none(),
-                on_click: move |_| {
-                    if let Some(minimap) = minimap.write().deref_mut() {
-                        minimap.platforms.push(*editing.peek());
-                        on_save(minimap.clone());
-                    }
-                },
-                on_input: move |value| {
-                    editing.set(value);
-                },
-                value: editing(),
-            }
-        }
-    }
-}
-
-#[component]
-fn PlatformInput(
-    button_text: String,
-    button_delete: bool,
-    disabled: bool,
-    on_click: EventHandler,
-    on_input: EventHandler<Platform>,
-    value: Platform,
-) -> Element {
-    const INPUT_CLASS: &str = "w-26 h-6 px-1.5 border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
-
-    let Platform { x_start, x_end, y } = value;
-
-    rsx! {
-        div { class: "flex items-center justify-between text-xs text-gray-700",
-            NumberInputI32 {
-                label: "",
-                label_class: "hidden",
-                input_class: INPUT_CLASS,
-                disabled,
-                on_input: move |x_start| {
-                    on_input(Platform { x_start, ..value });
-                },
-                value: x_start,
-            }
-            NumberInputI32 {
-                label: "",
-                label_class: "hidden",
-                input_class: INPUT_CLASS,
-                disabled,
-                on_input: move |x_end| {
-                    on_input(Platform { x_end, ..value });
-                },
-                value: x_end,
-            }
-            NumberInputI32 {
-                label: "",
-                label_class: "hidden",
-                input_class: INPUT_CLASS,
-                disabled,
-                on_input: move |y| {
-                    on_input(Platform { y, ..value });
-                },
-                value: y,
-            }
-            button {
-                class: {
-                    let class = if button_delete { "button-danger" } else { "button-primary" };
-                    format!("{class} h-6 w-18")
-                },
-                disabled,
-                onclick: move |_| {
-                    on_click(());
-                },
-                {button_text}
-            }
-        }
-    }
-}
-
-#[component]
-fn RotationModeInput(
-    disabled: bool,
-    on_input: EventHandler<RotationMode>,
-    value: RotationMode,
-) -> Element {
-    const DIV_CLASS: &str = "flex py-2 border-b border-gray-100 space-x-2";
-    const LABEL_CLASS: &str =
-        "flex-1 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400";
-    const INPUT_CLASS: &str = "w-28 px-1.5 h-6 border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
-
-    let auto_mobbing = if let RotationMode::AutoMobbing(mobbing) = value {
-        mobbing
-    } else {
-        AutoMobbing::default()
-    };
-
-    rsx! {
-        div { class: "flex flex-col space-y-2",
-            ul { class: "list-disc text-xs text-gray-700 pl-4",
-                li { "Other rotation modes apply only to Any condition action" }
-                li { "Action in preset with Any condition is ignored when auto mobbing enabled" }
-                li { "Mob detected outside of bound is ignored" }
-                li { "Auto mobbing X,Y origin is top-left of minimap" }
-            }
-            div { class: "h-2 border-b border-gray-300 mb-2" }
-            EnumSelect {
-                label: "Rotation Mode",
-                div_class: DIV_CLASS,
-                label_class: LABEL_CLASS,
-                select_class: INPUT_CLASS,
-                disabled,
-                on_select: move |selected: RotationMode| {
-                    on_input(selected);
-                },
-                selected: value,
-            }
-            AutoMobbingInput {
-                disabled: disabled || !matches!(value, RotationMode::AutoMobbing(_)),
-                on_input: move |mobbing| {
-                    on_input(RotationMode::AutoMobbing(mobbing));
-                },
-                value: auto_mobbing,
             }
         }
     }
