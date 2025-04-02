@@ -200,11 +200,6 @@ impl PlayerState {
     }
 
     #[inline]
-    pub fn has_rune_action(&self) -> bool {
-        matches!(self.priority_action, Some(PlayerAction::SolveRune))
-    }
-
-    #[inline]
     pub fn set_priority_action(&mut self, id: u32, action: PlayerAction) {
         let _ = self.replace_priority_action(id, action);
     }
@@ -218,6 +213,11 @@ impl PlayerState {
             .replace(action)
             .is_some()
             .then_some(prev_id)
+    }
+
+    #[inline]
+    pub fn has_rune_action(&self) -> bool {
+        matches!(self.priority_action, Some(PlayerAction::SolveRune))
     }
 
     #[inline]
@@ -248,6 +248,8 @@ impl PlayerState {
     fn falling_threshold(&self, is_intermediate: bool) -> i32 {
         if self.has_auto_mob_action_only() && !is_intermediate {
             AUTO_MOB_REACHABLE_Y_THRESHOLD
+        } else if is_intermediate {
+            PLAYER_JUMP_THRESHOLD
         } else {
             PLAYER_VERTICAL_MOVE_THRESHOLD
         }

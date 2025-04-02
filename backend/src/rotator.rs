@@ -236,7 +236,7 @@ impl Rotator {
         if self.priority_actions_queue.is_empty() {
             return;
         }
-        if is_player_stalling_or_use_key(context) {
+        if !can_add_priority_action(context) {
             return;
         }
         let id = self.priority_actions_queue.pop_front().unwrap();
@@ -251,7 +251,7 @@ impl Rotator {
                     .map(|action| action.queue_to_front)
             })
             .unwrap_or_default();
-        if action.queue_to_front && !has_queue_to_front && !is_player_stalling_or_use_key(context) {
+        if action.queue_to_front && !has_queue_to_front {
             if let Some(id) = player.replace_priority_action(id, action.action) {
                 self.priority_actions_queue.push_front(id);
             }
@@ -436,8 +436,11 @@ fn buff_priority_action(buff_index: usize, key: KeyBinding) -> PriorityAction {
 }
 
 #[inline]
-fn is_player_stalling_or_use_key(context: &Context) -> bool {
-    matches!(context.player, Player::UseKey(_) | Player::Stalling(_, _))
+fn can_add_priority_action(context: &Context) -> bool {
+    !matches!(
+        context.player,
+        Player::UseKey(_) | Player::Stalling(_, _) | Player::DoubleJumping(_, false, _)
+    )
 }
 
 #[inline]

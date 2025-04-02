@@ -81,24 +81,6 @@ pub fn find_points_with(
     jump_threshold: i32,
     vertical_threshold: i32,
 ) -> Option<Vec<Point>> {
-    find_points(
-        platforms,
-        from,
-        to,
-        double_jump_threshold,
-        jump_threshold,
-        vertical_threshold,
-    )
-}
-
-fn find_points(
-    platforms: &[PlatformWithNeighbors],
-    from: Point,
-    to: Point,
-    double_jump_threshold: i32,
-    jump_threshold: i32,
-    vertical_threshold: i32,
-) -> Option<Vec<Point>> {
     let platforms = platforms
         .into_iter()
         .map(|platform| (platform.inner, *platform))
@@ -119,7 +101,14 @@ fn find_points(
         let current = visiting.pop().unwrap().0;
         let current_score = score.get(&current.platform).copied().unwrap_or(u32::MAX);
         if current.platform == to_platform {
-            return points_from(&came_from, to_platform, to, double_jump_threshold);
+            return points_from(
+                &came_from,
+                from,
+                from_platform,
+                to_platform,
+                to,
+                double_jump_threshold,
+            );
         }
         let neighbors = platforms[&current.platform].neighbors.clone();
         for neighbor in neighbors {
@@ -150,40 +139,77 @@ fn find_points(
 
 fn points_from(
     came_from: &HashMap<Platform, Platform>,
+    from: Point,
+    from_platform: Platform,
     to_platform: Platform,
     to: Point,
     double_jump_threshold: i32,
 ) -> Option<Vec<Point>> {
-    const DOUBLE_JUMP_THRESHOLD_OFFSET: i32 = 10;
+    // a margin of error to ensure double jump is launched
+    const DOUBLE_JUMP_THRESHOLD_OFFSET: i32 = 7;
 
+    // TODO: too complex maybe?
     let mut current = to_platform;
-    let mut points = vec![Point::new(to.x, current.y)];
+    let mut went_to = HashMap::new();
     while came_from.contains_key(&current) {
         let next = came_from[&current];
+        went_to.insert(next, current);
+        current = next;
+    }
+
+    current = from_platform;
+    let mut points = vec![Point::new(from.x, current.y)];
+    let mut last_point = points.last().copied().unwrap();
+    while went_to.contains_key(&current) {
+        let next = went_to[&current];
         if ranges_overlap(next.xs, current.xs) {
             let start_max = max(next.xs.start, current.xs.start);
             let end_min = min(next.xs.end, current.xs.end);
-            let x = (start_max + end_min - 1) / 2;
-            points.push(Point::new(x, current.y));
-            points.push(Point::new(x, next.y));
+            if (start_max..end_min).contains(&last_point.x) {
+                points.push(Point::new(last_point.x, next.y));
+            } else {
+                let x = rand::random_range(start_max..end_min);
+                points.push(Point::new(x, current.y));
+                points.push(Point::new(x, next.y));
+            }
         } else {
             let start_max = max(next.xs.start, current.xs.start);
             let end_min = min(next.xs.end, current.xs.end);
             let length = max(double_jump_threshold - (start_max - end_min), 0)
                 + DOUBLE_JUMP_THRESHOLD_OFFSET;
-            // TODO: bound check pls
             // TODO: "soft" double jump
             if start_max == current.xs.start {
-                points.push(Point::new(start_max + length / 2, current.y));
-                points.push(Point::new(end_min - length / 2, next.y));
+                // right to left
+                let mut start_max_offset = last_point.x;
+                while start_max_offset - length > start_max {
+                    start_max_offset -= length;
+                    points.push(Point::new(start_max_offset, current.y));
+                }
+                let end_min_offset = length - (start_max_offset - start_max);
+                let end_min_offset = max(end_min - 1 - end_min_offset, next.xs.start);
+                debug_assert!(start_max_offset >= start_max && start_max_offset < current.xs.end);
+                debug_assert!(end_min_offset < end_min && end_min_offset >= next.xs.start);
+                points.push(Point::new(start_max_offset, current.y));
+                points.push(Point::new(end_min_offset, next.y));
             } else {
-                points.push(Point::new(end_min - length / 2, current.y));
-                points.push(Point::new(start_max + length / 2, next.y));
+                // left to right
+                let mut end_min_offset = last_point.x;
+                while end_min_offset + length < end_min {
+                    end_min_offset += length;
+                    points.push(Point::new(end_min_offset, current.y));
+                }
+                let start_max_offset = length - (end_min - 1 - end_min_offset);
+                let start_max_offset = min(start_max + start_max_offset, next.xs.end - 1);
+                debug_assert!(start_max_offset >= start_max && start_max_offset < next.xs.end);
+                debug_assert!(end_min_offset < end_min && end_min_offset >= current.xs.start);
+                points.push(Point::new(end_min_offset, current.y));
+                points.push(Point::new(start_max_offset, next.y));
             }
         }
+        last_point = points.last().copied().unwrap();
         current = next;
     }
-    points.reverse();
+    points.push(Point::new(to.x, to_platform.y));
     return Some(points);
 }
 
@@ -204,18 +230,10 @@ fn find_platform(
 #[inline]
 fn weight_score(current: Platform, neighbor: Platform, vertical_threshold: i32) -> u32 {
     let y_distance = (current.y - neighbor.y).abs();
-    if !ranges_overlap(current.xs, neighbor.xs) {
-        (y_distance
-            + min(
-                (neighbor.xs.start - current.xs.end).abs(),
-                (current.xs.start - neighbor.xs.end).abs(),
-            )) as u32
+    if y_distance < vertical_threshold {
+        y_distance as u32
     } else {
-        if y_distance < vertical_threshold {
-            y_distance as u32
-        } else {
-            u32::MAX
-        }
+        u32::MAX
     }
 }
 
@@ -229,15 +247,16 @@ fn platforms_reachable(
 ) -> bool {
     let diff = from.y - to.y;
     if !ranges_overlap(from.xs, to.xs) {
-        if diff >= 0 || diff.abs() < jump_threshold {
-            return min(
-                (to.xs.start - from.xs.end).abs(),
-                (from.xs.start - to.xs.end).abs(),
-            ) < double_jump_threshold;
+        if diff >= 0 || diff.abs() <= jump_threshold {
+            return max(from.xs.start, to.xs.start) - min(from.xs.end, to.xs.end)
+                <= double_jump_threshold;
         }
         return false;
     }
-    diff >= 0 || diff.abs() < grappling_threshold
+    if from.xs.is_empty() || to.xs.is_empty() {
+        return false;
+    }
+    diff >= 0 || diff.abs() <= grappling_threshold
 }
 
 #[inline]
@@ -258,6 +277,7 @@ fn ranges_overlap<R: Into<Range<i32>>>(first: R, second: R) -> bool {
     inner(first.into(), second.into())
 }
 
+// TODO: more unit tests
 #[cfg(test)]
 mod tests {
     use crate::pathing::ranges_overlap;
