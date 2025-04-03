@@ -187,7 +187,7 @@ fn update_idle_context(
         Update::Pending => has_elite_boss,
     };
     let portals_detector = detector.clone();
-    let portals_update = update_task_repeatable(10000, &mut state.portals_task, move || {
+    let portals_update = update_task_repeatable(5000, &mut state.portals_task, move || {
         portals_detector.detect_minimap_portals(bbox)
     });
     let portals = match portals_update {

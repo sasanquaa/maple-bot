@@ -7,6 +7,115 @@ use dioxus::{document::EvalError, prelude::*};
 use serde::Serialize;
 use tokio::task::spawn_blocking;
 
+const MINIMAP_JS: &str = r#"
+    const canvas = document.getElementById("canvas-minimap");
+    const canvasCtx = canvas.getContext("2d");
+    let lastWidth = canvas.width;
+    let lastHeight = canvas.height;
+
+    while (true) {
+        const [buffer, width, height, destinations] = await dioxus.recv();
+        const data = new ImageData(new Uint8ClampedArray(buffer), width, height);
+        const bitmap = await createImageBitmap(data);
+        canvasCtx.beginPath()
+        canvasCtx.fillStyle = "rgb(128, 255, 204)";
+        canvasCtx.strokeStyle = "rgb(128, 255, 204)";
+        canvasCtx.drawImage(bitmap, 0, 0);
+        if (lastWidth != width || lastHeight != height) {
+            lastWidth = width;
+            lastHeight = height;
+            canvas.width = width;
+            canvas.height = height;
+        }
+        // TODO: ??????????????????????????
+        let prevX = 0;
+        let prevY = 0;
+        for (let i = 0; i < destinations.length; i++) {
+            let [x, y] = destinations[i];
+            x = (x / width) * canvas.width;
+            y = ((height - y) / height) * canvas.height;
+            canvasCtx.fillRect(x - 2, y - 2, 2, 2);
+            if (i > 0) {
+                canvasCtx.moveTo(prevX, prevY);
+                canvasCtx.lineTo(x, y);
+                canvasCtx.stroke();
+            }
+            prevX = x;
+            prevY = y;
+        }
+    }
+"#;
+const MINIMAP_ACTIONS_JS: &str = r#"
+    const canvas = document.getElementById("canvas-minimap-actions");
+    const canvasCtx = canvas.getContext("2d");
+    const [width, height, actions, autoMobEnabled, autoMobBound, platforms] = await dioxus.recv();
+    canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+    const anyActions = actions.filter((action) => action.condition === "Any");
+    const erdaActions = actions.filter((action) => action.condition === "ErdaShowerOffCooldown");
+    const millisActions = actions.filter((action) => action.condition === "EveryMillis");
+
+    canvasCtx.fillStyle = "rgb(255, 153, 128)";
+    canvasCtx.strokeStyle = "rgb(255, 153, 128)";
+    drawActions(canvas, canvasCtx, anyActions, true);
+    if (autoMobEnabled) {
+        const x = (autoMobBound.x / width) * canvas.width;
+        const y = (autoMobBound.y / height) * canvas.height;
+        const w = (autoMobBound.width / width) * canvas.width;
+        const h = (autoMobBound.height / height) * canvas.height;
+        canvasCtx.beginPath();
+        canvasCtx.rect(x, y, w, h);
+        canvasCtx.stroke();
+    }
+    for (const platform of platforms) {
+        const xStart = (platform.x_start / width) * canvas.width;
+        const xEnd = (platform.x_end / width) * canvas.width;
+        const y = ((height - platform.y) / height) * canvas.height;
+        canvasCtx.beginPath();
+        canvasCtx.moveTo(xStart, y);
+        canvasCtx.lineTo(xEnd, y);
+        canvasCtx.stroke();
+    }
+
+    canvasCtx.fillStyle = "rgb(179, 198, 255)";
+    canvasCtx.strokeStyle = "rgb(179, 198, 255)";
+    drawActions(canvas, canvasCtx, erdaActions, true);
+
+    canvasCtx.fillStyle = "rgb(128, 255, 204)";
+    canvasCtx.strokeStyle = "rgb(128, 255, 204)";
+    drawActions(canvas, canvasCtx, millisActions, false);
+
+    function drawActions(canvas, ctx, actions, hasArc) {
+        const rectSize = 4;
+        const rectHalf = rectSize / 2;
+        let lastAction = null;
+        for (const action of actions) {
+            const x = (action.x / width) * canvas.width;
+            const y = ((height - action.y) / height) * canvas.height;
+            ctx.fillRect(x, y, rectSize, rectSize);
+            if (!hasArc) {
+                continue;
+            }
+            if (lastAction !== null) {
+                let [fromX, fromY] = lastAction;
+                drawArc(ctx, fromX + rectHalf, fromY + rectHalf, x + rectHalf, y + rectHalf);
+            }
+            lastAction = [x, y];
+        }
+    }
+    function drawArc(ctx, fromX, fromY, toX, toY) {
+        const cx = (fromX + toX) / 2;
+        const cy = (fromY + toY) / 2;
+        const dx = cx - fromX;
+        const dy = cy - fromY;
+        const radius = Math.sqrt(dx * dx + dy * dy);
+        const startAngle = Math.atan2(fromY - cy, fromX - cx);
+        const endAngle = Math.atan2(toY - cy, toX - cx);
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, startAngle, endAngle, false);
+        ctx.stroke();
+    }
+"#;
+
 #[derive(Clone, PartialEq, Serialize)]
 struct ActionView {
     x: i32,
@@ -22,114 +131,6 @@ pub fn Minimap(
     copy_position: Signal<Option<(i32, i32)>>,
     config: ReadOnlySignal<Option<Configuration>, SyncStorage>,
 ) -> Element {
-    const MINIMAP_JS: &str = r#"
-        const canvas = document.getElementById("canvas-minimap");
-        const canvasCtx = canvas.getContext("2d");
-        let lastWidth = canvas.width;
-        let lastHeight = canvas.height;
-
-        while (true) {
-            const [buffer, width, height, destinations] = await dioxus.recv();
-            const data = new ImageData(new Uint8ClampedArray(buffer), width, height);
-            const bitmap = await createImageBitmap(data);
-            canvasCtx.beginPath()
-            canvasCtx.fillStyle = "rgb(128, 255, 204)";
-            canvasCtx.strokeStyle = "rgb(128, 255, 204)";
-            canvasCtx.drawImage(bitmap, 0, 0);
-            if (lastWidth != width || lastHeight != height) {
-                lastWidth = width;
-                lastHeight = height;
-                canvas.width = width;
-                canvas.height = height;
-            }
-            // TODO: ??????????????????????????
-            let prevX = 0;
-            let prevY = 0;
-            for (let i = 0; i < destinations.length; i++) {
-                let [x, y] = destinations[i];
-                x = (x / width) * canvas.width;
-                y = ((height - y) / height) * canvas.height;
-                canvasCtx.fillRect(x - 2, y - 2, 2, 2);
-                if (i > 0) {
-                    canvasCtx.moveTo(prevX, prevY);
-                    canvasCtx.lineTo(x, y);
-                    canvasCtx.stroke();
-                }
-                prevX = x;
-                prevY = y;
-            }
-        }
-    "#;
-    const MINIMAP_ACTIONS_JS: &str = r#"
-        const canvas = document.getElementById("canvas-minimap-actions");
-        const canvasCtx = canvas.getContext("2d");
-        const [width, height, actions, autoMobEnabled, autoMobBound, platforms] = await dioxus.recv();
-        canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
-        const anyActions = actions.filter((action) => action.condition === "Any");
-        const erdaActions = actions.filter((action) => action.condition === "ErdaShowerOffCooldown");
-        const millisActions = actions.filter((action) => action.condition === "EveryMillis");
-
-        canvasCtx.fillStyle = "rgb(255, 153, 128)";
-        canvasCtx.strokeStyle = "rgb(255, 153, 128)";
-        drawActions(canvas, canvasCtx, anyActions, true);
-        if (autoMobEnabled) {
-            const x = (autoMobBound.x / width) * canvas.width;
-            const y = (autoMobBound.y / height) * canvas.height;
-            const w = (autoMobBound.width / width) * canvas.width;
-            const h = (autoMobBound.height / height) * canvas.height;
-            canvasCtx.beginPath();
-            canvasCtx.rect(x, y, w, h);
-            canvasCtx.stroke();
-        }
-        for (const platform of platforms) {
-            const xStart = (platform.x_start / width) * canvas.width;
-            const xEnd = (platform.x_end / width) * canvas.width;
-            const y = ((height - platform.y) / height) * canvas.height;
-            canvasCtx.beginPath();
-            canvasCtx.moveTo(xStart, y);
-            canvasCtx.lineTo(xEnd, y);
-            canvasCtx.stroke();
-        }
-
-        canvasCtx.fillStyle = "rgb(179, 198, 255)";
-        canvasCtx.strokeStyle = "rgb(179, 198, 255)";
-        drawActions(canvas, canvasCtx, erdaActions, true);
-
-        canvasCtx.fillStyle = "rgb(128, 255, 204)";
-        canvasCtx.strokeStyle = "rgb(128, 255, 204)";
-        drawActions(canvas, canvasCtx, millisActions, false);
-
-        function drawActions(canvas, ctx, actions, hasArc) {
-            const rectSize = 4;
-            const rectHalf = rectSize / 2;
-            let lastAction = null;
-            for (const action of actions) {
-                const x = (action.x / width) * canvas.width;
-                const y = ((height - action.y) / height) * canvas.height;
-                ctx.fillRect(x, y, rectSize, rectSize);
-                if (!hasArc) {
-                    continue;
-                }
-                if (lastAction !== null) {
-                    let [fromX, fromY] = lastAction;
-                    drawArc(ctx, fromX + rectHalf, fromY + rectHalf, x + rectHalf, y + rectHalf);
-                }
-                lastAction = [x, y];
-            }
-        }
-        function drawArc(ctx, fromX, fromY, toX, toY) {
-            const cx = (fromX + toX) / 2;
-            const cy = (fromY + toY) / 2;
-            const dx = cx - fromX;
-            const dy = cy - fromY;
-            const radius = Math.sqrt(dx * dx + dy * dy);
-            const startAngle = Math.atan2(fromY - cy, fromX - cx);
-            const endAngle = Math.atan2(toY - cy, toX - cx);
-            ctx.beginPath();
-            ctx.arc(cx, cy, radius, startAngle, endAngle, false);
-            ctx.stroke();
-        }
-    "#;
     let mut halting = use_signal(|| true);
     let mut state = use_signal::<Option<PlayerState>>(|| None);
     let reset = use_callback(move |_| {
@@ -169,12 +170,8 @@ pub fn Minimap(
         copy_position.set(state().and_then(|state| state.position));
     });
     use_effect(move || {
-        #[allow(clippy::single_match)]
-        match (minimap(), preset()) {
-            (Some(minimap), preset) => {
-                spawn(async move { update_minimap(preset, minimap).await });
-            }
-            (None, _) => (),
+        if let (Some(minimap), preset) = (minimap(), preset()) {
+            spawn(async move { update_minimap(preset, minimap).await });
         }
         if let Some(config) = config() {
             spawn(async move {
