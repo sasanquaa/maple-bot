@@ -9,9 +9,7 @@ use crate::{
     database::{Action, ActionKey, ActionMove, Minimap as MinimapData, query_maps, upsert_map},
     detect::Detector,
     pathing::{Platform, PlatformWithNeighbors, find_neighbors},
-    player::{
-        DOUBLE_JUMP_THRESHOLD, PLAYER_GRAPPLING_MAX_THRESHOLD, PLAYER_JUMP_THRESHOLD, Player,
-    },
+    player::{DOUBLE_JUMP_THRESHOLD, GRAPPLING_MAX_THRESHOLD, JUMP_THRESHOLD, Player},
     task::{Task, Update, update_task_repeatable},
 };
 
@@ -322,8 +320,8 @@ fn platforms_from_data(minimap: &MinimapData) -> Array<PlatformWithNeighbors, 24
             .map(|platform| Platform::from(platform))
             .collect::<Vec<_>>(),
         DOUBLE_JUMP_THRESHOLD,
-        PLAYER_JUMP_THRESHOLD,
-        PLAYER_GRAPPLING_MAX_THRESHOLD,
+        JUMP_THRESHOLD,
+        GRAPPLING_MAX_THRESHOLD,
     ))
 }
 

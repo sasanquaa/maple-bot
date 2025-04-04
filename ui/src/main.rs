@@ -24,7 +24,7 @@ mod icons;
 mod input;
 mod key;
 mod minimap;
-mod platforms;
+mod platform;
 mod rotation;
 mod select;
 mod tab;

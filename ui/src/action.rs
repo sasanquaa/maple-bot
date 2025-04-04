@@ -13,7 +13,7 @@ use crate::{
     input::{
         Checkbox, KeyBindingInput, MillisInput, NumberInputI32, NumberInputU32, use_auto_numeric,
     },
-    platforms::Platforms,
+    platform::Platforms,
     rotation::Rotations,
     select::{EnumSelect, TextSelect},
     tab::Tab,
