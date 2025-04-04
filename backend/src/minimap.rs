@@ -8,7 +8,7 @@ use crate::{
     context::{Context, Contextual, ControlFlow},
     database::{Action, ActionKey, ActionMove, Minimap as MinimapData, query_maps, upsert_map},
     detect::Detector,
-    pathing::{Platform, PlatformWithNeighbors, find_neighbors},
+    pathing::{MAX_PLATFORMS_COUNT, Platform, PlatformWithNeighbors, find_neighbors},
     player::{DOUBLE_JUMP_THRESHOLD, GRAPPLING_MAX_THRESHOLD, JUMP_THRESHOLD, Player},
     task::{Task, Update, update_task_repeatable},
 };
@@ -57,7 +57,7 @@ pub struct MinimapIdle {
     /// Praying each night that there won't be more than 16 portals...
     // initially it is only 8 until it crashes at Henesys with 10 portals smh
     pub portals: Array<Rect, 16>,
-    pub platforms: Array<PlatformWithNeighbors, 24>,
+    pub platforms: Array<PlatformWithNeighbors, MAX_PLATFORMS_COUNT>,
 }
 
 #[derive(Clone, Copy, Debug)]

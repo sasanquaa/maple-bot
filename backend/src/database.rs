@@ -65,6 +65,8 @@ pub struct Configuration {
     pub bonus_exp_key: KeyBindingConfiguration,
     pub legion_wealth_key: KeyBindingConfiguration,
     pub legion_luck_key: KeyBindingConfiguration,
+    #[serde(default)]
+    pub class: Class,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, EnumIter, Display, EnumString)]
@@ -138,23 +140,19 @@ impl Identifiable for Configuration {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 #[cfg_attr(test, derive(PartialEq))]
 pub struct Minimap {
-    #[serde(skip_serializing, default)]
+    #[serde(skip_serializing)]
     pub id: Option<i64>,
     pub name: String,
     pub width: i32,
     pub height: i32,
     pub rotation_mode: RotationMode,
-    #[serde(default)]
-    pub platforms: Vec<Platform>, // TODO: bound check to match with the one in minimap.rs
-    #[serde(default)]
+    pub platforms: Vec<Platform>,
     pub rune_platforms_pathing: bool,
-    #[serde(default)]
     pub rune_platforms_pathing_up_jump_only: bool,
-    #[serde(default)]
     pub auto_mob_platforms_pathing: bool,
-    #[serde(default)]
     pub auto_mob_platforms_pathing_up_jump_only: bool,
     pub actions: HashMap<String, Vec<Action>>,
 }
@@ -199,6 +197,8 @@ pub struct ActionMove {
 #[derive(Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize)]
 pub struct ActionKey {
     pub key: KeyBinding,
+    #[serde(default)]
+    pub link_key: Option<LinkKeyBinding>,
     #[serde(default = "count_default")]
     pub count: u32,
     pub position: Option<Position>,
@@ -210,8 +210,50 @@ pub struct ActionKey {
     pub queue_to_front: Option<bool>,
 }
 
+#[derive(Clone, Copy, Display, EnumString, EnumIter, PartialEq, Debug, Serialize, Deserialize)]
+pub enum LinkKeyBinding {
+    Before(KeyBinding),
+    AtTheSame(KeyBinding),
+    After(KeyBinding),
+}
+
+impl LinkKeyBinding {
+    pub fn key(&self) -> KeyBinding {
+        match self {
+            LinkKeyBinding::Before(key)
+            | LinkKeyBinding::AtTheSame(key)
+            | LinkKeyBinding::After(key) => *key,
+        }
+    }
+
+    pub fn with_key(&self, key: KeyBinding) -> Self {
+        match self {
+            LinkKeyBinding::Before(_) => LinkKeyBinding::Before(key),
+            LinkKeyBinding::AtTheSame(_) => LinkKeyBinding::AtTheSame(key),
+            LinkKeyBinding::After(_) => LinkKeyBinding::After(key),
+        }
+    }
+}
+
+impl Default for LinkKeyBinding {
+    fn default() -> Self {
+        LinkKeyBinding::After(KeyBinding::default())
+    }
+}
+
 fn count_default() -> u32 {
     1
+}
+
+#[derive(
+    Clone, Copy, Display, Default, EnumString, EnumIter, PartialEq, Debug, Serialize, Deserialize,
+)]
+pub enum Class {
+    Cadena,
+    Blaster,
+    Ark,
+    #[default]
+    Generic,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, EnumIter, Display, EnumString)]

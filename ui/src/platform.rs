@@ -1,6 +1,6 @@
 use std::ops::DerefMut;
 
-use backend::{Minimap, Platform};
+use backend::{MAX_PLATFORMS_COUNT, Minimap, Platform};
 use dioxus::prelude::*;
 
 use crate::{
@@ -99,7 +99,7 @@ pub fn Platforms(
                 copy_position,
                 label: "Add",
                 delete: false,
-                disabled: minimap().is_none(),
+                disabled: minimap().is_none() || minimap().unwrap().platforms.len() >= MAX_PLATFORMS_COUNT,
                 on_click: move |_| {
                     if let Some(minimap) = minimap.write().deref_mut() {
                         minimap.platforms.push(*editing.peek());

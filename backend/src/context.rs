@@ -129,12 +129,13 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     fn on_update_minimap(&mut self, preset: Option<String>, minimap: crate::Minimap) {
         self.minimap.data = minimap;
         self.minimap.update_platforms = true;
-        self.player.reset_non_configuration_states();
-        self.player.rune_platforms_pathing = self.minimap.data.rune_platforms_pathing;
-        self.player.rune_platforms_pathing_up_jump_only =
+        self.player.reset();
+        self.player.config.rune_platforms_pathing = self.minimap.data.rune_platforms_pathing;
+        self.player.config.rune_platforms_pathing_up_jump_only =
             self.minimap.data.rune_platforms_pathing_up_jump_only;
-        self.player.auto_mob_platforms_pathing = self.minimap.data.auto_mob_platforms_pathing;
-        self.player.auto_mob_platforms_pathing_up_jump_only =
+        self.player.config.auto_mob_platforms_pathing =
+            self.minimap.data.auto_mob_platforms_pathing;
+        self.player.config.auto_mob_platforms_pathing_up_jump_only =
             self.minimap.data.auto_mob_platforms_pathing_up_jump_only;
         *self.actions = preset
             .and_then(|preset| self.minimap.data.actions.get(&preset).cloned())
@@ -145,19 +146,20 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     fn on_update_configuration(&mut self, config: Configuration) {
         *self.config = config;
         *self.buffs = config_buffs(self.config);
-        self.player.reset_non_configuration_states();
-        self.player.interact_key = self.config.interact_key.key.into();
-        self.player.grappling_key = self.config.ropelift_key.key.into();
-        self.player.teleport_key = self.config.teleport_key.map(|key| key.key.into());
-        self.player.upjump_key = self.config.up_jump_key.map(|key| key.key.into());
-        self.player.cash_shop_key = self.config.cash_shop_key.key.into();
-        self.player.potion_key = self.config.potion_key.key.into();
-        self.player.use_potion_below_percent =
+        self.player.reset();
+        self.player.config.class = self.config.class;
+        self.player.config.interact_key = self.config.interact_key.key.into();
+        self.player.config.grappling_key = self.config.ropelift_key.key.into();
+        self.player.config.teleport_key = self.config.teleport_key.map(|key| key.key.into());
+        self.player.config.upjump_key = self.config.up_jump_key.map(|key| key.key.into());
+        self.player.config.cash_shop_key = self.config.cash_shop_key.key.into();
+        self.player.config.potion_key = self.config.potion_key.key.into();
+        self.player.config.use_potion_below_percent =
             match (self.config.potion_key.enabled, self.config.potion_mode) {
                 (false, _) | (_, PotionMode::EveryMillis(_)) => None,
                 (_, PotionMode::Percentage(percent)) => Some(percent / 100.0),
             };
-        self.player.update_health_millis = Some(self.config.health_update_millis);
+        self.player.config.update_health_millis = Some(self.config.health_update_millis);
         self.update_rotator_actions(self.minimap.data.rotation_mode.into());
     }
 

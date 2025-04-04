@@ -2,7 +2,7 @@ use std::{fmt::Display, ops::DerefMut, str::FromStr};
 
 use backend::{
     Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
-    IntoEnumIterator, Minimap, ParseError, Position, upsert_map,
+    IntoEnumIterator, LinkKeyBinding, Minimap, ParseError, Position, upsert_map,
 };
 use dioxus::prelude::*;
 use rand::distr::{Alphanumeric, SampleString};
@@ -393,6 +393,7 @@ fn ActionItem(
     fn ActionKeyItem(action: ActionKey) -> Element {
         let ActionKey {
             key,
+            link_key,
             count,
             position,
             condition,
@@ -435,6 +436,12 @@ fn ActionItem(
             div { class: DIV,
                 span { class: KEY, "Key" }
                 span { class: VALUE, {key.to_string()} }
+            }
+            if let Some(link_key) = link_key {
+                div { class: DIV,
+                    span { class: KEY, "Link Key" }
+                    span { class: VALUE, {link_key.to_string()} }
+                }
             }
             div { class: DIV,
                 span { class: KEY, "Count" }
@@ -695,6 +702,7 @@ fn ActionKeyInput(
     };
     let ActionKey {
         key,
+        link_key,
         count,
         position,
         condition,
@@ -764,6 +772,50 @@ fn ActionKeyInput(
                     on_input(Action::Key(ActionKey { count, ..value }));
                 },
                 value: count,
+            }
+            ActionCheckbox {
+                label: "Has link key",
+                disabled,
+                on_input: move |checked: bool| {
+                    on_input(
+                        Action::Key(ActionKey {
+                            link_key: checked.then_some(LinkKeyBinding::default()),
+                            ..value
+                        }),
+                    );
+                },
+                value: link_key.is_some(),
+            }
+            if let Some(link_key) = link_key {
+                ActionEnumSelect::<LinkKeyBinding> {
+                    label: "Link key type",
+                    on_input: move |link_key| {
+                        on_input(
+                            Action::Key(ActionKey {
+                                link_key: Some(link_key),
+                                ..value
+                            }),
+                        );
+                    },
+                    disabled,
+                    value: link_key,
+                }
+                KeyBindingInput {
+                    label: "Link key",
+                    label_class: LABEL_CLASS,
+                    div_class: DIV_CLASS,
+                    input_class: INPUT_CLASS,
+                    disabled,
+                    on_input: move |key| {
+                        on_input(
+                            Action::Key(ActionKey {
+                                link_key: Some(link_key.with_key(key)),
+                                ..value
+                            }),
+                        );
+                    },
+                    value: link_key.key(),
+                }
             }
             ActionConditionInput {
                 on_input: move |condition| {
@@ -874,7 +926,7 @@ fn ActionCheckbox(
             input_class: "w-22 flex items-center",
             disabled,
             on_input,
-            value
+            value,
         }
     }
 }

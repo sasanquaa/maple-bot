@@ -8,6 +8,8 @@ use opencv::core::Point;
 
 use crate::array::Array;
 
+pub const MAX_PLATFORMS_COUNT: usize = 24;
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Platform {
     xs: Range<i32>,
@@ -23,7 +25,7 @@ impl Platform {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct PlatformWithNeighbors {
     inner: Platform,
-    neighbors: Array<Platform, 16>,
+    neighbors: Array<Platform, MAX_PLATFORMS_COUNT>,
 }
 
 #[derive(PartialEq, Eq)]

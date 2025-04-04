@@ -2,13 +2,14 @@ use strum::Display;
 
 use crate::{
     Action, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, KeyBinding, Position,
-    context::MS_PER_TICK,
+    context::MS_PER_TICK, database::LinkKeyBinding,
 };
 
 /// Represents the fixed key action
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerActionKey {
     pub key: KeyBinding,
+    pub link_key: Option<LinkKeyBinding>,
     pub count: u32,
     pub position: Option<Position>,
     pub direction: ActionKeyDirection,
@@ -21,6 +22,7 @@ impl From<ActionKey> for PlayerActionKey {
     fn from(
         ActionKey {
             key,
+            link_key,
             count,
             position,
             direction,
@@ -32,7 +34,8 @@ impl From<ActionKey> for PlayerActionKey {
     ) -> Self {
         Self {
             key,
-            count,
+            link_key,
+            count: if count == 0 { 1 } else { count },
             position,
             direction,
             with,

@@ -370,6 +370,7 @@ fn elite_boss_potion_spam_priority_action(key: KeyBinding) -> PriorityAction {
         condition_kind: None,
         action: PlayerAction::Key(PlayerActionKey {
             key,
+            link_key: None,
             count: 1,
             position: None,
             direction: ActionKeyDirection::Any,
@@ -422,6 +423,7 @@ fn buff_priority_action(buff_index: usize, key: KeyBinding) -> PriorityAction {
         condition_kind: None,
         action: PlayerAction::Key(PlayerActionKey {
             key,
+            link_key: None,
             count: 1,
             position: None,
             direction: ActionKeyDirection::Any,

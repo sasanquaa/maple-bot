@@ -1,8 +1,8 @@
 use std::{fmt::Display, str::FromStr};
 
 use backend::{
-    Configuration as ConfigurationData, IntoEnumIterator, KeyBinding, KeyBindingConfiguration,
-    PotionMode, query_configs, upsert_config,
+    Class, Configuration as ConfigurationData, IntoEnumIterator, KeyBinding,
+    KeyBindingConfiguration, PotionMode, query_configs, upsert_config,
 };
 use dioxus::prelude::*;
 use tokio::task::spawn_blocking;
@@ -391,6 +391,23 @@ pub fn Configuration(
                     },
                     value: Some(config_view().legion_luck_key),
                 }
+            }
+            h2 {
+                class: "text-sm font-medium text-gray-700 mt-2 mb-2 data-[disabled]:text-gray-400",
+                "data-disabled": data_disabled,
+                "Others"
+            }
+            p { class: "font-normal italic text-xs text-gray-400 mb-1", "Class affects only link key timing except Blaster" }
+            ConfigEnumSelect::<Class> {
+                label: "Class",
+                on_select: move |class| {
+                    on_config(ConfigurationData {
+                        class,
+                        ..config_view.peek().clone()
+                    });
+                },
+                disabled: disabled(),
+                selected: config_view().class,
             }
         }
     }

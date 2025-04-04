@@ -7,11 +7,11 @@ use platforms::windows::KeyKind;
 use strum::Display;
 
 use crate::{
-    Position,
+    Class, Position,
     array::Array,
     buff::Buff,
     context::{Context, Contextual, ControlFlow, RUNE_BUFF_POSITION},
-    database::{ActionKeyDirection, ActionKeyWith, KeyBinding},
+    database::{ActionKeyDirection, ActionKeyWith, KeyBinding, LinkKeyBinding},
     detect::Detector,
     minimap::Minimap,
     pathing::{PlatformWithNeighbors, find_points_with},
@@ -70,15 +70,9 @@ const AUTO_MOB_USE_KEY_Y_THRESHOLD: i32 = JUMP_THRESHOLD;
 /// `Player::CashShopThenExit`
 const MAX_RUNE_FAILED_COUNT: u32 = 2;
 
-#[derive(Debug, Default)]
-pub struct PlayerState {
-    /// A normal action requested by `Rotator`
-    normal_action: Option<PlayerAction>,
-    /// The id of the priority action provided by `Rotator`
-    priority_action_id: u32,
-    /// A priority action requested by `Rotator`, this action will override
-    /// the normal action if it is in the middle of executing.
-    priority_action: Option<PlayerAction>,
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PlayerConfiguration {
+    pub class: Class,
     /// Enables platform pathing for rune
     pub rune_platforms_pathing: bool,
     /// Uses only up jump(s) in rune platform pathing
@@ -103,6 +97,18 @@ pub struct PlayerState {
     pub use_potion_below_percent: Option<f32>,
     /// Milliseconds interval to update current health
     pub update_health_millis: Option<u64>,
+}
+
+#[derive(Debug, Default)]
+pub struct PlayerState {
+    pub config: PlayerConfiguration,
+    /// A normal action requested by `Rotator`
+    normal_action: Option<PlayerAction>,
+    /// The id of the priority action provided by `Rotator`
+    priority_action_id: u32,
+    /// A priority action requested by `Rotator`, this action will override
+    /// the normal action if it is in the middle of executing.
+    priority_action: Option<PlayerAction>,
     /// The player current health and max health
     pub health: Option<(u32, u32)>,
     /// The task to update health
@@ -166,23 +172,9 @@ pub struct PlayerState {
 
 impl PlayerState {
     #[inline]
-    pub fn reset_non_configuration_states(&mut self) {
+    pub fn reset(&mut self) {
         *self = PlayerState {
-            normal_action: self.normal_action,
-            priority_action_id: self.priority_action_id,
-            priority_action: self.priority_action,
-            rune_platforms_pathing: self.rune_platforms_pathing,
-            rune_platforms_pathing_up_jump_only: self.rune_platforms_pathing_up_jump_only,
-            auto_mob_platforms_pathing: self.auto_mob_platforms_pathing,
-            auto_mob_platforms_pathing_up_jump_only: self.auto_mob_platforms_pathing_up_jump_only,
-            interact_key: self.interact_key,
-            grappling_key: self.grappling_key,
-            teleport_key: self.teleport_key,
-            upjump_key: self.upjump_key,
-            cash_shop_key: self.cash_shop_key,
-            potion_key: self.potion_key,
-            use_potion_below_percent: self.use_potion_below_percent,
-            update_health_millis: self.update_health_millis,
+            config: self.config,
             reset_to_idle_next_update: true,
             ..PlayerState::default()
         };
@@ -396,13 +388,14 @@ enum UseKeyStage {
     Precondition,
     ChangingDirection(Timeout),
     EnsuringUseWith,
-    Using,
+    Using(Timeout, bool),
     PostCondition,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct UseKey {
     key: KeyBinding,
+    link_key: Option<LinkKeyBinding>,
     count: u32,
     current_count: u32,
     direction: ActionKeyDirection,
@@ -418,6 +411,7 @@ impl UseKey {
         match action {
             PlayerAction::Key(PlayerActionKey {
                 key,
+                link_key,
                 count,
                 direction,
                 with,
@@ -426,6 +420,7 @@ impl UseKey {
                 ..
             }) => Self {
                 key,
+                link_key,
                 count,
                 current_count: 0,
                 direction,
@@ -436,6 +431,7 @@ impl UseKey {
             },
             PlayerAction::AutoMob(mob) => Self {
                 key: mob.key,
+                link_key: None,
                 count: mob.count,
                 current_count: 0,
                 direction: ActionKeyDirection::Any,
@@ -587,7 +583,7 @@ fn update_non_positional_context(
         Player::CashShopThenExit(timeout, cash_shop) => {
             let next = match cash_shop {
                 CashShop::Entering => {
-                    let _ = context.keys.send(state.cash_shop_key);
+                    let _ = context.keys.send(state.config.cash_shop_key);
                     let next = if detector.detect_player_in_cash_shop() {
                         CashShop::Entered
                     } else {
@@ -726,14 +722,14 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
         let point = Point::new(mob_pos.x, y.unwrap_or(mob_pos.y));
         state.auto_mob_reachable_y = y;
         debug!(target: "player", "auto mob reachable y {:?} {:?}", y, state.auto_mob_reachable_y_map);
-        if state.auto_mob_platforms_pathing {
+        if state.config.auto_mob_platforms_pathing {
             if let Minimap::Idle(idle) = context.minimap {
                 if let Some((point, exact, index, array)) = find_points(
                     &idle.platforms,
                     player_pos,
                     point,
                     mob_pos.allow_adjusting,
-                    state.auto_mob_platforms_pathing_up_jump_only,
+                    state.config.auto_mob_platforms_pathing_up_jump_only,
                 ) {
                     state.last_destinations =
                         Some(array.into_iter().map(|(point, _)| point).collect());
@@ -810,7 +806,7 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
             PlayerAction::SolveRune => {
                 if let Minimap::Idle(idle) = context.minimap {
                     if let Some(rune) = idle.rune {
-                        if state.rune_platforms_pathing {
+                        if state.config.rune_platforms_pathing {
                             if !state.is_stationary {
                                 return Some((Player::Idle, false));
                             }
@@ -819,7 +815,7 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
                                 cur_pos,
                                 rune,
                                 true,
-                                state.rune_platforms_pathing_up_jump_only,
+                                state.config.rune_platforms_pathing_up_jump_only,
                             ) {
                                 state.last_destinations =
                                     Some(array.into_iter().map(|(point, _)| point).collect());
@@ -877,6 +873,55 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
         }
     }
 
+    #[inline]
+    fn update_link_key(
+        context: &Context,
+        class: Class,
+        use_key: UseKey,
+        timeout: Timeout,
+        completed: bool,
+    ) -> Player {
+        debug_assert!(!timeout.started || !completed);
+        let link_key = use_key.link_key.unwrap();
+        let link_key_timeout = match class {
+            Class::Cadena => 4,
+            Class::Blaster => 8,
+            Class::Ark => 10,
+            Class::Generic => 5,
+        };
+        return update_with_timeout(
+            timeout,
+            link_key_timeout,
+            |timeout| {
+                if let LinkKeyBinding::Before(key) = link_key {
+                    let _ = context.keys.send(key.into());
+                }
+                Player::UseKey(UseKey {
+                    stage: UseKeyStage::Using(timeout, completed),
+                    ..use_key
+                })
+            },
+            || {
+                if let LinkKeyBinding::After(key) = link_key {
+                    let _ = context.keys.send(key.into());
+                    if matches!(class, Class::Blaster) && !matches!(key, KeyBinding::Space) {
+                        let _ = context.keys.send(KeyKind::Space);
+                    }
+                }
+                Player::UseKey(UseKey {
+                    stage: UseKeyStage::Using(timeout, true),
+                    ..use_key
+                })
+            },
+            |timeout| {
+                Player::UseKey(UseKey {
+                    stage: UseKeyStage::Using(timeout, completed),
+                    ..use_key
+                })
+            },
+        );
+    }
+
     // TODO: Am I cooked?
     let next = match use_key.stage {
         UseKeyStage::Precondition => {
@@ -904,7 +949,7 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
                         && matches!(state.last_movement, Some(LastMovement::DoubleJumping)))
             );
             let next = Player::UseKey(UseKey {
-                stage: UseKeyStage::Using,
+                stage: UseKeyStage::Using(Timeout::default(), false),
                 ..use_key
             });
             if use_key.wait_before_use_ticks > 0 {
@@ -962,9 +1007,42 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
                 Player::DoubleJumping(Moving::new(pos, pos, false, None), true, true)
             }
         },
-        UseKeyStage::Using => {
+        UseKeyStage::Using(timeout, completed) => {
+            debug_assert!(use_key.link_key.is_some() || !completed);
             debug_assert!(state.stalling_timeout_state.is_none());
-            let _ = context.keys.send(use_key.key.into());
+            match use_key.link_key {
+                Some(LinkKeyBinding::After(_)) => {
+                    if !timeout.started {
+                        let _ = context.keys.send(use_key.key.into());
+                    }
+                    if !completed {
+                        return update_link_key(
+                            context,
+                            state.config.class,
+                            use_key,
+                            timeout,
+                            completed,
+                        );
+                    }
+                }
+                Some(LinkKeyBinding::AtTheSame(key)) => {
+                    let _ = context.keys.send(use_key.key.into());
+                    let _ = context.keys.send(key.into());
+                }
+                Some(LinkKeyBinding::Before(_)) | None => {
+                    if use_key.link_key.is_some() && !completed {
+                        return update_link_key(
+                            context,
+                            state.config.class,
+                            use_key,
+                            timeout,
+                            completed,
+                        );
+                    }
+                    debug_assert!(use_key.link_key.is_none() || completed);
+                    let _ = context.keys.send(use_key.key.into());
+                }
+            }
             let next = Player::UseKey(UseKey {
                 stage: UseKeyStage::PostCondition,
                 ..use_key
@@ -1379,11 +1457,11 @@ fn update_double_jumping_context(
     debug_assert!(moving.timeout.started || !moving.completed);
     let ignore_grappling = forced
         || (state.has_auto_mob_action_only()
-            && state.auto_mob_platforms_pathing
-            && state.auto_mob_platforms_pathing_up_jump_only)
+            && state.config.auto_mob_platforms_pathing
+            && state.config.auto_mob_platforms_pathing_up_jump_only)
         || (state.has_rune_action()
-            && state.rune_platforms_pathing
-            && state.rune_platforms_pathing_up_jump_only);
+            && state.config.rune_platforms_pathing
+            && state.config.rune_platforms_pathing_up_jump_only);
     let x_changed = (cur_pos.x - moving.pos.x).abs();
     let (x_distance, x_direction) = x_distance_direction(moving.dest, cur_pos);
     let (y_distance, y_direction) = y_distance_direction(moving.dest, cur_pos);
@@ -1417,7 +1495,7 @@ fn update_double_jumping_context(
         |mut moving| {
             if !moving.completed {
                 // mage teleportation requires a direction
-                if !forced || state.teleport_key.is_some() {
+                if !forced || state.config.teleport_key.is_some() {
                     match x_direction {
                         d if d > 0 => {
                             let _ = context.keys.send_up(KeyKind::Left);
@@ -1430,7 +1508,7 @@ fn update_double_jumping_context(
                             state.last_known_direction = ActionKeyDirection::Left;
                         }
                         _ => {
-                            if state.teleport_key.is_some() {
+                            if state.config.teleport_key.is_some() {
                                 match state.last_known_direction {
                                     ActionKeyDirection::Any => (),
                                     ActionKeyDirection::Left => {
@@ -1451,7 +1529,7 @@ fn update_double_jumping_context(
                 {
                     let _ = context
                         .keys
-                        .send(state.teleport_key.unwrap_or(KeyKind::Space));
+                        .send(state.config.teleport_key.unwrap_or(KeyKind::Space));
                 } else {
                     let _ = context.keys.send_up(KeyKind::Right);
                     let _ = context.keys.send_up(KeyKind::Left);
@@ -1506,7 +1584,7 @@ fn update_grappling_context(
         state.last_movement = Some(LastMovement::Grappling);
     }
 
-    let key = state.grappling_key;
+    let key = state.config.grappling_key;
     let x_changed = cur_pos.x != moving.pos.x;
 
     update_moving_axis_context(
@@ -1546,7 +1624,7 @@ fn update_up_jumping_context(
     moving: Moving,
 ) -> Player {
     const SPAM_DELAY: u32 = 7;
-    const STOP_UP_KEY_THRESHOLD: u32 = 3;
+    const STOP_UP_KEY_TICK: u32 = 3;
     const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
     const UP_JUMPED_THRESHOLD: i32 = 5;
 
@@ -1569,7 +1647,7 @@ fn update_up_jumping_context(
 
     let y_changed = (cur_pos.y - moving.pos.y).abs();
     let (x_distance, _) = x_distance_direction(moving.dest, cur_pos);
-    let key = state.upjump_key;
+    let key = state.config.upjump_key;
     update_moving_axis_context(
         moving,
         cur_pos,
@@ -1605,7 +1683,7 @@ fn update_up_jumping_context(
                 (true, _) => {
                     // this is when up jump like blaster still requires up key
                     // cancel early to avoid stucking to a rope
-                    if key.is_some() && moving.timeout.total >= STOP_UP_KEY_THRESHOLD {
+                    if key.is_some() && moving.timeout.total == STOP_UP_KEY_TICK {
                         let _ = context.keys.send_up(KeyKind::Up);
                     }
                     if x_distance >= ADJUSTING_MEDIUM_THRESHOLD
@@ -1642,7 +1720,6 @@ fn update_falling_context(
 ) -> Player {
     const STOP_DOWN_KEY_TICK: u32 = 2;
     const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
-    const TIMEOUT_EARLY_THRESHOLD: i32 = -3;
 
     let y_changed = cur_pos.y - anchor.y;
     let (x_distance, _) = x_distance_direction(moving.dest, cur_pos);
@@ -1669,7 +1746,7 @@ fn update_falling_context(
             if moving.timeout.total == STOP_DOWN_KEY_TICK {
                 let _ = context.keys.send_up(KeyKind::Down);
             }
-            if x_distance >= ADJUSTING_MEDIUM_THRESHOLD && y_changed <= TIMEOUT_EARLY_THRESHOLD {
+            if x_distance >= ADJUSTING_MEDIUM_THRESHOLD && y_changed < 0 {
                 moving = moving.timeout_current(TIMEOUT);
             }
             on_action(
@@ -1839,7 +1916,7 @@ fn update_solving_rune_context(
         solving_rune.timeout,
         TIMEOUT,
         |timeout| {
-            let _ = context.keys.send(state.interact_key);
+            let _ = context.keys.send(state.config.interact_key);
             Player::SolvingRune(SolvingRune {
                 timeout,
                 ..solving_rune
@@ -2167,11 +2244,11 @@ fn update_health_state(context: &Context, detector: &impl Detector, state: &mut 
     if let Player::SolvingRune(_) = context.player {
         return;
     }
-    if state.use_potion_below_percent.is_none() {
+    if state.config.use_potion_below_percent.is_none() {
         reset_health(state);
         return;
     }
-    let percentage = state.use_potion_below_percent.unwrap();
+    let percentage = state.config.use_potion_below_percent.unwrap();
     let detector = detector.clone();
     let Some(health_bar) = state.health_bar else {
         let update = update_task_repeatable(1000, &mut state.health_bar_task, move || {
@@ -2183,7 +2260,7 @@ fn update_health_state(context: &Context, detector: &impl Detector, state: &mut 
         return;
     };
     let Update::Complete(health) = update_task_repeatable(
-        state.update_health_millis.unwrap_or(1000),
+        state.config.update_health_millis.unwrap_or(1000),
         &mut state.health_task,
         move || {
             let (current_bar, max_bar) =
@@ -2199,7 +2276,7 @@ fn update_health_state(context: &Context, detector: &impl Detector, state: &mut 
     if let Some((current, max)) = state.health {
         let ratio = current as f32 / max as f32;
         if ratio <= percentage {
-            let _ = context.keys.send(state.potion_key);
+            let _ = context.keys.send(state.config.potion_key);
         }
     }
 }
@@ -2246,6 +2323,7 @@ fn update_state(
 }
 
 // TODO: ??????
+// TODO: is 16 good?
 #[inline]
 fn find_points(
     platforms: &[PlatformWithNeighbors],

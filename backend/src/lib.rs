@@ -33,11 +33,13 @@ pub use {
     context::start_update_loop,
     database::{
         Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
-        AutoMobbing, Bound, Configuration, KeyBinding, KeyBindingConfiguration, Minimap, Platform,
-        Position, PotionMode, RotationMode, delete_map, query_configs, upsert_config, upsert_map,
+        AutoMobbing, Bound, Class, Configuration, KeyBinding, KeyBindingConfiguration,
+        LinkKeyBinding, Minimap, Platform, Position, PotionMode, RotationMode, delete_map,
+        query_configs, upsert_config, upsert_map,
     },
+    pathing::MAX_PLATFORMS_COUNT,
     rotator::RotatorMode,
-    strum::{IntoEnumIterator, ParseError},
+    strum::{EnumMessage, IntoEnumIterator, ParseError},
 };
 
 type RequestItem = (Request, Sender<Response>);
