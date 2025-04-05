@@ -68,7 +68,6 @@ pub fn Configuration(
         }
     });
     let disabled = use_memo(move || config().is_none());
-    let data_disabled = disabled.peek().then_some(true);
 
     use_future(move || async move {
         if config.peek().is_none() {
@@ -95,21 +94,15 @@ pub fn Configuration(
                 options: config_names(),
                 selected: config_view().name,
             }
-            h2 {
-                class: "text-sm font-medium text-gray-700 mb-2 data-[disabled]:text-gray-400",
-                "data-disabled": data_disabled,
-                "Key Bindings"
-            }
+            ConfigHeader { text: "Key Bindings", disabled: disabled() }
             div { class: "space-y-1",
                 KeyBindingConfigurationInput {
                     label: ROPE_LIFT,
                     input_disabled: disabled(),
-                    is_optional: false,
                     is_active: matches!(active(), Some(ROPE_LIFT)),
                     on_active: move |value: bool| {
                         active.set(value.then_some(ROPE_LIFT));
                     },
-                    can_disable: false,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             ropelift_key: key.unwrap(),
@@ -126,7 +119,6 @@ pub fn Configuration(
                     on_active: move |value: bool| {
                         active.set(value.then_some(TELEPORT));
                     },
-                    can_disable: false,
                     on_input: move |key| {
                         on_config(ConfigurationData {
                             teleport_key: key,
@@ -143,7 +135,6 @@ pub fn Configuration(
                     on_active: move |value: bool| {
                         active.set(value.then_some(UP_JUMP));
                     },
-                    can_disable: false,
                     on_input: move |key| {
                         on_config(ConfigurationData {
                             up_jump_key: key,
@@ -155,12 +146,10 @@ pub fn Configuration(
                 KeyBindingConfigurationInput {
                     label: INTERACT,
                     input_disabled: disabled(),
-                    is_optional: false,
                     is_active: matches!(active(), Some(INTERACT)),
                     on_active: move |value: bool| {
                         active.set(value.then_some(INTERACT));
                     },
-                    can_disable: false,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             interact_key: key.unwrap(),
@@ -172,12 +161,10 @@ pub fn Configuration(
                 KeyBindingConfigurationInput {
                     label: CASH_SHOP,
                     input_disabled: disabled(),
-                    is_optional: false,
                     is_active: matches!(active(), Some(CASH_SHOP)),
                     on_active: move |value: bool| {
                         active.set(value.then_some(CASH_SHOP));
                     },
-                    can_disable: false,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             cash_shop_key: key.unwrap(),
@@ -189,7 +176,6 @@ pub fn Configuration(
                 KeyBindingConfigurationInput {
                     label: FEED_PET,
                     input_disabled: disabled(),
-                    is_optional: false,
                     is_active: matches!(active(), Some(FEED_PET)),
                     on_active: move |value: bool| {
                         active.set(value.then_some(FEED_PET));
@@ -219,7 +205,6 @@ pub fn Configuration(
                 KeyBindingConfigurationInput {
                     label: POTION,
                     input_disabled: disabled(),
-                    is_optional: false,
                     is_active: matches!(active(), Some(POTION)),
                     on_active: move |value: bool| {
                         active.set(value.then_some(POTION));
@@ -292,7 +277,6 @@ pub fn Configuration(
                 KeyBindingConfigurationInput {
                     label: SAYRAM_ELIXIR,
                     input_disabled: disabled(),
-                    is_optional: false,
                     is_active: matches!(active(), Some(SAYRAM_ELIXIR)),
                     on_active: move |value: bool| {
                         active.set(value.then_some(SAYRAM_ELIXIR));
@@ -309,7 +293,6 @@ pub fn Configuration(
                 KeyBindingConfigurationInput {
                     label: AURELIA_ELIXIR,
                     input_disabled: disabled(),
-                    is_optional: false,
                     is_active: matches!(active(), Some(AURELIA_ELIXIR)),
                     on_active: move |value: bool| {
                         active.set(value.then_some(AURELIA_ELIXIR));
@@ -326,7 +309,6 @@ pub fn Configuration(
                 KeyBindingConfigurationInput {
                     label: EXP_X3,
                     input_disabled: disabled(),
-                    is_optional: false,
                     is_active: matches!(active(), Some(EXP_X3)),
                     on_active: move |value: bool| {
                         active.set(value.then_some(EXP_X3));
@@ -343,7 +325,6 @@ pub fn Configuration(
                 KeyBindingConfigurationInput {
                     label: BONUS_EXP,
                     input_disabled: disabled(),
-                    is_optional: false,
                     is_active: matches!(active(), Some(BONUS_EXP)),
                     on_active: move |value: bool| {
                         active.set(value.then_some(BONUS_EXP));
@@ -360,7 +341,6 @@ pub fn Configuration(
                 KeyBindingConfigurationInput {
                     label: LEGION_WEALTH,
                     input_disabled: disabled(),
-                    is_optional: false,
                     is_active: matches!(active(), Some(LEGION_WEALTH)),
                     on_active: move |value: bool| {
                         active.set(value.then_some(LEGION_WEALTH));
@@ -377,7 +357,6 @@ pub fn Configuration(
                 KeyBindingConfigurationInput {
                     label: LEGION_LUCK,
                     input_disabled: disabled(),
-                    is_optional: false,
                     is_active: matches!(active(), Some(LEGION_LUCK)),
                     on_active: move |value: bool| {
                         active.set(value.then_some(LEGION_LUCK));
@@ -392,12 +371,10 @@ pub fn Configuration(
                     value: Some(config_view().legion_luck_key),
                 }
             }
-            h2 {
-                class: "text-sm font-medium text-gray-700 mt-2 mb-2 data-[disabled]:text-gray-400",
-                "data-disabled": data_disabled,
-                "Others"
+            ConfigHeader { text: "Others", disabled: disabled(), class: "mt-2" }
+            p { class: "font-normal italic text-xs text-gray-400 mb-1",
+                "Class affects only link key timing except Blaster"
             }
-            p { class: "font-normal italic text-xs text-gray-400 mb-1", "Class affects only link key timing except Blaster" }
             ConfigEnumSelect::<Class> {
                 label: "Class",
                 on_select: move |class| {
@@ -409,6 +386,21 @@ pub fn Configuration(
                 disabled: disabled(),
                 selected: config_view().class,
             }
+        }
+    }
+}
+
+#[component]
+fn ConfigHeader(
+    text: String,
+    disabled: bool,
+    #[props(default = String::new())] class: String,
+) -> Element {
+    rsx! {
+        h2 {
+            class: "text-sm font-medium text-gray-700 mb-2 data-[disabled]:text-gray-400 {class}",
+            "data-disabled": disabled.then_some(true),
+            "{text}"
         }
     }
 }
@@ -441,9 +433,11 @@ fn ConfigEnumSelect<
 struct KeyBindingConfigurationInputProps {
     label: String,
     input_disabled: bool,
+    #[props(default = false)]
     is_optional: bool,
     is_active: bool,
     on_active: EventHandler<bool>,
+    #[props(default = false)]
     can_disable: bool,
     on_input: EventHandler<Option<KeyBindingConfiguration>>,
     value: Option<KeyBindingConfiguration>,

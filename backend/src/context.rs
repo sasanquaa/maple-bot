@@ -1,5 +1,6 @@
 use std::{
     env,
+    fmt::Debug,
     fs::File,
     io::Write,
     mem,
@@ -9,8 +10,10 @@ use std::{
 };
 
 use log::info;
+#[cfg(test)]
+use mockall::automock;
 use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
-use platforms::windows::{self, Capture, Handle, Keys};
+use platforms::windows::{self, Capture, Error, Handle, KeyKind, Keys};
 use strum::IntoEnumIterator;
 
 use crate::{
@@ -38,7 +41,7 @@ const BONUS_EXP_BUFF_POSITION: usize = 4;
 const LEGION_WEALTH_BUFF_POSITION: usize = 5;
 const LEGION_LUCK_BUFF_POSITION: usize = 6;
 
-/// Represents a control flow after a context update.
+/// Represent a control flow after a context update
 pub enum ControlFlow<T> {
     /// The context is updated immediately
     Immediate(T),
@@ -46,9 +49,9 @@ pub enum ControlFlow<T> {
     Next(T),
 }
 
-/// Represents a context-based state.
+/// Represent a context-based state
 pub trait Contextual {
-    /// Represents a state that is persistent through each `update` tick.
+    /// Represent a state that is persistent through each `update` tick.
     type Persistent = ();
 
     /// Update the contextual state.
@@ -66,10 +69,45 @@ pub trait Contextual {
         Self: Sized;
 }
 
+/// Represent an object that can send keys
+#[cfg_attr(test, automock)]
+pub trait KeySender: Debug {
+    fn send(&self, kind: KeyKind) -> Result<(), Error>;
+
+    fn send_click_to_focus(&self) -> Result<(), Error>;
+
+    fn send_up(&self, kind: KeyKind) -> Result<(), Error>;
+
+    fn send_down(&self, kind: KeyKind) -> Result<(), Error>;
+}
+
+#[derive(Debug)]
+struct DefaultKeySender {
+    keys: Keys,
+}
+
+impl KeySender for DefaultKeySender {
+    fn send(&self, kind: KeyKind) -> Result<(), Error> {
+        self.keys.send(kind)
+    }
+
+    fn send_click_to_focus(&self) -> Result<(), Error> {
+        self.keys.send_click_to_focus()
+    }
+
+    fn send_up(&self, kind: KeyKind) -> Result<(), Error> {
+        self.keys.send_up(kind)
+    }
+
+    fn send_down(&self, kind: KeyKind) -> Result<(), Error> {
+        self.keys.send_down(kind)
+    }
+}
+
 /// An object that stores the game information.
 #[derive(Debug)]
 pub struct Context {
-    pub keys: Keys,
+    pub keys: &'static dyn KeySender,
     pub minimap: Minimap,
     pub player: Player,
     pub skills: [Skill; mem::variant_count::<SkillKind>()],
@@ -81,7 +119,7 @@ pub struct Context {
 impl Default for Context {
     fn default() -> Self {
         Self {
-            keys: Keys::new(Handle::new(Some("Class"), Some("Title")).unwrap()),
+            keys: Box::leak(Box::new(MockKeySender::new())),
             minimap: Minimap::Detecting,
             player: Player::Detecting,
             skills: [Skill::Detecting; mem::variant_count::<SkillKind>()],
@@ -232,7 +270,9 @@ pub fn start_update_loop() {
 #[inline]
 fn update_loop() {
     let handle = Handle::new(Some("MapleStoryClass"), None).unwrap();
-    let keys = Keys::new(handle);
+    let keys = DefaultKeySender {
+        keys: Keys::new(handle),
+    };
     let mut capture = Capture::new(handle);
     let mut player_state = PlayerState::default();
     let mut minimap_state = MinimapState::default();
@@ -247,7 +287,7 @@ fn update_loop() {
     let mut config = query_configs().unwrap().into_iter().next().unwrap();
     let mut buffs = config_buffs(&config);
     let mut context = Context {
-        keys,
+        keys: Box::leak(Box::new(keys)),
         minimap: Minimap::Detecting,
         player: Player::Detecting,
         skills: [Skill::Detecting],

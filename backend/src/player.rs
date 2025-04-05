@@ -73,13 +73,13 @@ const MAX_RUNE_FAILED_COUNT: u32 = 2;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PlayerConfiguration {
     pub class: Class,
-    /// Enables platform pathing for rune
+    /// Enable platform pathing for rune
     pub rune_platforms_pathing: bool,
-    /// Uses only up jump(s) in rune platform pathing
+    /// Use only up jump(s) in rune platform pathing
     pub rune_platforms_pathing_up_jump_only: bool,
-    /// Enables platform pathing for auto mob
+    /// Enable platform pathing for auto mob
     pub auto_mob_platforms_pathing: bool,
-    /// Uses only up jump(s) in auto mob platform pathing
+    /// Use only up jump(s) in auto mob platform pathing
     pub auto_mob_platforms_pathing_up_jump_only: bool,
     /// The interact key
     pub interact_key: KeyKind,
@@ -99,6 +99,7 @@ pub struct PlayerConfiguration {
     pub update_health_millis: Option<u64>,
 }
 
+/// The player persistent states
 #[derive(Debug, Default)]
 pub struct PlayerState {
     pub config: PlayerConfiguration,
@@ -117,44 +118,44 @@ pub struct PlayerState {
     health_bar: Option<Rect>,
     /// The task for the health bar
     health_bar_task: Option<Task<Result<Rect>>>,
-    /// Tracks if the player moved within a specified ticks to determine if the player is stationary
+    /// Track if the player moved within a specified ticks to determine if the player is stationary
     is_stationary_timeout: Timeout,
     /// Whether the player is stationary
     is_stationary: bool,
     /// Approximates the player direction for using key
     last_known_direction: ActionKeyDirection,
-    /// Tracks last destination points for displaying to UI
-    /// Resets when all destinations are reached or in `Player::Idle`
+    /// Track last destination points for displaying to UI
+    /// Reset when all destinations are reached or in `Player::Idle`
     pub last_destinations: Option<Vec<Point>>,
     /// Last known position after each detection used for unstucking, also for displaying to UI
     pub last_known_pos: Option<Point>,
     /// Indicates whether to use `ControlFlow::Immediate` on this update
     use_immediate_control_flow: bool,
-    /// Indicates whether to ignore update_pos and use last_known_pos on next update
+    /// Indicate whether to ignore update_pos and use last_known_pos on next update
     ignore_pos_update: bool,
-    /// Indicates whether to reset the contextual state back to `Player::Idle` on next update
+    /// Indicate whether to reset the contextual state back to `Player::Idle` on next update
     reset_to_idle_next_update: bool,
-    /// Indicates the last movement
-    /// Helps for coordinating between movement states (e.g. falling + double jumping)
-    /// Resets to `None` when the destination (possibly intermediate) is reached or in `Player::Idle`
+    /// Indicate the last movement
+    /// Help for coordinating between movement states (e.g. falling + double jumping)
+    /// Reset to `None` when the destination (possibly intermediate) is reached or in `Player::Idle`
     last_movement: Option<LastMovement>,
     // TODO: 2 maps fr?
-    /// Tracks `last_movement` to abort normal action when its position is not accurate
-    /// Clears when a normal action is completed or aborted
+    /// Track `last_movement` to abort normal action when its position is not accurate
+    /// Clear when a normal action is completed or aborted
     last_movement_normal_map: HashMap<LastMovement, u32>,
-    /// Tracks `last_movement` to abort priority action when its position is not accurate
-    /// Clears when a priority action is completed or aborted
+    /// Track `last_movement` to abort priority action when its position is not accurate
+    /// Clear when a priority action is completed or aborted
     last_movement_priority_map: HashMap<LastMovement, u32>,
-    /// Tracks a map of "reachable" y
+    /// Track a map of "reachable" y
     /// A y is reachable if there is a platform the player can stand on
     auto_mob_reachable_y_map: HashMap<i32, u32>,
     /// The matched reachable y and also the key in `auto_mob_reachable_y_map`
     auto_mob_reachable_y: Option<i32>,
-    /// Tracks whether movement-related actions do not change the player position after a while.
-    /// Resets when a limit is reached (for unstucking) or position did change.
+    /// Track whether movement-related actions do not change the player position after a while.
+    /// Reset when a limit is reached (for unstucking) or position did change.
     unstuck_counter: u32,
     /// The number of consecutive times player transtioned to `Player::Unstucking`
-    /// Resets when position did change
+    /// Reset when position did change
     unstuck_consecutive_counter: u32,
     /// Unstuck task for detecting settings when mis-pressing ESC key
     unstuck_task: Option<Task<Result<bool>>>,
@@ -162,11 +163,11 @@ pub struct PlayerState {
     rune_task: Option<Task<Result<[KeyKind; 4]>>>,
     /// The number of times `Player::SolvingRune` failed
     rune_failed_count: u32,
-    /// Indicates the state will be transitioned to `Player::CashShopThenExit` in the next tick
+    /// Indicate the state will be transitioned to `Player::CashShopThenExit` in the next tick
     rune_cash_shop: bool,
     rune_validate_timeout: Option<Timeout>,
     /// A state to return to after stalling
-    /// Resets when `Player::Stalling` timed out or in `Player::Idle`
+    /// Reset when `Player::Stalling` timed out or in `Player::Idle`
     stalling_timeout_state: Option<Player>,
 }
 
@@ -290,7 +291,7 @@ impl PlayerState {
     }
 }
 
-/// The player previous movement-related contextual state.
+/// The player previous movement-related contextual state
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
 enum LastMovement {
     Adjusting,
@@ -301,7 +302,7 @@ enum LastMovement {
     Jumping,
 }
 
-/// A contextual state that stores moving-related data.
+/// A contextual state that stores moving-related data
 #[derive(Clone, Copy, Debug)]
 pub struct Moving {
     /// The player's previous position and will be updated to current position
@@ -383,6 +384,7 @@ impl Moving {
     }
 }
 
+/// The different stages of using key
 #[derive(Clone, Copy, Debug)]
 enum UseKeyStage {
     Precondition,
@@ -463,6 +465,7 @@ pub enum CashShop {
     Stalling,
 }
 
+/// The player contextual states
 #[derive(Clone, Copy, Debug, Display)]
 pub enum Player {
     Detecting,
@@ -470,18 +473,24 @@ pub enum Player {
     UseKey(UseKey),
     /// Movement-related coordinator state
     Moving(Point, bool, Option<(usize, Array<(Point, bool), 16>)>),
+    /// Perform walk or small adjustment x-wise action
     Adjusting(Moving),
+    /// Perform double jump action
     DoubleJumping(Moving, bool, bool),
+    /// Perform a grappling action
     Grappling(Moving),
     Jumping(Moving),
+    /// Perform an up jump action
     UpJumping(Moving),
+    /// Perform a falling action
     Falling(Moving, Point),
+    /// Unstuck when inside non-detecting position or because of `state.unstuck_counter`
     Unstucking(Timeout, Option<bool>),
-    /// Do nothing
+    /// Stall for time and return to `Player::Idle` or `state.stalling_timeout_state`
     Stalling(Timeout, u32),
     /// Try to solve a rune
     SolvingRune(SolvingRune),
-    /// Enters the cash shop then exit after 10 seconds
+    /// Enter the cash shop then exit after 10 seconds
     CashShopThenExit(Timeout, CashShop),
 }
 
@@ -2355,28 +2364,353 @@ fn find_points(
     Some((point, exact, 1, array))
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use opencv::core::Rect;
+// TODO: add more tests
+#[cfg(test)]
+mod tests {
+    // use opencv::core::Rect;
 
-//     use crate::{context::Context, detect::MockDetector};
+    use std::assert_matches::assert_matches;
 
-//     use super::PlayerState;
+    use platforms::windows::KeyKind;
 
-//     fn create_mock_detector() -> MockDetector {
-//         let rect = Rect::new(0, 0, 100, 100);
-//         let player = Rect::new(50, 50, 10, 10);
-//         let mut detector = MockDetector::new();
-//         detector.expect_clone().returning(|| create_mock_detector());
-//         detector.expect_detect_player().return_const(Ok(player));
-//         detector
-//     }
+    use super::{PlayerState, UseKey, UseKeyStage, update_use_key_context};
+    use crate::{
+        ActionKeyDirection, ActionKeyWith, KeyBinding,
+        context::{Context, MockKeySender},
+        detect::MockDetector,
+        player::{Player, Timeout, update_non_positional_context},
+    };
 
-//     #[tokio::test(start_paused = true)]
-//     async fn update_health_state() {
-//         let rect = Rect::new(0, 0, 100, 100);
-//         let context = Context::default();
-//         let state = PlayerState::default();
-//         // update_health_state("");
-//     }
-// }
+    // fn create_mock_detector() -> MockDetector {
+    //     let rect = Rect::new(0, 0, 100, 100);
+    //     let player = Rect::new(50, 50, 10, 10);
+    //     let mut detector = MockDetector::new();
+    //     detector.expect_clone().returning(|| create_mock_detector());
+    //     detector.expect_detect_player().return_const(Ok(player));
+    //     detector
+    // }
+
+    // #[tokio::test(start_paused = true)]
+    // async fn update_health_state() {
+    //     let rect = Rect::new(0, 0, 100, 100);
+    //     let context = Context::default();
+    //     let state = PlayerState::default();
+    // update_health_state("");
+    // }
+
+    #[test]
+    fn use_key_ensure_use_with() {
+        let mut state = PlayerState::default();
+        let context = Context::default();
+        let use_key = UseKey {
+            key: KeyBinding::A,
+            link_key: None,
+            count: 1,
+            current_count: 0,
+            direction: ActionKeyDirection::Any,
+            with: ActionKeyWith::Stationary,
+            wait_before_use_ticks: 0,
+            wait_after_use_ticks: 0,
+            stage: UseKeyStage::Precondition,
+        };
+
+        // ensuring use with start
+        let mut player = Player::UseKey(use_key);
+        player = update_non_positional_context(
+            player,
+            &context,
+            &MockDetector::new(),
+            &mut state,
+            false,
+        )
+        .unwrap();
+        assert_matches!(
+            player,
+            Player::UseKey(UseKey {
+                stage: UseKeyStage::EnsuringUseWith,
+                ..
+            })
+        );
+
+        // ensuring use with complete
+        state.is_stationary = true;
+        player = update_non_positional_context(
+            player,
+            &context,
+            &MockDetector::new(),
+            &mut state,
+            false,
+        )
+        .unwrap();
+        assert_matches!(
+            player,
+            Player::UseKey(UseKey {
+                stage: UseKeyStage::Precondition,
+                ..
+            })
+        );
+
+        // changing direction complete
+        let mut player = Player::UseKey(UseKey {
+            stage: UseKeyStage::ChangingDirection(Timeout {
+                started: true,
+                current: 3,
+                total: 3,
+            }),
+            ..use_key
+        });
+        player = update_non_positional_context(
+            player,
+            &context,
+            &MockDetector::new(),
+            &mut state,
+            false,
+        )
+        .unwrap();
+        assert_matches!(state.last_known_direction, ActionKeyDirection::Left);
+        assert_matches!(
+            player,
+            Player::UseKey(UseKey {
+                stage: UseKeyStage::Precondition,
+                ..
+            })
+        )
+    }
+
+    #[test]
+    fn use_key_change_direction() {
+        let mut keys = MockKeySender::new();
+        keys.expect_send_down()
+            .withf(|key| matches!(key, KeyKind::Left))
+            .returning(|_| Ok(()));
+        keys.expect_send_up()
+            .withf(|key| matches!(key, KeyKind::Left))
+            .returning(|_| Ok(()));
+        let mut state = PlayerState::default();
+        let context = Context {
+            keys: Box::leak(Box::new(keys)),
+            ..Context::default()
+        };
+        let use_key = UseKey {
+            key: KeyBinding::A,
+            link_key: None,
+            count: 1,
+            current_count: 0,
+            direction: ActionKeyDirection::Left,
+            with: ActionKeyWith::Any,
+            wait_before_use_ticks: 0,
+            wait_after_use_ticks: 0,
+            stage: UseKeyStage::Precondition,
+        };
+
+        // changing direction
+        let mut player = Player::UseKey(use_key);
+        player = update_non_positional_context(
+            player,
+            &context,
+            &MockDetector::new(),
+            &mut state,
+            false,
+        )
+        .unwrap();
+        assert_matches!(state.last_known_direction, ActionKeyDirection::Any);
+        assert_matches!(
+            player,
+            Player::UseKey(UseKey {
+                stage: UseKeyStage::ChangingDirection(Timeout { started: false, .. }),
+                ..
+            })
+        );
+
+        // changing direction start
+        player = update_non_positional_context(
+            player,
+            &context,
+            &MockDetector::new(),
+            &mut state,
+            false,
+        )
+        .unwrap();
+        assert_matches!(state.last_known_direction, ActionKeyDirection::Any);
+        assert_matches!(
+            player,
+            Player::UseKey(UseKey {
+                stage: UseKeyStage::ChangingDirection(Timeout { started: true, .. }),
+                ..
+            })
+        );
+
+        // changing direction complete
+        let mut player = Player::UseKey(UseKey {
+            stage: UseKeyStage::ChangingDirection(Timeout {
+                started: true,
+                current: 3,
+                total: 3,
+            }),
+            ..use_key
+        });
+        player = update_non_positional_context(
+            player,
+            &context,
+            &MockDetector::new(),
+            &mut state,
+            false,
+        )
+        .unwrap();
+        assert_matches!(state.last_known_direction, ActionKeyDirection::Left);
+        assert_matches!(
+            player,
+            Player::UseKey(UseKey {
+                stage: UseKeyStage::Precondition,
+                ..
+            })
+        )
+    }
+
+    #[test]
+    fn use_key_count() {
+        let mut keys = MockKeySender::new();
+        keys.expect_send()
+            .times(100)
+            .withf(|key| matches!(key, KeyKind::A))
+            .returning(|_| Ok(()));
+        let mut state = PlayerState::default();
+        let context = Context {
+            keys: Box::leak(Box::new(keys)),
+            ..Context::default()
+        };
+        let use_key = UseKey {
+            key: KeyBinding::A,
+            link_key: None,
+            count: 100,
+            current_count: 0,
+            direction: ActionKeyDirection::Any,
+            with: ActionKeyWith::Any,
+            wait_before_use_ticks: 0,
+            wait_after_use_ticks: 0,
+            stage: UseKeyStage::Precondition,
+        };
+
+        let mut player = Player::UseKey(use_key);
+        for i in 0..100 {
+            player = update_non_positional_context(
+                player,
+                &context,
+                &MockDetector::new(),
+                &mut state,
+                false,
+            )
+            .unwrap();
+            assert_matches!(
+                player,
+                Player::UseKey(UseKey {
+                    stage: UseKeyStage::Using(_, _),
+                    ..
+                })
+            );
+            player = update_non_positional_context(
+                player,
+                &context,
+                &MockDetector::new(),
+                &mut state,
+                false,
+            )
+            .unwrap();
+            assert_matches!(
+                player,
+                Player::UseKey(UseKey {
+                    stage: UseKeyStage::PostCondition,
+                    ..
+                })
+            );
+            player = update_non_positional_context(
+                player,
+                &context,
+                &MockDetector::new(),
+                &mut state,
+                false,
+            )
+            .unwrap();
+            if i == 99 {
+                assert_matches!(player, Player::Idle);
+            } else {
+                assert_matches!(
+                    player,
+                    Player::UseKey(UseKey {
+                        stage: UseKeyStage::Precondition,
+                        ..
+                    })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn use_key_stalling() {
+        let mut keys = MockKeySender::new();
+        keys.expect_send()
+            .withf(|key| matches!(key, KeyKind::A))
+            .return_once(|_| Ok(()));
+        let mut state = PlayerState::default();
+        let context = Context {
+            keys: Box::leak(Box::new(keys)),
+            ..Context::default()
+        };
+        let use_key = UseKey {
+            key: KeyBinding::A,
+            link_key: None,
+            count: 1,
+            current_count: 0,
+            direction: ActionKeyDirection::Any,
+            with: ActionKeyWith::Any,
+            wait_before_use_ticks: 10,
+            wait_after_use_ticks: 20,
+            stage: UseKeyStage::Precondition,
+        };
+
+        // enter stalling state
+        assert!(state.stalling_timeout_state.is_none());
+        assert_matches!(
+            update_use_key_context(&context, &mut state, use_key),
+            Player::Stalling(_, 10)
+        );
+        assert_matches!(
+            state.stalling_timeout_state,
+            Some(Player::UseKey(UseKey {
+                stage: UseKeyStage::Using(_, false),
+                ..
+            }))
+        );
+
+        // complete before stalling state and send key
+        assert_matches!(
+            update_non_positional_context(
+                state.stalling_timeout_state.take().unwrap(),
+                &context,
+                &MockDetector::new(),
+                &mut state,
+                false
+            ),
+            Some(Player::Stalling(_, 20))
+        );
+        assert_matches!(
+            state.stalling_timeout_state,
+            Some(Player::UseKey(UseKey {
+                stage: UseKeyStage::PostCondition,
+                ..
+            }))
+        );
+
+        // complete after stalling state and return idle
+        assert_matches!(
+            update_non_positional_context(
+                state.stalling_timeout_state.take().unwrap(),
+                &context,
+                &MockDetector::new(),
+                &mut state,
+                false
+            ),
+            Some(Player::Idle)
+        );
+    }
+}

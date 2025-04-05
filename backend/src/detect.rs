@@ -2,6 +2,7 @@ use core::slice::SlicePattern;
 use std::{
     collections::HashMap,
     env,
+    fmt::Debug,
     sync::{
         Arc, LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},

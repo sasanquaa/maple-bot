@@ -27,8 +27,22 @@ use crate::{
 const COOLDOWN_BETWEEN_QUEUE_MILLIS: u128 = 20_000;
 const COOLDOWN_BETWEEN_POTION_QUEUE_MILLIS: u128 = 2_000;
 
+/// Predicate for when a priority action can be queued
 type Condition = Box<dyn Fn(&Context, &mut PlayerState, Option<Instant>) -> bool>;
 
+/// A priority action that can override a normal action
+///
+/// This includes all non-`ActionCondition::Any` actions
+///
+/// When a player is in the middle of doing a normal action, this type of action
+/// can override most of the player's current state and forced to perform this action.
+/// However, it cannot override player states that are considered "terminal". These states
+/// include stalling, using key and forced double jumping.
+///
+/// When this type of action has `queue_to_front` set, it will queued to the front and override
+/// other non-queue-to-front priority action. The overriden action is simply placed back to the queue in
+/// front. It is mostly useful for action such as `press attack after x seconds even in the middle
+/// of moving`.
 struct PriorityAction {
     condition: Condition,
     condition_kind: Option<ActionCondition>,
@@ -38,7 +52,7 @@ struct PriorityAction {
     last_queued_time: Option<Instant>,
 }
 
-// TODO: merge RotationMode in Configuration with Minimap
+/// The rotator's rotation mode
 #[derive(Default)]
 pub enum RotatorMode {
     StartToEnd,
@@ -158,7 +172,7 @@ impl Rotator {
         self.rotate_priority_actions_queue(context, player);
         if !player.has_priority_action() && !player.has_normal_action() {
             match self.normal_rotate_mode {
-                RotatorMode::StartToEnd => self.rotate_start_end(player),
+                RotatorMode::StartToEnd => self.rotate_start_to_end(player),
                 RotatorMode::StartToEndThenReverse => self.rotate_start_to_end_then_reverse(player),
                 RotatorMode::AutoMobbing {
                     bound,
@@ -202,6 +216,7 @@ impl Rotator {
     }
 
     fn rotate_priority_actions(&mut self, context: &Context, player: &mut PlayerState) {
+        // keep ignoring while there is any type of erda condition action inside the queue
         let has_erda_action = self.has_erda_action_in_queue(player);
         for (id, action) in self.priority_actions.iter_mut() {
             action.ignoring = match action.condition_kind {
@@ -303,7 +318,7 @@ impl Rotator {
         }));
     }
 
-    fn rotate_start_end(&mut self, player: &mut PlayerState) {
+    fn rotate_start_to_end(&mut self, player: &mut PlayerState) {
         if self.normal_actions.is_empty() {
             return;
         }
