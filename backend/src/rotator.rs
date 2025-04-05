@@ -3,6 +3,7 @@ use std::{
     collections::VecDeque,
     sync::atomic::{AtomicU32, Ordering},
     time::Instant,
+    u32,
 };
 
 use anyhow::Result;
@@ -37,19 +38,25 @@ type Condition = Box<dyn Fn(&Context, &mut PlayerState, Option<Instant>) -> bool
 /// When a player is in the middle of doing a normal action, this type of action
 /// can override most of the player's current state and forced to perform this action.
 /// However, it cannot override player states that are considered "terminal". These states
-/// include stalling, using key and forced double jumping.
+/// include stalling, using key and forced double jumping. It also cannot override linked action.
 ///
-/// When this type of action has `queue_to_front` set, it will queued to the front and override
+/// When this type of action has `queue_to_front` set, it will be queued to the front and override
 /// other non-queue-to-front priority action. The overriden action is simply placed back to the queue in
 /// front. It is mostly useful for action such as `press attack after x seconds even in the middle
 /// of moving`.
 struct PriorityAction {
     condition: Condition,
     condition_kind: Option<ActionCondition>,
-    action: PlayerAction,
+    inner: LinkedAction,
     queue_to_front: bool,
     ignoring: bool,
     last_queued_time: Option<Instant>,
+}
+
+#[derive(Clone, Debug)]
+struct LinkedAction {
+    inner: PlayerAction,
+    next: Option<Box<LinkedAction>>,
 }
 
 /// The rotator's rotation mode
@@ -91,14 +98,16 @@ impl From<RotationMode> for RotatorMode {
 
 #[derive(Default)]
 pub struct Rotator {
-    normal_actions: Vec<PlayerAction>,
+    // this is literally free postfix increment!
+    id_counter: AtomicU32,
+    normal_actions: Vec<(u32, LinkedAction)>,
+    normal_queuing_action: Option<(u32, Box<LinkedAction>)>,
     normal_index: usize,
-    normal_action_backward: bool,
+    normal_actions_backward: bool,
     normal_rotate_mode: RotatorMode,
     auto_mob_task: Option<Task<Result<Vec<Point>>>>,
-    // this is literally free postfix increment!
-    priority_id_counter: AtomicU32,
     priority_actions: OrderedHashMap<u32, PriorityAction>,
+    priority_queuing_action: Option<(u32, Box<LinkedAction>)>,
     priority_actions_queue: VecDeque<u32>,
 }
 
@@ -116,36 +125,51 @@ impl Rotator {
         self.normal_rotate_mode = mode;
         self.priority_actions.clear();
 
-        for action in actions.iter().copied() {
-            match action {
+        let mut i = 0;
+        while i < actions.len() {
+            let action = actions[i];
+            let condition = match action {
                 Action::Move(ActionMove { condition, .. })
-                | Action::Key(ActionKey { condition, .. }) => match condition {
-                    ActionCondition::EveryMillis(_) | ActionCondition::ErdaShowerOffCooldown => {
-                        self.priority_actions.insert(
-                            self.priority_id_counter.fetch_add(1, Ordering::Relaxed),
-                            priority_action(action, condition),
-                        );
+                | Action::Key(ActionKey { condition, .. }) => condition,
+            };
+            let queue_to_front = match action {
+                Action::Move(_) => false,
+                Action::Key(ActionKey { queue_to_front, .. }) => queue_to_front.unwrap_or_default(),
+            };
+            debug_assert!(i != 0 || !matches!(condition, ActionCondition::Linked));
+            let (linked_action, offset) = linked_action(action, i, actions);
+            match condition {
+                ActionCondition::EveryMillis(_) | ActionCondition::ErdaShowerOffCooldown => {
+                    self.priority_actions.insert(
+                        self.id_counter.fetch_add(1, Ordering::Relaxed),
+                        priority_action(linked_action, condition, queue_to_front),
+                    );
+                }
+                ActionCondition::Any => {
+                    if matches!(self.normal_rotate_mode, RotatorMode::AutoMobbing { .. }) {
+                        continue;
                     }
-                    ActionCondition::Any => {
-                        if matches!(self.normal_rotate_mode, RotatorMode::AutoMobbing { .. }) {
-                            continue;
-                        }
-                        self.normal_actions.push(action.into())
-                    }
-                },
+                    self.normal_actions.push((
+                        self.id_counter.fetch_add(1, Ordering::Relaxed),
+                        linked_action,
+                    ))
+                }
+                ActionCondition::Linked => unreachable!(),
             }
+            i += offset;
         }
+
         self.priority_actions.insert(
-            self.priority_id_counter.fetch_add(1, Ordering::Relaxed),
+            self.id_counter.fetch_add(1, Ordering::Relaxed),
             elite_boss_potion_spam_priority_action(potion_key),
         );
         self.priority_actions.insert(
-            self.priority_id_counter.fetch_add(1, Ordering::Relaxed),
+            self.id_counter.fetch_add(1, Ordering::Relaxed),
             solve_rune_priority_action(),
         );
         for (i, key) in buffs.iter().copied() {
             self.priority_actions.insert(
-                self.priority_id_counter.fetch_add(1, Ordering::Relaxed),
+                self.id_counter.fetch_add(1, Ordering::Relaxed),
                 buff_priority_action(i, key),
             );
         }
@@ -153,9 +177,11 @@ impl Rotator {
 
     #[inline]
     pub fn reset_queue(&mut self) {
-        self.normal_action_backward = false;
+        self.normal_actions_backward = false;
         self.normal_index = 0;
+        self.normal_queuing_action = None;
         self.priority_actions_queue.clear();
+        self.priority_queuing_action = None;
     }
 
     #[inline]
@@ -194,41 +220,67 @@ impl Rotator {
         }
     }
 
-    fn has_erda_action_in_queue(&self, player: &PlayerState) -> bool {
-        player
-            .priority_action_id()
-            .map(|id| {
-                self.priority_actions.get(&id).is_some_and(|action| {
-                    matches!(
-                        action.condition_kind,
-                        Some(ActionCondition::ErdaShowerOffCooldown)
-                    )
-                })
+    /// Check if the provided `id` is a linked action in queue
+    #[inline]
+    fn is_priority_linked_action_queuing(&self, id: u32) -> bool {
+        self.priority_queuing_action
+            .as_ref()
+            .is_some_and(|(action_id, _)| *action_id == id)
+    }
+
+    /// Check if the provided `id` is a linked action in execution
+    #[inline]
+    fn is_priority_linked_action_executing(&self, player: &PlayerState, id: u32) -> bool {
+        player.priority_action_id().is_some_and(|action_id| {
+            action_id == id
+                && self
+                    .priority_actions
+                    .get(&id)
+                    .is_some_and(|action| action.inner.next.is_some())
+        })
+    }
+
+    /// Check if the player or the queue has an Erda action
+    #[inline]
+    fn has_erda_action_queuing_or_executing(&self, player: &PlayerState) -> bool {
+        player.priority_action_id().is_some_and(|id| {
+            self.priority_actions.get(&id).is_some_and(|action| {
+                matches!(
+                    action.condition_kind,
+                    Some(ActionCondition::ErdaShowerOffCooldown)
+                )
             })
-            .unwrap_or_else(|| {
-                self.priority_actions_queue.iter().any(|id| {
-                    matches!(
-                        self.priority_actions.get(id).unwrap().condition_kind,
-                        Some(ActionCondition::ErdaShowerOffCooldown)
-                    )
-                })
-            })
+        }) || self.priority_actions_queue.iter().any(|id| {
+            matches!(
+                self.priority_actions.get(id).unwrap().condition_kind,
+                Some(ActionCondition::ErdaShowerOffCooldown)
+            )
+        })
     }
 
     fn rotate_priority_actions(&mut self, context: &Context, player: &mut PlayerState) {
         // keep ignoring while there is any type of erda condition action inside the queue
-        let has_erda_action = self.has_erda_action_in_queue(player);
-        for (id, action) in self.priority_actions.iter_mut() {
+        let has_erda_action = self.has_erda_action_queuing_or_executing(player);
+        let ids = self.priority_actions.keys().copied().collect::<Vec<_>>(); // why?
+        for id in ids {
+            // ignore for as long as the action is a linked action that is queuing
+            // or executing
+            let has_linked_action = self.is_priority_linked_action_queuing(id)
+                || self.is_priority_linked_action_executing(&player, id);
+            let action = self.priority_actions.get_mut(&id).unwrap();
             action.ignoring = match action.condition_kind {
-                Some(ActionCondition::ErdaShowerOffCooldown) => has_erda_action,
-                Some(ActionCondition::EveryMillis(_)) | None => {
-                    player
+                Some(ActionCondition::ErdaShowerOffCooldown) => {
+                    has_erda_action || has_linked_action
+                }
+                Some(ActionCondition::Linked) | Some(ActionCondition::EveryMillis(_)) | None => {
+                    player // the player currently executing action
                         .priority_action_id()
-                        .is_some_and(|action_id| action_id == *id)
-                        || self
+                        .is_some_and(|action_id| action_id == id)
+                        || self // the action is in queue
                             .priority_actions_queue
                             .iter()
-                            .any(|action_id| action_id == id)
+                            .any(|action_id| *action_id == id)
+                        || has_linked_action
                 }
                 Some(ActionCondition::Any) => unreachable!(),
             };
@@ -238,24 +290,50 @@ impl Rotator {
             }
             if (action.condition)(context, player, action.last_queued_time) {
                 if action.queue_to_front {
-                    self.priority_actions_queue.push_front(*id);
+                    self.priority_actions_queue.push_front(id);
                 } else {
-                    self.priority_actions_queue.push_back(*id);
+                    self.priority_actions_queue.push_back(id);
                 }
                 action.last_queued_time = Some(Instant::now());
             }
         }
     }
 
+    #[inline]
+    fn has_normal_linked_action_queuing_or_executing(&self, player: &PlayerState) -> bool {
+        self.normal_queuing_action.is_some()
+            || player.normal_action_id().is_some_and(|id| {
+                self.normal_actions
+                    .iter()
+                    .any(|(action_id, action)| *action_id == id && action.next.is_some())
+            })
+    }
+
+    #[inline]
+    fn has_priority_linked_action_executing(&self, player: &PlayerState) -> bool {
+        player.priority_action_id().is_some_and(|id| {
+            self.priority_actions
+                .get(&id)
+                .is_some_and(|action| action.inner.next.is_some())
+        })
+    }
+
     fn rotate_priority_actions_queue(&mut self, context: &Context, player: &mut PlayerState) {
-        if self.priority_actions_queue.is_empty() {
+        if self.priority_actions_queue.is_empty() && self.priority_queuing_action.is_none() {
             return;
         }
-        if !can_override_player_state(context) {
+        if !can_override_player_state(context)
+            || self.has_normal_linked_action_queuing_or_executing(player)
+            || self.has_priority_linked_action_executing(player)
+        {
             return;
         }
-        let id = self.priority_actions_queue.pop_front().unwrap();
+        if self.rotate_priority_queuing_action(player) {
+            return;
+        }
+        let id = *self.priority_actions_queue.front().unwrap();
         let Some(action) = self.priority_actions.get(&id) else {
+            self.priority_actions_queue.pop_front();
             return;
         };
         let has_queue_to_front = player
@@ -266,15 +344,21 @@ impl Rotator {
                     .map(|action| action.queue_to_front)
             })
             .unwrap_or_default();
-        if action.queue_to_front && !has_queue_to_front {
-            if let Some(id) = player.replace_priority_action(id, action.action) {
+        if has_queue_to_front {
+            return;
+        }
+        if player.has_priority_action() && !action.queue_to_front {
+            return;
+        }
+        self.priority_actions_queue.pop_front();
+        if action.queue_to_front {
+            if let Some(id) = player.replace_priority_action(id, action.inner.inner) {
                 self.priority_actions_queue.push_front(id);
             }
-        } else if !player.has_priority_action() {
-            player.set_priority_action(id, action.action);
         } else {
-            self.priority_actions_queue.push_front(id);
+            player.set_priority_action(id, action.inner.inner);
         }
+        self.priority_queuing_action = action.inner.next.clone().map(|action| (id, action));
     }
 
     fn rotate_auto_mobbing(
@@ -288,6 +372,7 @@ impl Rotator {
         key_wait_before_millis: u64,
         key_wait_after_millis: u64,
     ) {
+        debug_assert!(!player.has_normal_action() && !player.has_priority_action());
         let Minimap::Idle(idle) = context.minimap else {
             return;
         };
@@ -305,65 +390,137 @@ impl Rotator {
         let Some(point) = points.choose(&mut rand::rng()) else {
             return;
         };
-        player.set_normal_action(PlayerAction::AutoMob(PlayerActionAutoMob {
-            key,
-            count: if key_count == 0 { 1 } else { key_count },
-            wait_before_ticks: (key_wait_before_millis / MS_PER_TICK) as u32,
-            wait_after_ticks: (key_wait_after_millis / MS_PER_TICK) as u32,
-            position: Position {
-                x: point.x,
-                y: idle.bbox.height - point.y,
-                allow_adjusting: false,
-            },
-        }));
+        player.set_normal_action(
+            u32::MAX,
+            PlayerAction::AutoMob(PlayerActionAutoMob {
+                key,
+                count: if key_count == 0 { 1 } else { key_count },
+                wait_before_ticks: (key_wait_before_millis / MS_PER_TICK) as u32,
+                wait_after_ticks: (key_wait_after_millis / MS_PER_TICK) as u32,
+                position: Position {
+                    x: point.x,
+                    y: idle.bbox.height - point.y,
+                    allow_adjusting: false,
+                },
+            }),
+        );
     }
 
     fn rotate_start_to_end(&mut self, player: &mut PlayerState) {
+        debug_assert!(!player.has_normal_action() && !player.has_priority_action());
         if self.normal_actions.is_empty() {
             return;
         }
+        if self.rotate_normal_queuing_action(player) {
+            return;
+        }
         debug_assert!(self.normal_index < self.normal_actions.len());
-        let action = self.normal_actions[self.normal_index];
+        let (id, action) = self.normal_actions[self.normal_index].clone();
         self.normal_index = (self.normal_index + 1) % self.normal_actions.len();
-        player.set_normal_action(action);
+        self.normal_queuing_action = Some((id, Box::new(action)));
+        self.rotate_normal_queuing_action(player);
     }
 
     fn rotate_start_to_end_then_reverse(&mut self, player: &mut PlayerState) {
+        debug_assert!(!player.has_normal_action() && !player.has_priority_action());
         if self.normal_actions.is_empty() {
+            return;
+        }
+        if self.rotate_normal_queuing_action(player) {
             return;
         }
         debug_assert!(self.normal_index < self.normal_actions.len());
         let len = self.normal_actions.len();
-        let i = if self.normal_action_backward {
+        let i = if self.normal_actions_backward {
             (len - self.normal_index).saturating_sub(1)
         } else {
             self.normal_index
         };
         if (self.normal_index + 1) == len {
-            self.normal_action_backward = !self.normal_action_backward
+            self.normal_actions_backward = !self.normal_actions_backward
         }
+        let (id, action) = self.normal_actions[i].clone();
         self.normal_index = (self.normal_index + 1) % len;
-        player.set_normal_action(self.normal_actions[i]);
+        self.normal_queuing_action = Some((id, Box::new(action)));
+        self.rotate_normal_queuing_action(player);
+    }
+
+    #[inline]
+    fn rotate_normal_queuing_action(&mut self, player: &mut PlayerState) -> bool {
+        if self.normal_queuing_action.is_none() {
+            return false;
+        }
+        let (id, action) = self.normal_queuing_action.take().unwrap();
+        self.normal_queuing_action = action.next.map(|action| (id, action));
+        player.set_normal_action(id, action.inner);
+        true
+    }
+
+    #[inline]
+    fn rotate_priority_queuing_action(&mut self, player: &mut PlayerState) -> bool {
+        if self.priority_queuing_action.is_none() {
+            return false;
+        }
+        let (id, action) = self.priority_queuing_action.take().unwrap();
+        self.priority_queuing_action = action.next.map(|action| (id, action));
+        player.set_priority_action(id, action.inner);
+        true
     }
 }
 
 #[inline]
-fn priority_action(action: Action, condition: ActionCondition) -> PriorityAction {
+fn linked_action(
+    start_action: Action,
+    start_index: usize,
+    actions: &[Action],
+) -> (LinkedAction, usize) {
+    let mut head = LinkedAction {
+        inner: start_action.into(),
+        next: None,
+    };
+    let mut current = &mut head;
+    let mut offset = 1;
+    for i in start_index + 1..actions.len() {
+        match actions[i] {
+            Action::Move(ActionMove {
+                condition: ActionCondition::Linked,
+                ..
+            })
+            | Action::Key(ActionKey {
+                condition: ActionCondition::Linked,
+                ..
+            }) => {
+                let action = LinkedAction {
+                    inner: actions[i].into(),
+                    next: None,
+                };
+                current.next = Some(Box::new(action));
+                current = current.next.as_mut().unwrap();
+                offset += 1;
+            }
+            _ => break,
+        }
+    }
+    (head, offset)
+}
+
+#[inline]
+fn priority_action(
+    action: LinkedAction,
+    condition: ActionCondition,
+    queue_to_front: bool,
+) -> PriorityAction {
     debug_assert_matches!(
         condition,
         ActionCondition::EveryMillis(_) | ActionCondition::ErdaShowerOffCooldown
     );
     PriorityAction {
-        action: action.into(),
+        inner: action,
         condition: Box::new(move |context, _, last_queued_time| {
             should_queue_fixed_action(context, last_queued_time, condition)
         }),
         condition_kind: Some(condition),
-        queue_to_front: if let Action::Key(ActionKey { queue_to_front, .. }) = action {
-            queue_to_front.unwrap_or_default()
-        } else {
-            false
-        },
+        queue_to_front,
         ignoring: false,
         last_queued_time: None,
     }
@@ -383,16 +540,19 @@ fn elite_boss_potion_spam_priority_action(key: KeyBinding) -> PriorityAction {
             false
         }),
         condition_kind: None,
-        action: PlayerAction::Key(PlayerActionKey {
-            key,
-            link_key: None,
-            count: 1,
-            position: None,
-            direction: ActionKeyDirection::Any,
-            with: ActionKeyWith::Any,
-            wait_before_use_ticks: 5,
-            wait_after_use_ticks: 0,
-        }),
+        inner: LinkedAction {
+            inner: PlayerAction::Key(PlayerActionKey {
+                key,
+                link_key: None,
+                count: 1,
+                position: None,
+                direction: ActionKeyDirection::Any,
+                with: ActionKeyWith::Any,
+                wait_before_use_ticks: 5,
+                wait_after_use_ticks: 0,
+            }),
+            next: None,
+        },
         queue_to_front: true,
         ignoring: false,
         last_queued_time: None,
@@ -416,7 +576,10 @@ fn solve_rune_priority_action() -> PriorityAction {
             false
         }),
         condition_kind: None,
-        action: PlayerAction::SolveRune,
+        inner: LinkedAction {
+            inner: PlayerAction::SolveRune,
+            next: None,
+        },
         queue_to_front: true,
         ignoring: false,
         last_queued_time: None,
@@ -436,16 +599,19 @@ fn buff_priority_action(buff_index: usize, key: KeyBinding) -> PriorityAction {
             matches!(context.buffs[buff_index], Buff::NoBuff)
         }),
         condition_kind: None,
-        action: PlayerAction::Key(PlayerActionKey {
-            key,
-            link_key: None,
-            count: 1,
-            position: None,
-            direction: ActionKeyDirection::Any,
-            with: ActionKeyWith::Stationary,
-            wait_before_use_ticks: 10,
-            wait_after_use_ticks: 10,
-        }),
+        inner: LinkedAction {
+            inner: PlayerAction::Key(PlayerActionKey {
+                key,
+                link_key: None,
+                count: 1,
+                position: None,
+                direction: ActionKeyDirection::Any,
+                with: ActionKeyWith::Stationary,
+                wait_before_use_ticks: 10,
+                wait_after_use_ticks: 10,
+            }),
+            next: None,
+        },
         queue_to_front: true,
         ignoring: false,
         last_queued_time: None,
@@ -476,7 +642,7 @@ fn should_queue_fixed_action(
     let millis_should_passed = match condition {
         ActionCondition::EveryMillis(millis) => millis as u128,
         ActionCondition::ErdaShowerOffCooldown => COOLDOWN_BETWEEN_QUEUE_MILLIS,
-        ActionCondition::Any => unreachable!(),
+        ActionCondition::Linked | ActionCondition::Any => unreachable!(),
     };
     if !at_least_millis_passed_since(last_queued_time, millis_should_passed) {
         return false;
@@ -595,20 +761,23 @@ mod tests {
         let context = Context::default();
         let detector = MockDetector::new();
         rotator.normal_rotate_mode = RotatorMode::StartToEndThenReverse;
-        for _ in 0..2 {
-            rotator.normal_actions.push(NORMAL_ACTION.into());
+        for i in 0..2 {
+            rotator.normal_actions.push((i, LinkedAction {
+                inner: NORMAL_ACTION.into(),
+                next: None,
+            }));
         }
 
         rotator.rotate_action(&context, &detector, &mut player);
         assert!(player.has_normal_action());
-        assert!(!rotator.normal_action_backward);
+        assert!(!rotator.normal_actions_backward);
         assert_eq!(rotator.normal_index, 1);
 
         player.abort_actions();
 
         rotator.rotate_action(&context, &detector, &mut player);
         assert!(player.has_normal_action());
-        assert!(rotator.normal_action_backward);
+        assert!(rotator.normal_actions_backward);
         assert_eq!(rotator.normal_index, 0);
     }
 
@@ -619,20 +788,23 @@ mod tests {
         let context = Context::default();
         let detector = MockDetector::new();
         rotator.normal_rotate_mode = RotatorMode::StartToEnd;
-        for _ in 0..2 {
-            rotator.normal_actions.push(NORMAL_ACTION.into());
+        for i in 0..2 {
+            rotator.normal_actions.push((i, LinkedAction {
+                inner: NORMAL_ACTION.into(),
+                next: None,
+            }));
         }
 
         rotator.rotate_action(&context, &detector, &mut player);
         assert!(player.has_normal_action());
-        assert!(!rotator.normal_action_backward);
+        assert!(!rotator.normal_actions_backward);
         assert_eq!(rotator.normal_index, 1);
 
         player.abort_actions();
 
         rotator.rotate_action(&context, &detector, &mut player);
         assert!(player.has_normal_action());
-        assert!(!rotator.normal_action_backward);
+        assert!(!rotator.normal_actions_backward);
         assert_eq!(rotator.normal_index, 0);
     }
 
@@ -651,7 +823,10 @@ mod tests {
         rotator.priority_actions.insert(55, PriorityAction {
             condition: Box::new(|context, _, _| matches!(context.minimap, Minimap::Idle(_))),
             condition_kind: None,
-            action: PlayerAction::SolveRune,
+            inner: LinkedAction {
+                inner: PlayerAction::SolveRune,
+                next: None,
+            },
             queue_to_front: true,
             ignoring: false,
             last_queued_time: None,
@@ -672,7 +847,10 @@ mod tests {
         rotator.priority_actions.insert(2, PriorityAction {
             condition: Box::new(|_, _, _| true),
             condition_kind: None,
-            action: NORMAL_ACTION.into(),
+            inner: LinkedAction {
+                inner: NORMAL_ACTION.into(),
+                next: None,
+            },
             queue_to_front: false,
             ignoring: false,
             last_queued_time: None,
@@ -680,7 +858,10 @@ mod tests {
         rotator.priority_actions.insert(3, PriorityAction {
             condition: Box::new(|_, _, _| true),
             condition_kind: None,
-            action: NORMAL_ACTION.into(),
+            inner: LinkedAction {
+                inner: NORMAL_ACTION.into(),
+                next: None,
+            },
             queue_to_front: false,
             ignoring: false,
             last_queued_time: None,
@@ -694,7 +875,10 @@ mod tests {
         rotator.priority_actions.insert(4, PriorityAction {
             condition: Box::new(|_, _, _| true),
             condition_kind: None,
-            action: PlayerAction::SolveRune,
+            inner: LinkedAction {
+                inner: PlayerAction::SolveRune,
+                next: None,
+            },
             queue_to_front: true,
             ignoring: false,
             last_queued_time: None,
@@ -712,7 +896,10 @@ mod tests {
         rotator.priority_actions.insert(5, PriorityAction {
             condition: Box::new(|_, _, _| true),
             condition_kind: None,
-            action: PlayerAction::SolveRune,
+            inner: LinkedAction {
+                inner: PlayerAction::SolveRune,
+                next: None,
+            },
             queue_to_front: true,
             ignoring: false,
             last_queued_time: None,
@@ -726,5 +913,60 @@ mod tests {
             VecDeque::from_iter([5, 2, 3].into_iter())
         );
         assert_eq!(player.priority_action_id(), Some(4));
+    }
+
+    #[test]
+    fn rotator_priority_linked_action() {
+        let mut rotator = Rotator::default();
+        let mut player = PlayerState::default();
+        let detector = MockDetector::new();
+        let context = Context::default();
+        rotator.priority_actions.insert(2, PriorityAction {
+            condition: Box::new(|_, _, _| true),
+            condition_kind: None,
+            inner: LinkedAction {
+                inner: NORMAL_ACTION.into(),
+                next: Some(Box::new(LinkedAction {
+                    inner: NORMAL_ACTION.into(),
+                    next: None,
+                })),
+            },
+            queue_to_front: false,
+            ignoring: false,
+            last_queued_time: None,
+        });
+
+        // linked action queued
+        rotator.rotate_action(&context, &detector, &mut player);
+        assert!(rotator.priority_actions_queue.is_empty());
+        assert!(rotator.priority_queuing_action.is_some());
+        assert_eq!(player.priority_action_id(), Some(2));
+
+        // linked action cannot be replaced by queue to front
+        rotator.priority_actions.insert(4, PriorityAction {
+            condition: Box::new(|_, _, _| true),
+            condition_kind: None,
+            inner: LinkedAction {
+                inner: PlayerAction::SolveRune,
+                next: None,
+            },
+            queue_to_front: true,
+            ignoring: false,
+            last_queued_time: None,
+        });
+        rotator.rotate_action(&context, &detector, &mut player);
+        assert_eq!(
+            rotator.priority_actions_queue,
+            VecDeque::from_iter([4].into_iter())
+        );
+
+        player.abort_actions();
+        rotator.rotate_action(&context, &detector, &mut player);
+        assert!(rotator.priority_queuing_action.is_none());
+        assert_eq!(
+            rotator.priority_actions_queue,
+            VecDeque::from_iter([4].into_iter())
+        );
+        assert_eq!(player.priority_action_id(), Some(2));
     }
 }

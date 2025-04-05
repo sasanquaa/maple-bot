@@ -1,4 +1,9 @@
-use std::{fmt::Display, ops::DerefMut, str::FromStr};
+use std::{
+    cmp::{max, min},
+    fmt::Display,
+    ops::DerefMut,
+    str::FromStr,
+};
 
 use backend::{
     Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
@@ -112,6 +117,22 @@ fn ActionPresetTab(
     editing_action: Signal<Option<(Action, usize)>>,
     save_minimap: EventHandler<Minimap>,
 ) -> Element {
+    fn is_linked_condition_action(action: Action) -> bool {
+        match action {
+            Action::Move(ActionMove { condition, .. })
+            | Action::Key(ActionKey { condition, .. }) => {
+                matches!(condition, ActionCondition::Linked)
+            }
+        }
+    }
+
+    fn is_linked_action(actions: &[Action], index: usize) -> bool {
+        if index + 1 < actions.len() {
+            return is_linked_condition_action(actions[index + 1]);
+        }
+        false
+    }
+
     let presets = use_memo::<Vec<String>>(move || {
         minimap()
             .map(|minimap| minimap.actions.keys().cloned().collect::<Vec<_>>())
@@ -139,20 +160,97 @@ fn ActionPresetTab(
     });
     let on_remove = use_callback(move |index| {
         if let Some((minimap, preset)) = minimap.write().as_mut().zip(preset.peek().clone()) {
-            minimap.actions.get_mut(&preset).unwrap().remove(index);
+            let actions = minimap.actions.get_mut(&preset).unwrap();
+            let is_linked_action =
+                is_linked_action(actions, index) && !is_linked_condition_action(actions[index]);
+            actions.remove(index);
+            if is_linked_action {
+                let action = actions.get_mut(index).unwrap();
+                match action {
+                    Action::Move(ActionMove { condition, .. })
+                    | Action::Key(ActionKey { condition, .. }) => {
+                        *condition = ActionCondition::Any;
+                    }
+                }
+            }
+
+            let editing = *editing_action.peek();
+            if let Some((action, i)) = editing {
+                if index == i {
+                    editing_action.set(None);
+                } else if index < i {
+                    let new_i = i.saturating_sub(1);
+                    if new_i == index {
+                        editing_action.set(Some((*actions.get(index).unwrap(), new_i)));
+                    } else {
+                        editing_action.set(Some((action, new_i)));
+                    }
+                }
+            }
             save_minimap(minimap.clone());
         }
     });
     let on_change = use_callback(move |(a, b, swapping)| {
+        editing_action.set(None); // FIXME
+        // let editing = *editing_action.peek();
+        // if let Some((action, index)) = editing {
+        //     if index == a {
+        //         editing_action.set(Some((action, b)));
+        //     } else if swapping && index == b {
+        //         editing_action.set(Some((action, a)));
+        //     }
+        // }
         if let Some((minimap, preset)) = minimap.write().as_mut().zip(preset.peek().clone()) {
             let actions = minimap.actions.get_mut(&preset).unwrap();
             if swapping {
-                actions.swap(a, b);
+                let tmp = a;
+                let a = min(tmp, b);
+                let b = max(tmp, b);
+                let is_a_linked_action = is_linked_action(actions, a);
+                let is_b_linked_action = is_linked_action(actions, b);
+                let mut a_actions = vec![];
+                let mut b_actions = vec![];
+                b_actions.push(actions.remove(b));
+                if is_b_linked_action {
+                    while b < actions.len() && is_linked_condition_action(actions[b]) {
+                        b_actions.push(actions.remove(b));
+                    }
+                }
+                a_actions.push(actions.remove(a));
+                if is_a_linked_action {
+                    while a < actions.len() && is_linked_condition_action(actions[a]) {
+                        a_actions.push(actions.remove(a));
+                    }
+                }
+                let a_offset = b - (a + a_actions.len());
+                let a_insert = a_offset + a + b_actions.len();
+                for action in b_actions.into_iter().rev() {
+                    actions.insert(a, action);
+                }
+                for action in a_actions.into_iter().rev() {
+                    actions.insert(a_insert, action);
+                }
             } else {
-                let action = actions.remove(a);
-                actions.insert(b, action);
+                let is_a_linked_action = is_linked_action(actions, a);
+                let mut a_actions = vec![actions.remove(a)];
+                if is_a_linked_action {
+                    while a < actions.len() && is_linked_condition_action(actions[a]) {
+                        a_actions.push(actions.remove(a));
+                    }
+                }
+                for action in a_actions.into_iter().rev() {
+                    actions.insert(b, action);
+                }
             }
             save_minimap(minimap.clone());
+        }
+    });
+    let exclude_linked =
+        use_memo(move || matches!(editing_action(), Some((_, 0))) || actions().is_empty());
+
+    use_effect(move || {
+        if actions().is_empty() {
+            value_action.set(Action::Move(ActionMove::default()));
         }
     });
 
@@ -204,6 +302,7 @@ fn ActionPresetTab(
                                     },
                                     disabled: preset().is_none(),
                                     value: value_action(),
+                                    exclude_linked: exclude_linked(),
                                 }
                             },
                             Action::Key(_) => rsx! {
@@ -214,6 +313,7 @@ fn ActionPresetTab(
                                     },
                                     disabled: preset().is_none(),
                                     value: value_action(),
+                                    exclude_linked: exclude_linked(),
                                 }
                             },
                         }
@@ -254,25 +354,9 @@ fn ActionPresetTab(
                         on_edit(action);
                     },
                     on_remove: move |index| {
-                        let editing = *editing_action.peek();
-                        if let Some((action, i)) = editing {
-                            if index == i {
-                                editing_action.set(None);
-                            } else if index < i {
-                                editing_action.set(Some((action, i.saturating_sub(1))));
-                            }
-                        }
                         on_remove(index);
                     },
                     on_change: move |(a, b, swapping)| {
-                        let editing = *editing_action.peek();
-                        if let Some((action, index)) = editing {
-                            if index == a {
-                                editing_action.set(Some((action, b)));
-                            } else if swapping && index == b {
-                                editing_action.set(Some((action, a)));
-                            }
-                        }
                         on_change((a, b, swapping));
                     },
                 }
@@ -299,7 +383,7 @@ fn ActionItemList(
     }));
 
     rsx! {
-        div { class: "flex-1 flex flex-col space-y-1 px-1 overflow-y-auto scrollbar rounded border-l border-gray-300",
+        div { class: "flex-1 flex flex-col space-y-1 px-1 overflow-y-auto scrollbar rounded",
             if actions.is_empty() {
                 div { class: "flex items-center justify-center text-sm text-gray-500 h-full",
                     "No actions"
@@ -308,6 +392,12 @@ fn ActionItemList(
                 for (i , action) in actions.into_iter().enumerate() {
                     ActionItem {
                         dragging: dragging(),
+                        draggable: match action {
+                            Action::Move(ActionMove { condition, .. })
+                            | Action::Key(ActionKey { condition, .. }) => {
+                                !matches!(condition, ActionCondition::Linked)
+                            }
+                        },
                         index: i,
                         action,
                         on_click: move |_| {
@@ -338,6 +428,7 @@ fn ActionItem(
     index: usize,
     action: Action,
     dragging: bool,
+    draggable: bool,
     on_click: EventHandler<()>,
     on_remove: EventHandler<()>,
     on_drag: EventHandler<usize>,
@@ -480,22 +571,31 @@ fn ActionItem(
         Action::Move(_) => "border-blue-300",
         Action::Key(_) => "border-gray-300",
     };
+    let cursor = if draggable { "cursur-move" } else { "" };
 
     rsx! {
         div {
-            class: "relative p-1 bg-white rounded shadow-sm cursor-move border-l-2 {border_color}",
-            draggable: true,
+            class: "relative p-1 bg-white rounded shadow-sm {cursor} border-l-2 {border_color}",
+            draggable,
             ondragenter: move |e| {
                 e.prevent_default();
             },
             ondragover: move |e| {
                 e.prevent_default();
             },
-            ondragstart: move |_| {
-                on_drag(index);
+            ondragstart: move |e| {
+                if !draggable {
+                    e.prevent_default();
+                } else {
+                    on_drag(index);
+                }
             },
-            ondrop: move |_| {
-                on_drop((index, true));
+            ondrop: move |e| {
+                if !draggable {
+                    e.prevent_default();
+                } else {
+                    on_drop((index, true));
+                }
             },
             onclick: move |_| {
                 on_click(());
@@ -510,7 +610,7 @@ fn ActionItem(
                     },
                 }
             }
-            if dragging {
+            if draggable && dragging {
                 div {
                     class: "absolute left-0 top-0 w-full h-1.5 bg-gray-300",
                     ondrop: move |e| {
@@ -646,6 +746,7 @@ fn ActionMoveInput(
     on_input: EventHandler<Action>,
     disabled: bool,
     value: Action,
+    exclude_linked: bool,
 ) -> Element {
     let Action::Move(value) = value else {
         unreachable!()
@@ -672,6 +773,7 @@ fn ActionMoveInput(
                 },
                 disabled,
                 value: condition,
+                exclude_linked,
             }
             ActionMillisInput {
                 label: "Wait after action",
@@ -696,6 +798,7 @@ fn ActionKeyInput(
     on_input: EventHandler<Action>,
     disabled: bool,
     value: Action,
+    exclude_linked: bool,
 ) -> Element {
     let Action::Key(value) = value else {
         unreachable!()
@@ -823,6 +926,7 @@ fn ActionKeyInput(
                 },
                 disabled,
                 value: condition,
+                exclude_linked,
             }
             if let Some(queue_to_front) = queue_to_front {
                 ActionCheckbox {
@@ -890,6 +994,7 @@ fn ActionConditionInput(
     on_input: EventHandler<ActionCondition>,
     disabled: bool,
     value: ActionCondition,
+    exclude_linked: bool,
 ) -> Element {
     rsx! {
         ActionEnumSelect {
@@ -897,6 +1002,7 @@ fn ActionConditionInput(
             on_input,
             disabled,
             value,
+            excludes: if exclude_linked { vec![ActionCondition::Linked] } else { vec![] },
         }
         if let ActionCondition::EveryMillis(millis) = value {
             ActionMillisInput {
@@ -959,6 +1065,7 @@ fn ActionEnumSelect<
     disabled: bool,
     on_input: EventHandler<T>,
     value: T,
+    #[props(default = Vec::new())] excludes: Vec<T>,
 ) -> Element {
     rsx! {
         EnumSelect {
@@ -971,6 +1078,7 @@ fn ActionEnumSelect<
                 on_input(selected);
             },
             selected: value,
+            excludes,
         }
     }
 }

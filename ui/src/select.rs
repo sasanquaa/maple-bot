@@ -31,8 +31,10 @@ pub fn EnumSelect<T: 'static + Clone + Copy + PartialEq + Display + FromStr + In
     #[props(default = false)] disabled: bool,
     on_select: EventHandler<T>,
     selected: T,
+    #[props(default = Vec::new())] excludes: Vec<T>,
 ) -> Element {
     let options = T::iter()
+        .filter(|variant| !excludes.contains(variant))
         .map(|variant| (variant.to_string(), variant.to_string()))
         .collect::<Vec<_>>();
     let selected = selected.to_string();

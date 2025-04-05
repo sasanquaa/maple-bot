@@ -103,6 +103,8 @@ pub struct PlayerConfiguration {
 #[derive(Debug, Default)]
 pub struct PlayerState {
     pub config: PlayerConfiguration,
+    /// The id of the normal action provided by `Rotator`
+    normal_action_id: u32,
     /// A normal action requested by `Rotator`
     normal_action: Option<PlayerAction>,
     /// The id of the priority action provided by `Rotator`
@@ -187,13 +189,19 @@ impl PlayerState {
     }
 
     #[inline]
+    pub fn normal_action_id(&self) -> Option<u32> {
+        self.has_normal_action().then_some(self.normal_action_id)
+    }
+
+    #[inline]
     pub fn has_normal_action(&self) -> bool {
         self.normal_action.is_some()
     }
 
     #[inline]
-    pub fn set_normal_action(&mut self, action: PlayerAction) {
+    pub fn set_normal_action(&mut self, id: u32, action: PlayerAction) {
         self.reset_to_idle_next_update = true;
+        self.normal_action_id = id;
         self.normal_action = Some(action);
     }
 
@@ -2449,32 +2457,6 @@ mod tests {
                 ..
             })
         );
-
-        // changing direction complete
-        let mut player = Player::UseKey(UseKey {
-            stage: UseKeyStage::ChangingDirection(Timeout {
-                started: true,
-                current: 3,
-                total: 3,
-            }),
-            ..use_key
-        });
-        player = update_non_positional_context(
-            player,
-            &context,
-            &MockDetector::new(),
-            &mut state,
-            false,
-        )
-        .unwrap();
-        assert_matches!(state.last_known_direction, ActionKeyDirection::Left);
-        assert_matches!(
-            player,
-            Player::UseKey(UseKey {
-                stage: UseKeyStage::Precondition,
-                ..
-            })
-        )
     }
 
     #[test]

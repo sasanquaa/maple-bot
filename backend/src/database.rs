@@ -237,7 +237,7 @@ impl LinkKeyBinding {
 
 impl Default for LinkKeyBinding {
     fn default() -> Self {
-        LinkKeyBinding::After(KeyBinding::default())
+        LinkKeyBinding::Before(KeyBinding::default())
     }
 }
 
@@ -270,6 +270,7 @@ pub enum ActionCondition {
     Any,
     EveryMillis(u64),
     ErdaShowerOffCooldown,
+    Linked,
 }
 
 #[derive(
