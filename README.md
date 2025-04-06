@@ -16,12 +16,81 @@
 - ~~Barely maintainable~~ UI ~~(please help)~~
 - Work by taking an image and send key inputs (no memory hacking)
 - Not a feature but currently only work in GMS (haven't tested MSEA but it is in English...)
+- I hate this game
 
 ## How to use
-TODO
+##### Map
+- Map is automatically detected, saved and restored anytime you go to the map
+- Any actions preset created in the detected map is saved to that map only
+- **Map detection can be wrong**, see [Troubleshooting](#troubleshooting)
+
+TODO Add image
+
+##### Configuration
+- Configuration is used to change key bindings, set up buffs,...
+- Configuration can be created for use with different character(s) through preset
+- Configuration is saved globally and not affected by the detected map
+
+TODO Add image
+
+##### Action
+There are two types of action:
+- `Move` - Moves to a location on the map
+- `Key` - Uses a key with or without location
+
+An action is further categorized into two:
+- A normal action is an action with condition set to `Any`
+- A priority action is any `ErdaShowerOffCooldown`/`EveryMillis` action
+
+A priority action can override a normal action and force the player to perform the former. The
+normal action is not completely overriden and is only delayed until the priority action is complete.
+
+##### Condition
+There are four types of condition:
+- `Any` - Does not do anything special and affected by rotation mode 
+- `ErdaShowerOffCooldown` - Runs an action only when Erda Shower is off-cooldown
+- `EveryMillis` - Runs an action every `x` milliseconds
+- `Linked` - Runs an action chained to the previous action (e.g. like a combo) 
+
+For `ErdaShowerOffCooldown` condition to work, the skill Erda Shower must be assigned to
+the quick slots, with Action Customization toggled on and **visible** on screen.
+
+TODO Add image
+
+##### Rotation Modes
+Rotation mode specifies how to run the actions and affects **only** `Any` condition actions. There are three modes:
+- `StartToEnd` - Runs actions from start to end in the order added and repeats
+- `StartToEndThenReverse` - Runs actions from start to end in the order added and reverses (end to start)
+- `AutoMobbing` - All added actions are ignored and, instead, detects a random mob within bounds to hit
+
+##### Linked Key & Linked Action
+Linked key and linked action are useful for combo-oriented class such as Blaster, Cadena, Ark, Mercedes,...
+Animation cancel timing is specific to each class. As such, the timing is approximated and provided in the configuration, so make sure you select the appropriate one.
+
+For linked key, there are three link types:
+- `Before` - Uses the link key before the actual key (e.g. for Cadena, Chain Arts: Thrash is the link key)
+- `AtTheSame` - Uses the link key at the same time as the actual key (probably only Blaster skating needs this)
+- `After` - Uses the link key after the actual key (e.g. for Blaster, Weaving/Bobbing is the link key)
+
+Note that even though `AtTheSame` would send two keys simultaneously, *the link key will be send first*. When the configured
+class is set to Blaster, the performing action has `After` link type and the link key is not `Space`, an extra `Space` key will be sent for cancelling Bobbing/Weaving. The same effect can also be achieved through linked action.
+
+Linked action is for linking action(s) into a chain. Linked action is straightforward and can be created by adding a `Linked` condition action below any `Any`/`ErdaShowerOffCooldown`/`EveryMillis`/`Linked` action. The first non-`Linked` action is the start of the actions chain:
+
+```
+Any Linked Linked Linked   EveryMillis Linked Linked
+ ▲                     ▲    ▲                    ▲  
+ │                     │    │                    │  
+ │                     │    │                    │  
+ └─────────────────────┘    └────────────────────┘  
+          Chain                      Chain          
+```
+Linked action cannot be overriden by any other type of actions once it has started executing regardless of whether the action is a normal or priority action.
+
+TODO Add image
 
 ## Troubleshooting
-TODO
+##### Wrong map detection
 
 ## Showcase
 #### Rotation

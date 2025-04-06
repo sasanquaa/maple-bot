@@ -571,7 +571,7 @@ fn ActionItem(
         Action::Move(_) => "border-blue-300",
         Action::Key(_) => "border-gray-300",
     };
-    let cursor = if draggable { "cursur-move" } else { "" };
+    let cursor = if draggable { "cursor-move" } else { "" };
 
     rsx! {
         div {

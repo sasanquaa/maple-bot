@@ -1052,8 +1052,8 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
                     }
                 }
                 Some(LinkKeyBinding::AtTheSame(key)) => {
-                    let _ = context.keys.send(use_key.key.into());
                     let _ = context.keys.send(key.into());
+                    let _ = context.keys.send(use_key.key.into());
                 }
                 Some(LinkKeyBinding::Before(_)) | None => {
                     if use_key.link_key.is_some() && !completed {
