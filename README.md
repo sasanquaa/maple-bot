@@ -19,21 +19,24 @@
 - I hate this game
 
 ## How to use
-##### Map
+#### Map
 - Map is automatically detected, saved and restored anytime you go to the map
 - Any actions preset created in the detected map is saved to that map only
 - **Map detection can be wrong**, see [Troubleshooting](#troubleshooting)
 
-TODO Add image
+The arcs are only for visual and do not represent the actual moving path. However, it does represent
+the order of one action to another depending on rotation mode.
 
-##### Configuration
+![Map](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/map.png?raw=true)
+
+#### Configuration
 - Configuration is used to change key bindings, set up buffs,...
 - Configuration can be created for use with different character(s) through preset
 - Configuration is saved globally and not affected by the detected map
 
 TODO Add image
 
-##### Action
+#### Action
 There are two types of action:
 - `Move` - Moves to a location on the map
 - `Key` - Uses a key with or without location
@@ -45,7 +48,7 @@ An action is further categorized into two:
 A priority action can override a normal action and force the player to perform the former. The
 normal action is not completely overriden and is only delayed until the priority action is complete.
 
-##### Condition
+#### Condition
 There are four types of condition:
 - `Any` - Does not do anything special and affected by rotation mode 
 - `ErdaShowerOffCooldown` - Runs an action only when Erda Shower is off-cooldown
@@ -57,13 +60,17 @@ the quick slots, with Action Customization toggled on and **visible** on screen.
 
 TODO Add image
 
-##### Rotation Modes
+#### Rotation Modes
 Rotation mode specifies how to run the actions and affects **only** `Any` condition actions. There are three modes:
 - `StartToEnd` - Runs actions from start to end in the order added and repeats
 - `StartToEndThenReverse` - Runs actions from start to end in the order added and reverses (end to start)
 - `AutoMobbing` - All added actions are ignored and, instead, detects a random mob within bounds to hit
 
-##### Linked Key & Linked Action
+For other conditions actions:
+- `EveryMillis` actions run out of order
+- `ErdaShowerOffCooldown` actions run in the order added same as `StartToEnd`
+
+#### Linked Key & Linked Action
 Linked key and linked action are useful for combo-oriented class such as Blaster, Cadena, Ark, Mercedes,...
 Animation cancel timing is specific to each class. As such, the timing is approximated and provided in the configuration, so make sure you select the appropriate one.
 
@@ -90,7 +97,7 @@ Linked action cannot be overriden by any other type of actions once it has start
 TODO Add image
 
 ## Troubleshooting
-##### Wrong map detection
+#### Wrong map detection
 
 ## Showcase
 #### Rotation
