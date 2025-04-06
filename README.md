@@ -34,6 +34,9 @@ the order of one action to another depending on rotation mode.
 - Configuration can be created for use with different character(s) through preset
 - Configuration is saved globally and not affected by the detected map
 
+For supported buffs in the configuration, the bot relies on detecting buffs on the top-right corner. And the bot
+movement depends heavily on the skill `Rope Lift` to move around platforms, so make sure you set a key for it.
+
 ![Configuration](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/configuration.png?raw=true)
 
 #### Action
@@ -48,11 +51,20 @@ An action is further categorized into two:
 A priority action can override a normal action and force the player to perform the former. The
 normal action is not completely overriden and is only delayed until the priority action is complete.
 
-Action properties:
-- `Position`: Optionally add a position to use the key
+Action `Move` configurations:
+- `Type`: `Move`
+- `Position`: The required position to move to 
+- `Adjust position`: Whether the actual position should be as close as possible to the specified position 
+- `Condition`: See below
+- `Wait after move`: The milliseconds to wait after moving (e.g. for looting)
+
+Action `Key` configurations:
+- `Type`: `Key`
+- `Position`: Optionally add a position to use the key 
 - `Count`: Number of times to use the key
 - `Key`: The key to use
-- `Has link key`: Optionally enable link key (useful for [combo classes](linked-key--linked-action))
+- `Has link key`: Optionally enable link key (useful for [combo classes](#linked-key--linked-action))
+- `Condition`: See below
 - `Queue to front`:
   - Applicable only to `EveryMillis` and `ErdaShowerOffCooldown` conditions
   - When set, this action can override other non-`Queue to front` priority action
@@ -65,6 +77,8 @@ Action properties:
 - `Wait before action`/`Wait after action`:
   - Wait for the specified amount of millseconds after/before using the key
   - Waiting is applied on each repeat of `Count`
+
+Actions added in the list below can be dragged/dropped/reordered.
 
 ![Actions](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/actions.png?raw=true)
 
@@ -79,16 +93,6 @@ For `ErdaShowerOffCooldown` condition to work, the skill Erda Shower must be ass
 the quick slots, with Action Customization toggled on and **visible** on screen.
 
 TODO Add image
-
-#### Rotation Modes
-Rotation mode specifies how to run the actions and affects **only** `Any` condition actions. There are three modes:
-- `StartToEnd` - Runs actions from start to end in the order added and repeats
-- `StartToEndThenReverse` - Runs actions from start to end in the order added and reverses (end to start)
-- `AutoMobbing` - All added actions are ignored and, instead, detects a random mob within bounds to hit
-
-For other conditions actions:
-- `EveryMillis` actions run out of order
-- `ErdaShowerOffCooldown` actions run in the order added same as `StartToEnd`
 
 #### Linked Key & Linked Action
 Linked key and linked action are useful for combo-oriented class such as Blaster, Cadena, Ark, Mercedes,...
@@ -112,12 +116,67 @@ Any Linked Linked Linked   EveryMillis Linked Linked
  └─────────────────────┘    └────────────────────┘  
           Chain                      Chain          
 ```
+
 Linked action cannot be overriden by any other type of actions once it has started executing regardless of whether the action is a normal or priority action.
+
+(This feature is quite niche though...)
+
+TODO Add image
+
+#### Rotation Modes
+Rotation mode specifies how to run the actions and affects **only** `Any` condition actions. There are three modes:
+- `StartToEnd` - Runs actions from start to end in the order added and repeats
+- `StartToEndThenReverse` - Runs actions from start to end in the order added and reverses (end to start)
+- `AutoMobbing` - All added actions are ignored and, instead, detects a random mob within bounds to hit
+
+For other conditions actions:
+- `EveryMillis` actions run out of order
+- `ErdaShowerOffCooldown` actions run in the order added same as `StartToEnd`
+
+When `AutoMobbing` is used:
+- Setting the bounds to inside the minimap is required so that the bot will not wrongly detect out of bounds mobs
+- The bounds should be the rectangle where you can move around (two edges of the map)
+- For platforms pathing, see [Platforms Pathing](#platforms-pathing)
+
+#### Platforms Pathing
+Platforms pathing is currently only supported for Auto Mobbing and Rune Solving. This feature exists to help
+pathing around platforms with or without `Rope Lift` skill. To use this feature, add all the map's platforms starting
+from the ground level.
+
+Without this feature, the bot movement is quite simple. It just moves horizontally first so the `x` matches the destination
+and then try to up jump, rope lift or drop down as appropriate to match the `y`.
 
 TODO Add image
 
 ## Troubleshooting
 #### Wrong map detection
+Wrong map detection can happen when:
+- The detected map's name is too different from existing map's name and see it as a new map
+- Some maps can have different name detected at different position
+- Other UIs overlapping
+
+Rule of thumb is: Make sure the map's name is detected persistently each time you enter the map. As long as 
+the detected name is similar, the map data will be restored. **Note that the detected name may not be accurate
+but as long as the same name (or similar name) is detected each time, it should be fine**.
+
+Fix methods:
+- Below the map are three buttons, two of which can be used to help troubleshooting:
+    - `Re-detect map`: Use this button to re-detect the map
+    - `Delete map`: Use this to **permanently delete** the map, only use when you know the map's name is wrong
+- Move the map UI around
+- Move around the map (I encountered this in some Sellas maps)
+- When moving around different maps, it may detect previous map due to delay. Just use `Re-detect map` 
+button for this case.
+
+#### Actions contention (?)
+Action with `EveryMillis` can lead to contention if you do not space them out properly. For example, if there are two `EveryMillis` actions executed every 2 seconds, wait 1 second afterwards and one normal action, it is likely the normal action will never
+get the chance to run to completion.
+
+That said, it is quite rare.
+
+#### Default Ratio Game Resolution
+Currently, the bot does not support `Default Ratio` game resolution because most detection resources are
+in `Ideal Ratio` (1920x1080 with `Ideal Ratio` or 1376x768 below)
 
 ## Showcase
 #### Rotation
