@@ -34,7 +34,7 @@ the order of one action to another depending on rotation mode.
 - Configuration can be created for use with different character(s) through preset
 - Configuration is saved globally and not affected by the detected map
 
-TODO Add image
+![Configuration](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/configuration.png?raw=true)
 
 #### Action
 There are two types of action:
@@ -47,6 +47,26 @@ An action is further categorized into two:
 
 A priority action can override a normal action and force the player to perform the former. The
 normal action is not completely overriden and is only delayed until the priority action is complete.
+
+Action properties:
+- `Position`: Optionally add a position to use the key
+- `Count`: Number of times to use the key
+- `Key`: The key to use
+- `Has link key`: Optionally enable link key (useful for [combo classes](linked-key--linked-action))
+- `Queue to front`:
+  - Applicable only to `EveryMillis` and `ErdaShowerOffCooldown` conditions
+  - When set, this action can override other non-`Queue to front` priority action
+  - The overriden priority action is not lost but delayed like normal action
+  - Cannot override linked action
+- `Direction`: The direction to use the key
+- `With`:
+  - `Stationary` - Performs an action only when standing on ground (for buffs)
+  - `DoubleJump` - Performs an action with double jump
+- `Wait before action`/`Wait after action`:
+  - Wait for the specified amount of millseconds after/before using the key
+  - Waiting is applied on each repeat of `Count`
+
+![Actions](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/actions.png?raw=true)
 
 #### Condition
 There are four types of condition:
