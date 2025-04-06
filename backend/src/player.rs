@@ -227,6 +227,15 @@ impl PlayerState {
     }
 
     #[inline]
+    pub fn take_priority_action(&mut self) -> Option<u32> {
+        self.reset_to_idle_next_update = true;
+        self.priority_action
+            .take()
+            .is_some()
+            .then_some(self.priority_action_id)
+    }
+
+    #[inline]
     pub fn replace_priority_action(&mut self, id: u32, action: PlayerAction) -> Option<u32> {
         let prev_id = self.priority_action_id;
         self.reset_to_idle_next_update = true;
