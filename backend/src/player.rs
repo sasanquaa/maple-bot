@@ -516,7 +516,6 @@ impl Contextual for Player {
 
     // 草草ｗｗ。。。
     // TODO: detect if a point is reachable after number of retries?
-    // TODO: add unit tests
     fn update(
         self,
         context: &Context,
@@ -2414,6 +2413,31 @@ mod tests {
     //     let state = PlayerState::default();
     // update_health_state("");
     // }
+
+    #[test]
+    fn adjusting() {
+        // TODO
+    }
+
+    #[test]
+    fn double_jumping() {
+        // TODO
+    }
+
+    #[test]
+    fn grappling() {
+        // TODO
+    }
+
+    #[test]
+    fn up_jumping() {
+        // TODO
+    }
+
+    #[test]
+    fn falling() {
+        // TODO
+    }
 
     #[test]
     fn use_key_ensure_use_with() {

@@ -325,9 +325,9 @@ impl Rotator {
         }
     }
 
-    /// Check if the player is queuing or executing normal a linked action
+    /// Check if the player is queuing or executing a normal linked action
     ///
-    /// This prevents `rotate_priority_actions_queue` to override the normal linked action
+    /// This prevents `rotate_priority_actions_queue` from overriding the normal linked action
     #[inline]
     fn has_normal_linked_action_queuing_or_executing(&self, player: &PlayerState) -> bool {
         if self.normal_queuing_linked_action.is_some() {
@@ -340,7 +340,7 @@ impl Rotator {
         })
     }
 
-    /// Check if the player is executing priority a linked action
+    /// Check if the player is executing a priority linked action
     ///
     /// This does not check the queuing linked action because this check is to allow the linked
     /// action to be rotated in `rotate_priority_actions_queue`

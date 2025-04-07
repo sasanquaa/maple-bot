@@ -518,12 +518,12 @@ fn detect_player_legion_wealth_buff(mat: &impl ToInputArray) -> bool {
         .unwrap()
     });
 
-    detect_template(mat, &*LEGION_WEALTH_BUFF, Point::default(), 0.75, None).is_ok()
+    detect_template(mat, &*LEGION_WEALTH_BUFF, Point::default(), 0.73, None).is_ok()
 }
 
 fn detect_player_legion_luck_buff(mat: &impl ToInputArray) -> bool {
     /// TODO: Support default ratio
-    static LEGION_WEALTH_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+    static LEGION_LUCK_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
             include_bytes!(env!("LEGION_LUCK_BUFF_TEMPLATE")),
             IMREAD_COLOR,
@@ -531,7 +531,7 @@ fn detect_player_legion_luck_buff(mat: &impl ToInputArray) -> bool {
         .unwrap()
     });
 
-    detect_template(mat, &*LEGION_WEALTH_BUFF, Point::default(), 0.75, None).is_ok()
+    detect_template(mat, &*LEGION_LUCK_BUFF, Point::default(), 0.75, None).is_ok()
 }
 
 fn detect_erda_shower(mat: &impl MatTraitConst) -> Result<Rect> {
@@ -1178,6 +1178,7 @@ fn extract_text_bboxes(
     for i in 1..labels_count {
         let area = *stats.at_2d::<i32>(i, CC_STAT_AREA).unwrap();
         if area < 210 {
+            // FIXME: this matters only for minimap, what about health?
             // skip too small single character (number)
             // and later re-detect afterward
             continue;
