@@ -818,7 +818,7 @@ fn ActionKeyInput(
 
     use_effect(use_reactive!(|condition| {
         on_input(Action::Key(ActionKey {
-            queue_to_front: (!matches!(condition, ActionCondition::Any))
+            queue_to_front: (!matches!(condition, ActionCondition::Any | ActionCondition::Linked))
                 .then_some(queue_to_front.unwrap_or_default()),
             ..value
         }));

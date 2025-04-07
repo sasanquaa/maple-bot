@@ -65,3 +65,12 @@ jobs:
         with:
           name: app
           path: target/dx/ui/release/windows/app
+
+      - if: startsWith(github.ref, 'refs/tags/')
+        run: Compress-Archive -Path target/dx/ui/release/windows/app/* -Destination app.zip
+
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          draft: true
+          files: app.zip
