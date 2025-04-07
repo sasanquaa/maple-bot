@@ -1,13 +1,23 @@
 - [Features](#features)
 - [How to use](#how-to-use)
+  - [Map](#map)
+  - [Configuration](#configuration)
+  - [Action](#action)
+  - [Condition](#condition)
+  - [Linked Key & Linked Action](#linked-key--linked-action)
+  - [Rotation Modes](#rotation-modes)
+  - [Platforms Pathing](#platforms-pathing)
 - [Troubleshooting](#troubleshooting)
+  - [Wrong map detection](#wrong-map-detection)
+  - [Actions contention](#actions-contention-)
+  - [Default Ratio game resolution](#default-ratio-game-resolution)
 - [Showcase](#showcase)
   - [Rotation](#rotation)
   - [Auto Mobbing & Platforms Pathing](#auto-mobbing-%26-platforms-pathing)
   - [Rune Solving](#rune-solving)
 
 ## Features
-- More like a rotation maker than a bot?
+- More like a rotation maker than a bot? (cope)
 - Run around and hit random mobs mode (literally a bot)
 - Auto buffs for common farming-related buffs
 - Auto potion (periodically or somewhat functional Auto HP-like pet skill)
@@ -176,7 +186,7 @@ get the chance to run to completion.
 
 That said, it is quite rare.
 
-#### Default Ratio Game Resolution
+#### Default Ratio game resolution
 Currently, the bot does not support `Default Ratio` game resolution because most detection resources are
 in `Ideal Ratio` (1920x1080 with `Ideal Ratio` or 1376x768 below). `Default Ratio` currently only takes effect
 when play in `1920x1080` or above, making the UI blurry.
