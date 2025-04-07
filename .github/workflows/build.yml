@@ -3,8 +3,13 @@ name: Build windows-x64-static-release
 on:
   push:
     branches: ["master"]
+    tags:
+      - "v*.*.*"
   pull_request:
     branches: ["master"]
+
+permissions:
+  contents: write
 
 env:
   VCPKG_ENABLE_METRICS: 0
