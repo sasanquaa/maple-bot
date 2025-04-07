@@ -37,7 +37,9 @@ the order of one action to another depending on rotation mode.
 For supported buffs in the configuration, the bot relies on detecting buffs on the top-right corner. And the bot
 movement depends heavily on the skill `Rope Lift` to move around platforms, so make sure you set a key for it.
 
+![Rope Lift](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/ropelift.png?raw=true)
 ![Configuration](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/configuration.png?raw=true)
+![Buffs](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/buffs.png?raw=true)
 
 #### Action
 There are two types of action:
@@ -92,7 +94,7 @@ There are four types of condition:
 For `ErdaShowerOffCooldown` condition to work, the skill Erda Shower must be assigned to
 the quick slots, with Action Customization toggled on and **visible** on screen.
 
-TODO Add image
+![Erda Shower](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/erda.png?raw=true)
 
 #### Linked Key & Linked Action
 Linked key and linked action are useful for combo-oriented class such as Blaster, Cadena, Ark, Mercedes,...
@@ -106,22 +108,20 @@ For linked key, there are three link types:
 Note that even though `AtTheSame` would send two keys simultaneously, *the link key will be send first*. When the configured
 class is set to Blaster, the performing action has `After` link type and the link key is not `Space`, an extra `Space` key will be sent for cancelling Bobbing/Weaving. The same effect can also be achieved through linked action.
 
-Linked action is for linking action(s) into a chain. Linked action is straightforward and can be created by adding a `Linked` condition action below any `Any`/`ErdaShowerOffCooldown`/`EveryMillis`/`Linked` action. The first non-`Linked` action is the start of the actions chain:
+Linked action is for linking action(s) into a chain. Linked action can be created by adding a `Linked` condition action below any `Any`/`ErdaShowerOffCooldown`/`EveryMillis`/`Linked` action. The first non-`Linked` action is the start of the actions chain:
 
 ```
 Any Linked Linked Linked   EveryMillis Linked Linked
- ▲                     ▲    ▲                    ▲  
- │                     │    │                    │  
- │                     │    │                    │  
- └─────────────────────┘    └────────────────────┘  
+ ▲                    ▲     ▲                    ▲  
+ │                    │     │                    │  
+ │                    │     │                    │  
+ └────────────────────┘     └────────────────────┘  
           Chain                      Chain          
 ```
 
 Linked action cannot be overriden by any other type of actions once it has started executing regardless of whether the action is a normal or priority action.
 
 (This feature is quite niche though...)
-
-TODO Add image
 
 #### Rotation Modes
 Rotation mode specifies how to run the actions and affects **only** `Any` condition actions. There are three modes:
@@ -138,6 +138,8 @@ When `AutoMobbing` is used:
 - The bounds should be the rectangle where you can move around (two edges of the map)
 - For platforms pathing, see [Platforms Pathing](#platforms-pathing)
 
+![Auto Mobbing](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/automobbing.png?raw=true)
+
 #### Platforms Pathing
 Platforms pathing is currently only supported for Auto Mobbing and Rune Solving. This feature exists to help
 pathing around platforms with or without `Rope Lift` skill. To use this feature, add all the map's platforms starting
@@ -146,7 +148,7 @@ from the ground level.
 Without this feature, the bot movement is quite simple. It just moves horizontally first so the `x` matches the destination
 and then try to up jump, rope lift or drop down as appropriate to match the `y`.
 
-TODO Add image
+![Platforms](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/platforms.png?raw=true)
 
 ## Troubleshooting
 #### Wrong map detection
@@ -176,15 +178,18 @@ That said, it is quite rare.
 
 #### Default Ratio Game Resolution
 Currently, the bot does not support `Default Ratio` game resolution because most detection resources are
-in `Ideal Ratio` (1920x1080 with `Ideal Ratio` or 1376x768 below)
+in `Ideal Ratio` (1920x1080 with `Ideal Ratio` or 1376x768 below). `Default Ratio` currently only takes effect
+when play in `1920x1080` or above, making the UI blurry.
 
 ## Showcase
 #### Rotation
 https://github.com/user-attachments/assets/3c66dcb9-7196-4245-a7ea-4253f214bba6
 
 https://github.com/user-attachments/assets/463b9844-0950-4371-9644-14fad5e1fab9
+
 #### Auto Mobbing & Platforms Pathing
 https://github.com/user-attachments/assets/3f087f83-f956-4ee1-84b0-1a31286413ef
+
 #### Rune Solving
 https://github.com/user-attachments/assets/e9ebfc60-42bc-49ef-a367-3c20a1cd00e0
 
