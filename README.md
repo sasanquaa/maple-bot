@@ -48,7 +48,9 @@ For supported buffs in the configuration, the bot relies on detecting buffs on t
 movement depends heavily on the skill `Rope Lift` to move around platforms, so make sure you set a key for it.
 
 ![Rope Lift](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/ropelift.png?raw=true)
+
 ![Configuration](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/configuration.png?raw=true)
+
 ![Buffs](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/buffs.png?raw=true)
 
 #### Action
@@ -67,7 +69,7 @@ Action `Move` configurations:
 - `Type`: `Move`
 - `Position`: The required position to move to 
 - `Adjust position`: Whether the actual position should be as close as possible to the specified position 
-- `Condition`: See below
+- `Condition`: See [below](#condition)
 - `Wait after move`: The milliseconds to wait after moving (e.g. for looting)
 
 Action `Key` configurations:
@@ -76,7 +78,7 @@ Action `Key` configurations:
 - `Count`: Number of times to use the key
 - `Key`: The key to use
 - `Has link key`: Optionally enable link key (useful for [combo classes](#linked-key--linked-action))
-- `Condition`: See below
+- `Condition`: See [below](#condition)
 - `Queue to front`:
   - Applicable only to `EveryMillis` and `ErdaShowerOffCooldown` conditions
   - When set, this action can override other non-`Queue to front` priority action
