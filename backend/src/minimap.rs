@@ -37,8 +37,8 @@ struct Anchors {
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(test, derive(Default))]
 pub struct MinimapIdle {
-    /// The two anchors top left and bottom right of the minimap.
-    /// They are just two fixed pixels.
+    /// The two anchors top left and bottom right of the minimap
+    /// They are just two fixed pixels
     anchors: Anchors,
     /// The bounding box of the minimap.
     pub bbox: Rect,

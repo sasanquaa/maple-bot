@@ -41,7 +41,7 @@ const BONUS_EXP_BUFF_POSITION: usize = 4;
 const LEGION_WEALTH_BUFF_POSITION: usize = 5;
 const LEGION_LUCK_BUFF_POSITION: usize = 6;
 
-/// Represent a control flow after a context update
+/// Represents a control flow after a context update
 pub enum ControlFlow<T> {
     /// The context is updated immediately
     Immediate(T),
@@ -49,12 +49,12 @@ pub enum ControlFlow<T> {
     Next(T),
 }
 
-/// Represent a context-based state
+/// Represents a context-based state
 pub trait Contextual {
-    /// Represent a state that is persistent through each `update` tick.
+    /// Represents a state that is persistent through each `update` tick.
     type Persistent = ();
 
-    /// Update the contextual state.
+    /// Updates the contextual state.
     ///
     /// Updating is performed on each tick and the behavior whether to continue
     /// updating in the same tick or next is decided by `ControlFlow`. The state
@@ -69,7 +69,7 @@ pub trait Contextual {
         Self: Sized;
 }
 
-/// Represent an object that can send keys
+/// Represents an object that can send keys
 #[cfg_attr(test, automock)]
 pub trait KeySender: Debug {
     fn send(&self, kind: KeyKind) -> Result<(), Error>;

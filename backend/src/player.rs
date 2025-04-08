@@ -73,13 +73,13 @@ const MAX_RUNE_FAILED_COUNT: u32 = 2;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PlayerConfiguration {
     pub class: Class,
-    /// Enable platform pathing for rune
+    /// Enables platform pathing for rune
     pub rune_platforms_pathing: bool,
-    /// Use only up jump(s) in rune platform pathing
+    /// Uses only up jump(s) in rune platform pathing
     pub rune_platforms_pathing_up_jump_only: bool,
-    /// Enable platform pathing for auto mob
+    /// Enables platform pathing for auto mob
     pub auto_mob_platforms_pathing: bool,
-    /// Use only up jump(s) in auto mob platform pathing
+    /// Uses only up jump(s) in auto mob platform pathing
     pub auto_mob_platforms_pathing_up_jump_only: bool,
     /// The interact key
     pub interact_key: KeyKind,
@@ -93,7 +93,7 @@ pub struct PlayerConfiguration {
     pub cash_shop_key: KeyKind,
     /// The potion key
     pub potion_key: KeyKind,
-    /// Use potion when health is below a percentage
+    /// Uses potion when health is below a percentage
     pub use_potion_below_percent: Option<f32>,
     /// Milliseconds interval to update current health
     pub update_health_millis: Option<u64>,
@@ -126,38 +126,38 @@ pub struct PlayerState {
     is_stationary: bool,
     /// Approximates the player direction for using key
     last_known_direction: ActionKeyDirection,
-    /// Track last destination points for displaying to UI
-    /// Reset when all destinations are reached or in `Player::Idle`
+    /// Tracks last destination points for displaying to UI
+    /// Resets when all destinations are reached or in `Player::Idle`
     pub last_destinations: Option<Vec<Point>>,
     /// Last known position after each detection used for unstucking, also for displaying to UI
     pub last_known_pos: Option<Point>,
     /// Indicates whether to use `ControlFlow::Immediate` on this update
     use_immediate_control_flow: bool,
-    /// Indicate whether to ignore update_pos and use last_known_pos on next update
+    /// Indicates whether to ignore update_pos and use last_known_pos on next update
     ignore_pos_update: bool,
-    /// Indicate whether to reset the contextual state back to `Player::Idle` on next update
+    /// Indicates whether to reset the contextual state back to `Player::Idle` on next update
     reset_to_idle_next_update: bool,
-    /// Indicate the last movement
-    /// Help for coordinating between movement states (e.g. falling + double jumping)
-    /// Reset to `None` when the destination (possibly intermediate) is reached or in `Player::Idle`
+    /// Indicates the last movement
+    /// Helps coordinating between movement states (e.g. falling + double jumping)
+    /// Resets to `None` when the destination (possibly intermediate) is reached or in `Player::Idle`
     last_movement: Option<LastMovement>,
     // TODO: 2 maps fr?
-    /// Track `last_movement` to abort normal action when its position is not accurate
-    /// Clear when a normal action is completed or aborted
+    /// Tracks `last_movement` to abort normal action when its position is not accurate
+    /// Clears when a normal action is completed or aborted
     last_movement_normal_map: HashMap<LastMovement, u32>,
-    /// Track `last_movement` to abort priority action when its position is not accurate
-    /// Clear when a priority action is completed or aborted
+    /// Tracks `last_movement` to abort priority action when its position is not accurate
+    /// Clears when a priority action is completed or aborted
     last_movement_priority_map: HashMap<LastMovement, u32>,
-    /// Track a map of "reachable" y
+    /// Tracks a map of "reachable" y
     /// A y is reachable if there is a platform the player can stand on
     auto_mob_reachable_y_map: HashMap<i32, u32>,
     /// The matched reachable y and also the key in `auto_mob_reachable_y_map`
     auto_mob_reachable_y: Option<i32>,
-    /// Track whether movement-related actions do not change the player position after a while.
-    /// Reset when a limit is reached (for unstucking) or position did change.
+    /// Tracks whether movement-related actions do not change the player position after a while.
+    /// Resets when a limit is reached (for unstucking) or position did change.
     unstuck_counter: u32,
     /// The number of consecutive times player transtioned to `Player::Unstucking`
-    /// Reset when position did change
+    /// Resets when position did change
     unstuck_consecutive_counter: u32,
     /// Unstuck task for detecting settings when mis-pressing ESC key
     unstuck_task: Option<Task<Result<bool>>>,
@@ -165,11 +165,11 @@ pub struct PlayerState {
     rune_task: Option<Task<Result<[KeyKind; 4]>>>,
     /// The number of times `Player::SolvingRune` failed
     rune_failed_count: u32,
-    /// Indicate the state will be transitioned to `Player::CashShopThenExit` in the next tick
+    /// Indicates the state will be transitioned to `Player::CashShopThenExit` in the next tick
     rune_cash_shop: bool,
     rune_validate_timeout: Option<Timeout>,
     /// A state to return to after stalling
-    /// Reset when `Player::Stalling` timed out or in `Player::Idle`
+    /// Resets when `Player::Stalling` timed out or in `Player::Idle`
     stalling_timeout_state: Option<Player>,
 }
 

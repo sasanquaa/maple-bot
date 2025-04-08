@@ -237,7 +237,7 @@ impl Rotator {
         }
     }
 
-    /// Check if the provided `id` is a linked action in queue or executing
+    /// Checks if the provided `id` is a linked action in queue or executing
     #[inline]
     fn is_priority_linked_action_queuing_or_executing(
         &self,
@@ -260,7 +260,7 @@ impl Rotator {
         })
     }
 
-    /// Check if the player or the queue has an Erda action
+    /// Checks if the player or the queue has an Erda action
     #[inline]
     fn has_erda_action_queuing_or_executing(&self, player: &PlayerState) -> bool {
         if player.priority_action_id().is_some_and(|id| {
@@ -281,7 +281,7 @@ impl Rotator {
         })
     }
 
-    /// Rotate the actions inside the `priority_actions`
+    /// Rotates the actions inside the `priority_actions`
     ///
     /// This function does not pass the action to the player but only pushes the action to
     /// `priority_actions_queue`. It is responsible for checking queuing condition.
@@ -325,7 +325,7 @@ impl Rotator {
         }
     }
 
-    /// Check if the player is queuing or executing a normal linked action
+    /// Checks if the player is queuing or executing a normal linked action
     ///
     /// This prevents `rotate_priority_actions_queue` from overriding the normal linked action
     #[inline]
@@ -340,7 +340,7 @@ impl Rotator {
         })
     }
 
-    /// Check if the player is executing a priority linked action
+    /// Checks if the player is executing a priority linked action
     ///
     /// This does not check the queuing linked action because this check is to allow the linked
     /// action to be rotated in `rotate_priority_actions_queue`
@@ -353,7 +353,7 @@ impl Rotator {
         })
     }
 
-    /// Rotate the actions inside the `priority_actions_queue`
+    /// Rotates the actions inside the `priority_actions_queue`
     ///
     /// If there is any on-going linked action:
     /// - For normal action, it will wait until the action is completed by the normal rotation
@@ -538,6 +538,10 @@ impl Rotator {
     }
 }
 
+/// Creates a `RotatorAction` with `start_action` as the initial action
+///
+/// If `start_action` is linked, this function returns `RotatorAction::Linked`.
+/// OTherwise, this returns `RotatorAction::Single`.
 #[inline]
 fn rotator_action(
     start_action: Action,
@@ -609,6 +613,7 @@ fn priority_action(
     }
 }
 
+/// Creates a `PlayerAction::Key` that spams potion when there is an elite boss
 #[inline]
 fn elite_boss_potion_spam_priority_action(key: KeyBinding) -> PriorityAction {
     PriorityAction {
@@ -639,6 +644,13 @@ fn elite_boss_potion_spam_priority_action(key: KeyBinding) -> PriorityAction {
     }
 }
 
+/// Creates a `PlayerAction::SolveRune` priority action
+///
+/// The conditions for triggering this action are:
+/// - The player is not validating previous rune solving
+/// - At least `COOLDOWN_BETWEEN_QUEUE_MILLIS` have been passed since last action queue
+/// - The minimap is in `Minimap::Idle` state and there is a rune
+/// - The player rune buff is `Buff::NoBuff`
 #[inline]
 fn solve_rune_priority_action() -> PriorityAction {
     PriorityAction {
