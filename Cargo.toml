@@ -4,7 +4,7 @@ members = ["ui", "backend", "platforms"]
 
 [workspace.dependencies]
 serde = { version = "1.0.138", features = ["derive"] }
-tokio = { version = "1.43.0", default-features = false, features = [
+tokio = { version = "1.43.1", default-features = false, features = [
     "sync",
     "rt-multi-thread",
     "macros",
