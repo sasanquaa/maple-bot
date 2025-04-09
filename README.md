@@ -1,3 +1,5 @@
+![Emo Cat](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/emo-cat.gif)
+
 - [Features](#features)
 - [How to use](#how-to-use)
   - [Map](#map)
@@ -38,6 +40,7 @@
 - From v0.2.0, `Manual map` can now be selected:
   - This allows opting out of automatic map's name detection
   - You can manually add a new map with custom name based on current map detection
+  - Maybe removing automatic map detection altogether?
 
 The arcs are only for visual and do not represent the actual moving path. However, it does represent
 the order of one action to another depending on rotation mode.
