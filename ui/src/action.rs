@@ -257,6 +257,7 @@ fn ActionPresetTab(
     rsx! {
         div { class: "flex flex-col h-full",
             TextSelect {
+                create_text: "+ Create new preset",
                 on_create: move |created: String| {
                     if let Some(minimap) = minimap.write().deref_mut() {
                         let actions_inserted = minimap
@@ -270,7 +271,7 @@ fn ActionPresetTab(
                     }
                 },
                 disabled: minimap().is_none(),
-                on_select: move |selected| {
+                on_select: move |(_, selected)| {
                     preset.set(Some(selected));
                 },
                 options: presets(),

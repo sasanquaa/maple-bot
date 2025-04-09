@@ -60,7 +60,6 @@ fn App() -> Element {
 
     let minimap = use_signal::<Option<MinimapData>>(|| None);
     let preset = use_signal::<Option<String>>(|| None);
-    let last_preset = use_signal::<Option<(i64, String)>>(|| None);
     let configs = use_signal_sync(Vec::<ConfigurationData>::new);
     let config = use_signal_sync::<Option<ConfigurationData>>(|| None);
     let copy_position = use_signal::<Option<(i32, i32)>>(|| None);
@@ -92,7 +91,6 @@ fn App() -> Element {
                 Minimap {
                     minimap,
                     preset,
-                    last_preset,
                     copy_position,
                     config,
                 }

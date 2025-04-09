@@ -546,12 +546,9 @@ impl Contextual for Player {
             }
             let next = if !context.halting
                 && let Minimap::Idle(idle) = context.minimap
+                && idle.partially_overlapping
             {
-                if idle.partially_overlapping {
-                    Player::Detecting
-                } else {
-                    Player::Unstucking(Timeout::default(), None)
-                }
+                Player::Unstucking(Timeout::default(), None)
             } else {
                 Player::Detecting
             };
@@ -875,7 +872,7 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
 }
 
 fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: UseKey) -> Player {
-    const CHANGE_DIRECTION_TIMEOUT: u32 = 3;
+    const CHANGE_DIRECTION_TIMEOUT: u32 = 2;
 
     #[inline]
     fn ensure_direction(state: &PlayerState, direction: ActionKeyDirection) -> bool {

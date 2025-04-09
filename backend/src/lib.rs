@@ -35,7 +35,7 @@ pub use {
         Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
         AutoMobbing, Bound, Class, Configuration, KeyBinding, KeyBindingConfiguration,
         LinkKeyBinding, Minimap, Platform, Position, PotionMode, RotationMode, delete_map,
-        query_configs, upsert_config, upsert_map,
+        query_configs, query_maps, upsert_config, upsert_map,
     },
     pathing::MAX_PLATFORMS_COUNT,
     rotator::RotatorMode,
@@ -64,6 +64,8 @@ macro_rules! expect_variant {
 #[derive(Debug)]
 enum Request {
     RotateActions(bool),
+    ToggleMinimapSelection(bool),
+    CreateMinimap(String),
     UpdateMinimap(Option<String>, Minimap),
     UpdateConfiguration(Configuration),
     RedetectMinimap,
@@ -75,6 +77,8 @@ enum Request {
 #[derive(Debug)]
 enum Response {
     RotateActions(()),
+    ToggleMinimapSelection(()),
+    CreateMinimap(Option<Minimap>),
     UpdateMinimap(()),
     UpdateConfiguration(()),
     RedetectMinimap(()),
@@ -85,6 +89,10 @@ enum Response {
 
 pub(crate) trait RequestHandler {
     fn on_rotate_actions(&mut self, halting: bool);
+
+    fn on_toggle_minimap_selection(&mut self, is_manual: bool);
+
+    fn on_create_minimap(&self, name: String) -> Option<Minimap>;
 
     fn on_update_minimap(&mut self, preset: Option<String>, minimap: Minimap);
 
@@ -114,6 +122,20 @@ pub async fn rotate_actions(halting: bool) {
     expect_variant!(
         request(Request::RotateActions(halting)).await,
         Response::RotateActions
+    )
+}
+
+pub async fn toggle_minimap_selection(is_manual: bool) {
+    expect_variant!(
+        request(Request::ToggleMinimapSelection(is_manual)).await,
+        Response::ToggleMinimapSelection
+    )
+}
+
+pub async fn create_minimap(name: String) -> Option<Minimap> {
+    expect_variant!(
+        request(Request::CreateMinimap(name)).await,
+        Response::CreateMinimap
     )
 }
 
@@ -158,6 +180,12 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
             Request::RotateActions(halting) => {
                 handler.on_rotate_actions(halting);
                 Response::RotateActions(())
+            }
+            Request::ToggleMinimapSelection(is_manual) => {
+                Response::ToggleMinimapSelection(handler.on_toggle_minimap_selection(is_manual))
+            }
+            Request::CreateMinimap(name) => {
+                Response::CreateMinimap(handler.on_create_minimap(name))
             }
             Request::UpdateMinimap(preset, minimap) => {
                 handler.on_update_minimap(preset, minimap);

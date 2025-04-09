@@ -164,21 +164,40 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         }
     }
 
+    fn on_toggle_minimap_selection(&mut self, is_manual: bool) {
+        self.context.minimap = Minimap::Detecting;
+        self.minimap.data_manual_selection = is_manual;
+    }
+
+    fn on_create_minimap(&self, name: String) -> Option<crate::Minimap> {
+        if let Minimap::Idle(idle) = self.context.minimap {
+            // TODO: common logics for manual and automatic minimap creation?
+            Some(crate::Minimap {
+                name,
+                width: idle.bbox.width,
+                height: idle.bbox.height,
+                ..crate::Minimap::default()
+            })
+        } else {
+            None
+        }
+    }
+
     fn on_update_minimap(&mut self, preset: Option<String>, minimap: crate::Minimap) {
-        self.minimap.data = minimap;
-        self.minimap.update_platforms = true;
+        self.minimap.set_data(minimap);
+
+        let minimap = self.minimap.data().unwrap();
         self.player.reset();
-        self.player.config.rune_platforms_pathing = self.minimap.data.rune_platforms_pathing;
+        self.player.config.rune_platforms_pathing = minimap.rune_platforms_pathing;
         self.player.config.rune_platforms_pathing_up_jump_only =
-            self.minimap.data.rune_platforms_pathing_up_jump_only;
-        self.player.config.auto_mob_platforms_pathing =
-            self.minimap.data.auto_mob_platforms_pathing;
+            minimap.rune_platforms_pathing_up_jump_only;
+        self.player.config.auto_mob_platforms_pathing = minimap.auto_mob_platforms_pathing;
         self.player.config.auto_mob_platforms_pathing_up_jump_only =
-            self.minimap.data.auto_mob_platforms_pathing_up_jump_only;
+            minimap.auto_mob_platforms_pathing_up_jump_only;
         *self.actions = preset
-            .and_then(|preset| self.minimap.data.actions.get(&preset).cloned())
+            .and_then(|preset| minimap.actions.get(&preset).cloned())
             .unwrap_or_default();
-        self.update_rotator_actions(self.minimap.data.rotation_mode.into());
+        self.update_rotator_actions(minimap.rotation_mode.into());
     }
 
     fn on_update_configuration(&mut self, config: Configuration) {
@@ -198,7 +217,13 @@ impl RequestHandler for DefaultRequestHandler<'_> {
                 (_, PotionMode::Percentage(percent)) => Some(percent / 100.0),
             };
         self.player.config.update_health_millis = Some(self.config.health_update_millis);
-        self.update_rotator_actions(self.minimap.data.rotation_mode.into());
+        self.update_rotator_actions(
+            self.minimap
+                .data()
+                .map(|minimap| minimap.rotation_mode)
+                .unwrap_or_default()
+                .into(),
+        );
     }
 
     fn on_redetect_minimap(&mut self) {
@@ -232,7 +257,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_minimap_data(&mut self) -> Option<crate::Minimap> {
-        matches!(self.context.minimap, Minimap::Idle(_)).then_some(self.minimap.data.clone())
+        self.minimap.data().cloned()
     }
 }
 

@@ -140,8 +140,8 @@ impl Identifiable for Configuration {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(default)]
 #[cfg_attr(test, derive(PartialEq))]
+#[serde(default)]
 pub struct Minimap {
     #[serde(skip_serializing)]
     pub id: Option<i64>,

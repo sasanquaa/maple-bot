@@ -18,7 +18,7 @@ pub struct SelectProps<T: 'static + Clone + PartialEq> {
     #[props(default = false)]
     disabled: bool,
     options: Vec<(T, String)>,
-    on_select: EventHandler<T>,
+    on_select: EventHandler<(usize, T)>,
     selected: T,
 }
 
@@ -47,7 +47,7 @@ pub fn EnumSelect<T: 'static + Clone + Copy + PartialEq + Display + FromStr + In
             label_class,
             select_class,
             options,
-            on_select: move |variant: String| {
+            on_select: move |(_, variant): (usize, String)| {
                 if let Ok(value) = T::from_str(variant.as_str()) {
                     on_select(value);
                 }
@@ -59,14 +59,13 @@ pub fn EnumSelect<T: 'static + Clone + Copy + PartialEq + Display + FromStr + In
 
 #[component]
 pub fn TextSelect(
+    create_text: String,
     on_create: EventHandler<String>,
     disabled: bool,
-    on_select: EventHandler<String>,
+    on_select: EventHandler<(usize, String)>,
     options: Vec<String>,
     selected: Option<String>,
 ) -> Element {
-    const CREATE: &str = "+ Create new preset";
-
     let mut is_creating = use_signal(|| false);
     let mut creating_text = use_signal(String::default);
     let mut creating_error = use_signal(|| false);
@@ -96,7 +95,7 @@ pub fn TextSelect(
                     onclick: move |_| {
                         is_creating.set(true);
                     },
-                    {CREATE}
+                    {create_text}
                 }
             } else if !is_creating() {
                 Select {
@@ -105,14 +104,14 @@ pub fn TextSelect(
                     select_class: "rounded h-full border border-gray-300 text-xs text-gray-800 outline-none",
                     options: options
                         .into_iter()
-                        .chain([CREATE.to_string()].into_iter())
+                        .chain([create_text.clone()].into_iter())
                         .map(|text| (text.clone(), text))
                         .collect(),
-                    on_select: move |text| {
-                        if text == CREATE {
+                    on_select: move |(usize, text)| {
+                        if text == create_text {
                             is_creating.set(true);
                         } else {
-                            on_select(text);
+                            on_select((usize, text));
                         }
                     },
                     selected: selected.unwrap_or_default(),
@@ -126,7 +125,7 @@ pub fn TextSelect(
                                 "rounded flex-1 w-40 border {border} px-2 text-xs text-gray-800 outline-none",
                             )
                         },
-                        placeholder: "New preset name",
+                        placeholder: "New name",
                         onchange: move |e| {
                             creating_text.set(e.value());
                         },
@@ -184,8 +183,9 @@ where
                 class: select_class,
                 disabled,
                 onchange: move |e| {
-                    let value = e.value().parse::<usize>().map(|i| options[i].0.clone()).unwrap();
-                    on_select(value)
+                    let i = e.value().parse::<usize>().unwrap();
+                    let value = options[i].0.clone();
+                    on_select((i, value))
                 },
                 for (i , opt) in options.iter().enumerate() {
                     option {

@@ -15,16 +15,28 @@ use crate::{
 
 const MINIMAP_BORDER_WHITENESS_THRESHOLD: u8 = 170;
 
-type TaskData = (Anchors, Rect, MinimapData, f32, f32);
+type TaskData = (Anchors, Rect, Option<MinimapData>, f32, f32);
 
 #[derive(Debug, Default)]
 pub struct MinimapState {
-    pub data: MinimapData,
+    data: Option<MinimapData>,
+    pub data_manual_selection: bool,
     data_task: Option<Task<Result<TaskData>>>,
     rune_task: Option<Task<Result<Point>>>,
     portals_task: Option<Task<Result<Vec<Rect>>>>,
     has_elite_boss_task: Option<Task<Result<bool>>>,
-    pub update_platforms: bool,
+    update_platforms: bool,
+}
+
+impl MinimapState {
+    pub fn data(&self) -> Option<&MinimapData> {
+        self.data.as_ref()
+    }
+
+    pub fn set_data(&mut self, data: MinimapData) {
+        self.data = Some(data);
+        self.update_platforms = true;
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -95,18 +107,22 @@ fn update_context(
 }
 
 fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) -> Minimap {
+    let is_manual_selection = state.data_manual_selection;
     let detector = detector.clone();
     let Update::Complete(Ok((anchors, bbox, data, scale_w, scale_h))) =
         update_task_repeatable(2000, &mut state.data_task, move || {
             let bbox = detector.detect_minimap(MINIMAP_BORDER_WHITENESS_THRESHOLD)?;
-            let name = detector.detect_minimap_name(bbox)?;
             let size = bbox.width.min(bbox.height) as usize;
             let tl = anchor_at(detector.mat(), bbox.tl(), size, 1)?;
             let br = anchor_at(detector.mat(), bbox.br(), size, -1)?;
             let anchors = Anchors { tl, br };
-            let (data, scale_w, scale_h) = query_data_for_minimap(&bbox, &name)?;
+            if is_manual_selection {
+                return Ok((anchors, bbox, None, 1.0, 1.0));
+            }
+            let name = detector.detect_minimap_name(bbox)?;
+            let (data, scale_w, scale_h) = query_data_for_minimap(bbox, &name)?;
             debug!(target: "minimap", "anchor points: {:?}", anchors);
-            Ok((anchors, bbox, data, scale_w, scale_h))
+            Ok((anchors, bbox, Some(data), scale_w, scale_h))
         })
     else {
         return Minimap::Detecting;
@@ -124,7 +140,11 @@ fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) 
         rune: None,
         has_elite_boss: false,
         portals: Array::new(),
-        platforms: platforms_from_data(&state.data),
+        platforms: state
+            .data
+            .as_ref()
+            .map(platforms_from_data)
+            .unwrap_or_default(),
     })
 }
 
@@ -153,6 +173,7 @@ fn update_idle_context(
     let tl_match = tl_pixel == anchors.tl.1;
     let br_match = br_pixel == anchors.br.1;
     if !tl_match && !br_match {
+        state.data = None;
         debug!(
             target: "minimap",
             "anchor pixels mismatch: {:?} != {:?}",
@@ -207,7 +228,7 @@ fn update_idle_context(
     // TODO: any better way to read persistent state in other contextual?
     if state.update_platforms {
         state.update_platforms = false;
-        platforms = platforms_from_data(&state.data);
+        platforms = platforms_from_data(state.data.as_mut().unwrap());
     }
 
     Some(Minimap::Idle(MinimapIdle {
@@ -220,7 +241,7 @@ fn update_idle_context(
     }))
 }
 
-fn query_data_for_minimap(bbox: &Rect, name: &str) -> Result<(MinimapData, f32, f32)> {
+fn query_data_for_minimap(bbox: Rect, name: &str) -> Result<(MinimapData, f32, f32)> {
     const MATCH_SCORE: f64 = 0.9;
 
     // TODO: Mock this
@@ -454,7 +475,7 @@ mod tests {
                 assert_eq!(idle.anchors, anchors);
                 assert_eq!(idle.bbox, bbox);
                 assert!(!idle.partially_overlapping);
-                assert_eq!(state.data, data);
+                assert_eq!(state.data, Some(data));
                 assert_eq!(idle.rune, None);
                 assert!(!idle.has_elite_boss);
             }

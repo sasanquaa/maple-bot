@@ -80,6 +80,7 @@ pub fn Configuration(
     rsx! {
         div { class: "flex flex-col",
             TextSelect {
+                create_text: "+ Create new preset",
                 on_create: move |created: String| {
                     on_config(ConfigurationData {
                         name: created,
@@ -87,9 +88,8 @@ pub fn Configuration(
                     });
                 },
                 disabled: disabled(),
-                on_select: move |selected| {
-                    config
-                        .set(configs.peek().iter().find(|config| config.name == selected).cloned());
+                on_select: move |(i, _)| {
+                    config.set(configs.peek().get(i).cloned());
                 },
                 options: config_names(),
                 selected: config_view().name,
