@@ -104,7 +104,8 @@ There are four types of condition:
 - `Linked` - Runs an action chained to the previous action (e.g. like a combo) 
 
 For `ErdaShowerOffCooldown` condition to work, the skill Erda Shower must be assigned to
-the quick slots, with Action Customization toggled on and **visible** on screen.
+the quick slots, with Action Customization toggled on and **visible** on screen. The skill
+should also be casted when using this condition or the actions will be re-run.
 
 ![Erda Shower](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/erda.png?raw=true)
 
@@ -196,6 +197,8 @@ when play in `1920x1080` or above, making the UI blurry.
 ## Showcase
 #### Rotation
 https://github.com/user-attachments/assets/3c66dcb9-7196-4245-a7ea-4253f214bba6
+
+(This Blaster rotation was before Link Key & Link Action were added)
 
 https://github.com/user-attachments/assets/463b9844-0950-4371-9644-14fad5e1fab9
 
