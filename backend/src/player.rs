@@ -280,6 +280,7 @@ impl PlayerState {
         matches!(self.normal_action, Some(PlayerAction::AutoMob(_))) && !self.has_priority_action()
     }
 
+    /// Whether the auto mob reachable y requires "solidifying"
     #[inline]
     fn auto_mob_reachable_y_require_update(&self) -> bool {
         self.auto_mob_reachable_y.is_none_or(|y| {
@@ -287,17 +288,23 @@ impl PlayerState {
         })
     }
 
+    /// Gets the falling minimum `y` distance threshold
+    ///
+    /// In auto mob or intermediate destination, the threshold is relaxed for more
+    /// fluid movement.
     #[inline]
     fn falling_threshold(&self, is_intermediate: bool) -> i32 {
-        if self.has_auto_mob_action_only() && !is_intermediate {
+        if self.has_auto_mob_action_only() || is_intermediate {
             AUTO_MOB_REACHABLE_Y_THRESHOLD
-        } else if is_intermediate {
-            JUMP_THRESHOLD
         } else {
             FALLING_THRESHOLD
         }
     }
 
+    /// Gets the double jump minimum `x` distance threshold
+    ///
+    /// In auto mob and final destination, the threshold is relaxed for more
+    /// fluid movement.
     #[inline]
     fn double_jump_threshold(&self, is_intermediate: bool) -> i32 {
         if self.has_auto_mob_action_only() && !is_intermediate {
@@ -540,13 +547,20 @@ impl Contextual for Player {
             update_state(context, detector, state)
         };
         let Some(cur_pos) = cur_pos else {
+            // When the player detection fails, the possible causes are:
+            // - Player moved inside the edges of the minimap
+            // - Other UIs overlapping the minimap
+            //
+            // `update_non_positional_context` is here to continue updating
+            // `Player::Unstucking` returned from below when the player
+            // is inside the edges of the minimap
             if let Some(next) = update_non_positional_context(self, context, detector, state, true)
             {
                 return ControlFlow::Next(next);
             }
             let next = if !context.halting
                 && let Minimap::Idle(idle) = context.minimap
-                && idle.partially_overlapping
+                && !idle.partially_overlapping
             {
                 Player::Unstucking(Timeout::default(), None)
             } else {
@@ -576,17 +590,18 @@ impl Contextual for Player {
     }
 }
 
+/// Updates the contextual state that does not require the player current position
 #[inline]
 fn update_non_positional_context(
     contextual: Player,
     context: &Context,
     detector: &impl Detector,
     state: &mut PlayerState,
-    failed_to_detect: bool,
+    failed_to_detect_player: bool,
 ) -> Option<Player> {
     match contextual {
         Player::UseKey(use_key) => {
-            (!failed_to_detect).then_some(update_use_key_context(context, state, use_key))
+            (!failed_to_detect_player).then(|| update_use_key_context(context, state, use_key))
         }
         Player::Unstucking(timeout, has_settings) => Some(update_unstucking_context(
             context,
@@ -596,11 +611,10 @@ fn update_non_positional_context(
             has_settings,
         )),
         Player::Stalling(timeout, max_timeout) => {
-            (!failed_to_detect).then_some(update_stalling_context(state, timeout, max_timeout))
+            (!failed_to_detect_player).then(|| update_stalling_context(state, timeout, max_timeout))
         }
-        Player::SolvingRune(solving_rune) => (!failed_to_detect).then_some(
-            update_solving_rune_context(context, detector, state, solving_rune),
-        ),
+        Player::SolvingRune(solving_rune) => (!failed_to_detect_player)
+            .then(|| update_solving_rune_context(context, detector, state, solving_rune)),
         // TODO: Improve this?
         Player::CashShopThenExit(timeout, cash_shop) => {
             let next = match cash_shop {
@@ -634,7 +648,7 @@ fn update_non_positional_context(
                     Player::CashShopThenExit(timeout, next)
                 }
                 CashShop::Exitted => {
-                    if failed_to_detect {
+                    if failed_to_detect_player {
                         Player::CashShopThenExit(timeout, cash_shop)
                     } else {
                         Player::CashShopThenExit(Timeout::default(), CashShop::Stalling)
@@ -664,6 +678,7 @@ fn update_non_positional_context(
     }
 }
 
+/// Updates the contextual state that requires the player current position
 #[inline]
 fn update_positional_context(
     contextual: Player,
@@ -716,6 +731,10 @@ fn update_positional_context(
     }
 }
 
+/// Updates `Player::Idle` contextual state
+///
+/// This state does not do much on its own except when auto mobbing. It acts as entry
+/// to other state when there is an action and helps clearing keys.
 fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Point) -> Player {
     fn ensure_reachable_auto_mob_y(
         context: &Context,
@@ -1592,6 +1611,12 @@ fn update_double_jumping_context(
     )
 }
 
+/// Updates the `Player::Grappling` contextual state
+///
+/// This state can only be transitioned via `Player::Moving` or `Player::DoubleJumping`
+/// when the player has reached or close to the destination x-wise.
+///
+/// This state will use the Rope Lift skill
 fn update_grappling_context(
     context: &Context,
     state: &mut PlayerState,
@@ -1639,6 +1664,14 @@ fn update_grappling_context(
     )
 }
 
+/// Updates the `Player::UpJumping` contextual state
+///
+/// This state can only be transitioned via `Player::Moving` when the
+/// player has reached the destination x-wise.
+///
+/// This state will:
+/// - Abort the action if the player is near a portal
+/// - Perform an up jump
 fn update_up_jumping_context(
     context: &Context,
     state: &mut PlayerState,
@@ -1733,6 +1766,9 @@ fn update_up_jumping_context(
     )
 }
 
+/// Updates the `Player::Falling` contextual state
+///
+/// This state will perform a drop down `Down Key + Space`
 fn update_falling_context(
     context: &Context,
     state: &mut PlayerState,
@@ -1789,6 +1825,17 @@ fn update_falling_context(
     )
 }
 
+/// Updates the `Player::Unstucking` contextual state
+///
+/// This state can only be transitioned to when `state.unstuck_counter` reached the fixed
+/// threshold or when the player moved into the edges of the minimap.
+/// If `state.unstuck_consecutive_counter` has not reached the threshold and the player
+/// moved into the left/right/top edges of the minimap, it will try to move
+/// out as appropriate. It will also try to press ESC key to exit any dialog.
+///
+/// Each initial transition to `Player::Unstucking` increases
+/// the `state.unstuck_consecutive_counter` by one. If the threshold is reached, this
+/// state will enter GAMBA mode. And by definition, it means `random bullsh*t go`.
 fn update_unstucking_context(
     context: &Context,
     detector: &impl Detector,
@@ -1873,6 +1920,15 @@ fn update_unstucking_context(
     )
 }
 
+/// Updates the `Player::Stalling` contextual state
+///
+/// This state stalls for the specified number of `max_timeout`. Upon timing out,
+/// it will return to `state.stalling_timeout_state` if `Some` or `Player::Idle` if `None`.
+/// And `Player::Idle` is considered the terminal state if there is an action.
+/// `state.stalling_timeout_state` is currently only `Some` when it is transitioned via `Player::UseKey`.
+///
+/// If this state timeout in auto mob with terminal state, it will perform
+/// auto mob reachable `y` solidifying if needed.
 fn update_stalling_context(state: &mut PlayerState, timeout: Timeout, max_timeout: u32) -> Player {
     let update = |timeout| Player::Stalling(timeout, max_timeout);
     let next = update_with_timeout(
@@ -1922,6 +1978,13 @@ fn update_stalling_context(state: &mut PlayerState, timeout: Timeout, max_timeou
     )
 }
 
+/// Updates the `Player::SolvingRune` contextual state
+///
+/// Though this state can only be transitioned via `Player::Moving` with `PlayerAction::SolveRune`,
+/// it is not required. This state does:
+/// - On timeout start, sends the interact key
+/// - On timeout update, detects the rune and sends the keys
+/// - On timeout end or rune is solved before timing out, transitions to `Player::Idle`
 fn update_solving_rune_context(
     context: &Context,
     detector: &impl Detector,
@@ -2022,6 +2085,9 @@ fn update_solving_rune_context(
     )
 }
 
+/// Checks proximity in `PlayerAction::AutoMob` for transitioning to `Player::UseKey`
+///
+/// This is common logics shared with other contextual states when there is auto mob action
 #[inline]
 fn on_auto_mob_use_key_action(
     context: &Context,
@@ -2040,6 +2106,9 @@ fn on_auto_mob_use_key_action(
     }
 }
 
+/// Callbacks for when there is a normal or priority `PlayerAction`
+///
+/// This version does not require `PlayerState` in the callbacks arguments
 #[inline]
 fn on_action(
     state: &mut PlayerState,
@@ -2053,6 +2122,9 @@ fn on_action(
     )
 }
 
+/// Callbacks for when there is a normal or priority `PlayerAction`
+///
+/// This version requires a shared reference `PlayerState` in the callbacks arguments
 #[inline]
 fn on_action_state(
     state: &mut PlayerState,
@@ -2066,6 +2138,17 @@ fn on_action_state(
     )
 }
 
+/// Callbacks for when there is a normal or priority `PlayerAction`
+///
+/// When there is a priority action, it takes precendece over the normal action. The callback
+/// should return a tuple `Option<(Player, bool)>` with:
+/// - `Some((Player, false))` indicating the callback is handled but `Player` is not terminal state
+/// - `Some((Player, true))` indicating the callback is handled and `Player` is terminal state
+/// - `None` indicating the callback is not handled and will be defaulted to `on_default_context`
+///
+/// When the returned tuple indicates a terminal state, the `PlayerAction` is considered complete.
+/// Because this function passes a mutable reference of `PlayerState` to `on_action_context`,
+/// caller should be aware not to clear the action but let this function handles it.
 #[inline]
 fn on_action_state_mut(
     state: &mut PlayerState,
@@ -2123,10 +2206,10 @@ enum ChangeAxis {
     Both,
 }
 
-/// A struct that stores the current tick before timing out.
+/// A struct that stores the current tick before timing out
 ///
-/// Most contextual state can be timed out as there is no guaranteed
-/// an action will be performed or state can be transitioned. So timeout is used to retry
+/// Most contextual states can be timed out as there is no guaranteed
+/// an action will be performed or a state can be transitioned. So timeout is used to retry
 /// such action/state and to avoid looping in a single state forever. Or
 /// for some contextual states to perform an action only after timing out.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -2134,10 +2217,10 @@ pub struct Timeout {
     /// The current timeout tick.
     /// The timeout tick can be reset to 0 in the context of movement.
     current: u32,
-    /// The total number of passed ticks. Useful when `current` can be reset.
-    /// Currently only used for delaying upjumping
+    /// The total number of passed ticks. Useful when `current` can be reset
+    /// Currently only used for delaying upjumping and stopping down key early in falling
     total: u32,
-    /// Inidcates whether the timeout has started.
+    /// Inidcates whether the timeout has started
     started: bool,
 }
 
@@ -2173,28 +2256,10 @@ fn update_with_timeout<T>(
     }
 }
 
-#[inline]
-fn update_moving_axis_timeout(
-    prev_pos: Point,
-    cur_pos: Point,
-    timeout: Timeout,
-    max_timeout: u32,
-    axis: ChangeAxis,
-) -> Timeout {
-    if timeout.current >= max_timeout {
-        return timeout;
-    }
-    let moved = match axis {
-        ChangeAxis::Horizontal => cur_pos.x != prev_pos.x,
-        ChangeAxis::Vertical => cur_pos.y != prev_pos.y,
-        ChangeAxis::Both { .. } => cur_pos.x != prev_pos.x || cur_pos.y != prev_pos.y,
-    };
-    Timeout {
-        current: if moved { 0 } else { timeout.current },
-        ..timeout
-    }
-}
-
+/// Updates movement-related contextual states
+///
+/// This function helps resetting the `Timeout` when the player's position changed
+/// based on `ChangeAxis`. Upon timing out, it returns to `Player::Moving`.
 #[inline]
 fn update_moving_axis_context(
     moving: Moving,
@@ -2205,6 +2270,28 @@ fn update_moving_axis_context(
     on_update: impl FnOnce(Moving) -> Player,
     axis: ChangeAxis,
 ) -> Player {
+    #[inline]
+    fn update_moving_axis_timeout(
+        prev_pos: Point,
+        cur_pos: Point,
+        timeout: Timeout,
+        max_timeout: u32,
+        axis: ChangeAxis,
+    ) -> Timeout {
+        if timeout.current >= max_timeout {
+            return timeout;
+        }
+        let moved = match axis {
+            ChangeAxis::Horizontal => cur_pos.x != prev_pos.x,
+            ChangeAxis::Vertical => cur_pos.y != prev_pos.y,
+            ChangeAxis::Both { .. } => cur_pos.x != prev_pos.x || cur_pos.y != prev_pos.y,
+        };
+        Timeout {
+            current: if moved { 0 } else { timeout.current },
+            ..timeout
+        }
+    }
+
     update_with_timeout(
         update_moving_axis_timeout(moving.pos, cur_pos, moving.timeout, max_timeout, axis),
         max_timeout,
@@ -2236,6 +2323,11 @@ fn update_rune_fail_count_state(state: &mut PlayerState) {
     }
 }
 
+/// Updates the rune validation `Timeout`
+///
+/// `state.rune_validate_timeout` is `Some` only when `Player::SolvingRune`
+/// successfully detects and sends all the keys. After about 12 seconds, it
+/// will check if the player has the rune buff.
 #[inline]
 fn update_rune_validating_state(context: &Context, state: &mut PlayerState) {
     const VALIDATE_TIMEOUT: u32 = 375;
@@ -2303,6 +2395,13 @@ fn update_health_state(context: &Context, detector: &impl Detector, state: &mut 
     }
 }
 
+/// Updates the `PlayerState`
+///
+/// This function:
+/// - Returns the player current position or `None` when the minimap or player cannot be detected
+/// - Updates the stationary check via `state.is_stationary_timeout`
+/// - Delegates to `update_health_state` and `update_rune_validating_state`
+/// - Resets `state.unstuck_counter` and `state.unstuck_consecutive_counter` when position changed
 #[inline]
 fn update_state(
     context: &Context,

@@ -56,6 +56,8 @@ pub trait Contextual {
 
     /// Updates the contextual state.
     ///
+    /// This is basically a state machine.
+    ///
     /// Updating is performed on each tick and the behavior whether to continue
     /// updating in the same tick or next is decided by `ControlFlow`. The state
     /// can transition or stay the same.

@@ -204,6 +204,10 @@ Currently, the bot does not support `Default Ratio` game resolution because most
 in `Ideal Ratio` (1920x1080 with `Ideal Ratio` or 1376x768 below). `Default Ratio` currently only takes effect
 when play in `1920x1080` or above, making the UI blurry.
 
+#### Preventing double jump(s)
+**This is subject to change** but if you want to the bot to only walk between points then the two
+points `x` distance should be less than `25`.
+
 ## Showcase
 #### Rotation
 https://github.com/user-attachments/assets/3c66dcb9-7196-4245-a7ea-4253f214bba6
