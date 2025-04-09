@@ -26,13 +26,18 @@
 - ~~Barely maintainable~~ UI ~~(please help)~~
 - Work by taking an image and send key inputs (no memory hacking)
 - Not a feature but currently only work in GMS (haven't tested MSEA but it is in English...)
-- I hate this game
+  - From v0.2.0, because of `Manual map`, map's name should be language-agnostic but there are still other detection resources in English... (just PNGs)
+- I hate this game 
+- Why do Jett gets free BOD just to be deleted?
 
 ## How to use
 #### Map
 - Map is automatically detected, saved and restored anytime you go to the map
 - Any actions preset created in the detected map is saved to that map only
 - **Map detection can be wrong**, see [Troubleshooting](#troubleshooting)
+- From v0.2.0, `Manual map` can now be selected:
+  - This allows opting out of automatic map's name detection
+  - You can manually add a new map with custom name based on current map detection
 
 The arcs are only for visual and do not represent the actual moving path. However, it does represent
 the order of one action to another depending on rotation mode.
@@ -83,6 +88,7 @@ Action `Key` configurations:
   - Applicable only to `EveryMillis` and `ErdaShowerOffCooldown` conditions
   - When set, this action can override other non-`Queue to front` priority action
   - The overriden priority action is not lost but delayed like normal action
+  - Useful for action such as `press attack after x milliseconds even while moving`
   - Cannot override linked action
 - `Direction`: The direction to use the key
 - `With`:
@@ -149,6 +155,7 @@ For other conditions actions:
 When `AutoMobbing` is used:
 - Setting the bounds to inside the minimap is required so that the bot will not wrongly detect out of bounds mobs
 - The bounds should be the rectangle where you can move around (two edges of the map)
+- While this mode ignores all `Any` condition actions, it is still possible to use other conditions
 - For platforms pathing, see [Platforms Pathing](#platforms-pathing)
 
 ![Auto Mobbing](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/automobbing.png?raw=true)
