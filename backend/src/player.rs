@@ -523,6 +523,7 @@ impl Contextual for Player {
 
     // 草草ｗｗ。。。
     // TODO: detect if a point is reachable after number of retries?
+    // TODO: split into smaller files?
     fn update(
         self,
         context: &Context,
@@ -1126,6 +1127,15 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
     )
 }
 
+/// Updates the `Player::Moving` contextual state
+///
+/// This state does not perform any movement but acts as coordinator
+/// for other movement states. It keeps track of `state.unstuck_counter`, avoids
+/// state looping and advancing `intermediates` when the current destination is reached.
+///
+/// It will first transition to `Player::DoubleJumping` and `Player::Adjusting` for
+/// matching `x` of `dest`. Then, `Player::Grappling`, `Player::UpJumping`, `Player::Jump` or
+/// `Player::Falling` for matching `y` of `dest`. (e.g. horizontal then vertical)
 fn update_moving_context(
     state: &mut PlayerState,
     cur_pos: Point,
@@ -1290,6 +1300,10 @@ fn update_moving_context(
     }
 }
 
+/// Updates the `Player::Adjusting` contextual state
+///
+/// This state just walks towards the destination. If `moving.exact` is true,
+/// then it will perform small movement to ensure the `x` is as close as possible.
 fn update_adjusting_context(
     context: &Context,
     state: &mut PlayerState,
@@ -1299,6 +1313,9 @@ fn update_adjusting_context(
     const USE_KEY_Y_THRESHOLD: i32 = 2;
     const ADJUSTING_SHORT_TIMEOUT: u32 = 3;
 
+    /// Handles `PlayerAction` for `Player::Adjusting`
+    ///
+    /// TODO
     fn on_player_action(
         context: &Context,
         state: &PlayerState,

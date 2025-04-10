@@ -19,6 +19,7 @@ env:
   VCPKGRS_TRIPLET: x64-windows-static-release
   CARGO_TERM_COLOR: always
   OPENCV_MSVC_CRT: static
+  RUST_BACKTRACE: 1
   OPENCV_DISABLE_PROBES: environment,pkg_config,cmake,vcpkg_cmake
 
 jobs:
@@ -34,18 +35,25 @@ jobs:
           cache: "npm"
           cache-dependency-path: "./ui/package-lock.json"
 
+      - name: Install NPM packages
+        run: |
+          cd ui
+          npm install
+
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-x86_64-pc-windows-msvc
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-binstall
+      - uses: cargo-bins/cargo-binstall@main
+
+      - run: cargo binstall dioxus-cli --no-confirm
 
       - uses: KyleMayes/install-llvm-action@v2
         with:
+          # can't install LLVM 19
+          # possibly related https://github.com/KyleMayes/install-llvm-action/issues/86
           version: "18.1.8"
 
       - uses: lukka/get-cmake@latest
@@ -59,17 +67,19 @@ jobs:
       - name: Build & test
         shell: pwsh
         run: |
-          cd ui
-          npm install
-          cd ../
-          cargo binstall dioxus-cli --force
           dx build --verbose --release --package ui
+          dx build --verbose --package ui
           cargo test --verbose
 
       - uses: actions/upload-artifact@v4
         with:
           name: app
           path: target/dx/ui/release/windows/app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: target/dx/ui/debug/windows/app
 
       - if: startsWith(github.ref, 'refs/tags/')
         run: Compress-Archive -Path target/dx/ui/release/windows/app/* -Destination app.zip
