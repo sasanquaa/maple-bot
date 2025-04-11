@@ -29,6 +29,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-x86_64-pc-windows-msvc
+
+      - uses: cargo-bins/cargo-binstall@main
+
+      - run: cargo binstall dioxus-cli --no-confirm
+
+      - name: Format
+        run: |
+          cargo fmt
+          dx fmt
+
+      - uses: Swatinem/rust-cache@v2
+
       - uses: actions/setup-node@v4
         with:
           node-version: latest
@@ -39,16 +54,6 @@ jobs:
         run: |
           cd ui
           npm install
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-x86_64-pc-windows-msvc
-
-      - uses: Swatinem/rust-cache@v2
-
-      - uses: cargo-bins/cargo-binstall@main
-
-      - run: cargo binstall dioxus-cli --no-confirm
 
       - uses: KyleMayes/install-llvm-action@v2
         with:
