@@ -40,7 +40,12 @@ pub fn Platforms(
                         on_save(minimap.clone());
                     }
                 },
-                value: minimap().map(|data| data.rune_platforms_pathing_up_jump_only).unwrap_or_default(),
+                value: {
+                    let value = minimap()
+                        .map(|data| data.rune_platforms_pathing_up_jump_only)
+                        .unwrap_or_default();
+                    value
+                },
             }
             PlatformCheckbox {
                 label: "Auto Mobbing Pathing Enabled",
@@ -99,7 +104,11 @@ pub fn Platforms(
                 copy_position,
                 label: "Add",
                 delete: false,
-                disabled: minimap().is_none() || minimap().unwrap().platforms.len() >= MAX_PLATFORMS_COUNT,
+                disabled: {
+                    let disabled = minimap().is_none()
+                        || minimap().unwrap().platforms.len() >= MAX_PLATFORMS_COUNT;
+                    disabled
+                },
                 on_click: move |_| {
                     if let Some(minimap) = minimap.write().deref_mut() {
                         minimap.platforms.push(*editing.peek());

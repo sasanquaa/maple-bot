@@ -39,32 +39,43 @@ impl std::fmt::Debug for Condition {
 
 /// A priority action that can override a normal action
 ///
-/// This includes all non-`ActionCondition::Any` actions
+/// This includes all non-[`ActionCondition::Any`] actions
 ///
 /// When a player is in the middle of doing a normal action, this type of action
 /// can override most of the player's current state and forced to perform this action.
 /// However, it cannot override player states that are considered "terminal". These states
 /// include stalling, using key and forced double jumping. It also cannot override linked action.
 ///
-/// When this type of action has `queue_to_front` set, it will be queued to the front and override
-/// other non-queue-to-front priority action. The overriden action is simply placed back to the queue in
-/// front. It is mostly useful for action such as `press attack after x seconds even in the middle
-/// of moving`.
+/// When this type of action has [`Self::queue_to_front`] set, it will be queued to the
+/// front and override other non-[`Self::queue_to_front`] priority action. The overriden
+/// action is simply placed back to the queue in front. It is mostly useful for action such as
+/// `press attack after x seconds even in the middle of moving`.
 #[derive(Debug)]
 struct PriorityAction {
+    /// The predicate for when this action should be queued
     condition: Condition,
+    /// The kind the above predicate was derived from
     condition_kind: Option<ActionCondition>,
+    /// The inner action
     inner: RotatorAction,
+    /// Whether to queue this action to the front of [`Rotator::priority_actions_queue`]
     queue_to_front: bool,
+    /// Whether this action is being ignored
+    ///
+    /// While ignored, [`Self::last_queued_time`] will be updated to [`Instant::now`].
+    /// The action is ignored for as long as it is still in the queue or the player
+    /// is still executing it.
     ignoring: bool,
+    /// The last [`Instant`] when this action was queued
     last_queued_time: Option<Instant>,
 }
 
 /// The action that will be passed to the player
 ///
-/// There are `Single` and `Linked` actions. `Single` action is self-explanatory and `Linked`
-/// action is a linked list of actions. `Linked` action is executed in order, until completion and
-/// cannot be replaced by any other type of actions.
+/// There are [`RotatorAction::Single`] and [`RotatorAction::Linked`] actions.
+/// With [`RotatorAction::Linked`] action is a linked list of actions. [`RotatorAction::Linked`]
+/// action is executed in order, until completion and cannot be replaced by any other
+/// type of actions.
 #[derive(Clone, Debug)]
 enum RotatorAction {
     Single(PlayerAction),
@@ -117,16 +128,22 @@ impl From<RotationMode> for RotatorMode {
 
 #[derive(Default, Debug)]
 pub struct Rotator {
-    // this is literally free postfix increment!
+    // This is literally free postfix increment!
     id_counter: AtomicU32,
     normal_actions: Vec<(u32, RotatorAction)>,
     normal_queuing_linked_action: Option<(u32, Box<LinkedAction>)>,
     normal_index: usize,
+    /// Whether [`Self::normal_actions`] is being accessed from the end
     normal_actions_backward: bool,
     normal_rotate_mode: RotatorMode,
+    /// The [`Task`] used when [`Self::normal_rotate_mode`] is [`RotatorMode::AutoMobbing`]
     auto_mob_task: Option<Task<Result<Vec<Point>>>>,
     priority_actions: OrderedHashMap<u32, PriorityAction>,
+    /// The currently executing [`RotatorAction::Linked`] action
     priority_queuing_linked_action: Option<(u32, Box<LinkedAction>)>,
+    /// A [`VecDeque`] of [`PriorityAction`] ids
+    ///
+    /// Populates from [`Self::priority_actions`] when its predicate for queuing is true
     priority_actions_queue: VecDeque<u32>,
 }
 
@@ -260,7 +277,7 @@ impl Rotator {
         })
     }
 
-    /// Checks if the player or the queue has an Erda action
+    /// Checks if the player or the queue has a [`ActionCondition::ErdaShowerOffCooldown`] action
     #[inline]
     fn has_erda_action_queuing_or_executing(&self, player: &PlayerState) -> bool {
         if player.priority_action_id().is_some_and(|id| {
@@ -281,16 +298,16 @@ impl Rotator {
         })
     }
 
-    /// Rotates the actions inside the `priority_actions`
+    /// Rotates the actions inside the [`Self::priority_actions`]
     ///
     /// This function does not pass the action to the player but only pushes the action to
-    /// `priority_actions_queue`. It is responsible for checking queuing condition.
+    /// [`Self::priority_actions_queue`]. It is responsible for checking queuing condition.
     fn rotate_priority_actions(&mut self, context: &Context, player: &mut PlayerState) {
-        // keep ignoring while there is any type of erda condition action inside the queue
+        // Keeps ignoring while there is any type of erda condition action inside the queue
         let has_erda_action = self.has_erda_action_queuing_or_executing(player);
         let ids = self.priority_actions.keys().copied().collect::<Vec<_>>(); // why?
         for id in ids {
-            // ignore for as long as the action is a linked action that is queuing
+            // Ignores for as long as the action is a linked action that is queuing
             // or executing
             let has_linked_action = self.is_priority_linked_action_queuing_or_executing(player, id);
             let action = self.priority_actions.get_mut(&id).unwrap();
@@ -299,10 +316,10 @@ impl Rotator {
                     has_erda_action || has_linked_action
                 }
                 Some(ActionCondition::Linked) | Some(ActionCondition::EveryMillis(_)) | None => {
-                    player // the player currently executing action
+                    player // The player currently executing action
                         .priority_action_id()
                         .is_some_and(|action_id| action_id == id)
-                        || self // the action is in queue
+                        || self // The action is in queue
                             .priority_actions_queue
                             .iter()
                             .any(|action_id| *action_id == id)
@@ -325,9 +342,10 @@ impl Rotator {
         }
     }
 
-    /// Checks if the player is queuing or executing a normal linked action
+    /// Checks if the player is queuing or executing a normal [`RotatorAction::Linked`] action
     ///
-    /// This prevents `rotate_priority_actions_queue` from overriding the normal linked action
+    /// This prevents [`Self::rotate_priority_actions_queue`] from overriding the normal
+    /// linked action
     #[inline]
     fn has_normal_linked_action_queuing_or_executing(&self, player: &PlayerState) -> bool {
         if self.normal_queuing_linked_action.is_some() {
@@ -340,10 +358,10 @@ impl Rotator {
         })
     }
 
-    /// Checks if the player is executing a priority linked action
+    /// Checks if the player is executing a priority [`RotatorAction::Linked`] action
     ///
     /// This does not check the queuing linked action because this check is to allow the linked
-    /// action to be rotated in `rotate_priority_actions_queue`
+    /// action to be rotated in [`Self::rotate_priority_actions_queue`]
     #[inline]
     fn has_priority_linked_action_executing(&self, player: &PlayerState) -> bool {
         player.priority_action_id().is_some_and(|id| {
@@ -353,13 +371,13 @@ impl Rotator {
         })
     }
 
-    /// Rotates the actions inside the `priority_actions_queue`
+    /// Rotates the actions inside the [`Self::priority_actions_queue`]
     ///
     /// If there is any on-going linked action:
     /// - For normal action, it will wait until the action is completed by the normal rotation
     /// - For priority action, it will rotate and wait until all the actions are executed
     ///
-    /// After that, it will rotate actions inside `priority_actions_queue`
+    /// After that, it will rotate actions inside [`Self::priority_actions_queue`]
     fn rotate_priority_actions_queue(&mut self, context: &Context, player: &mut PlayerState) {
         if self.priority_actions_queue.is_empty() && self.priority_queuing_linked_action.is_none() {
             return;
@@ -538,10 +556,11 @@ impl Rotator {
     }
 }
 
-/// Creates a `RotatorAction` with `start_action` as the initial action
+/// Creates a [`RotatorAction`] with `start_action` as the initial action
 ///
-/// If `start_action` is linked, this function returns `RotatorAction::Linked`.
-/// OTherwise, this returns `RotatorAction::Single`.
+/// If `start_action` is linked, this function returns [`RotatorAction::Linked`] with [`usize`] as
+/// the offset from `start_index` to the next non-linked action.
+/// Otherwise, this returns [`RotatorAction::Single`] with [`usize`] offset of 1.
 #[inline]
 fn rotator_action(
     start_action: Action,
@@ -613,7 +632,7 @@ fn priority_action(
     }
 }
 
-/// Creates a `PlayerAction::Key` that spams potion when there is an elite boss
+/// Creates a [`PlayerAction::Key`] priority action that spams potion when there is an elite boss
 #[inline]
 fn elite_boss_potion_spam_priority_action(key: KeyBinding) -> PriorityAction {
     PriorityAction {
@@ -644,13 +663,13 @@ fn elite_boss_potion_spam_priority_action(key: KeyBinding) -> PriorityAction {
     }
 }
 
-/// Creates a `PlayerAction::SolveRune` priority action
+/// Creates a [`PlayerAction::SolveRune`] priority action
 ///
 /// The conditions for triggering this action are:
 /// - The player is not validating previous rune solving
-/// - At least `COOLDOWN_BETWEEN_QUEUE_MILLIS` have been passed since last action queue
-/// - The minimap is in `Minimap::Idle` state and there is a rune
-/// - The player rune buff is `Buff::NoBuff`
+/// - At least [`COOLDOWN_BETWEEN_QUEUE_MILLIS`] have been passed since last action queue
+/// - The minimap is in [`Minimap::Idle`] state and there is a rune
+/// - The player rune buff is [`Buff::NoBuff`]
 #[inline]
 fn solve_rune_priority_action() -> PriorityAction {
     PriorityAction {

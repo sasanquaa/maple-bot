@@ -633,13 +633,6 @@ fn ActionItem(
     }
 }
 
-#[derive(Clone, Copy, Props, PartialEq)]
-struct InputConfigProps<T: 'static + Clone + PartialEq> {
-    on_input: EventHandler<T>,
-    disabled: bool,
-    value: T,
-}
-
 #[component]
 fn PositionNumberInput(
     label: String,

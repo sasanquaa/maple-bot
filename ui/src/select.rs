@@ -102,6 +102,7 @@ pub fn TextSelect(
                     label: "",
                     label_class: "collapse",
                     select_class: "rounded h-full border border-gray-300 text-xs text-gray-800 outline-none",
+                    disabled,
                     options: options
                         .into_iter()
                         .chain([create_text.clone()].into_iter())

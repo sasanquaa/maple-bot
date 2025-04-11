@@ -4,7 +4,9 @@
 use std::string::ToString;
 
 use action::Actions;
-use backend::{Configuration as ConfigurationData, Minimap as MinimapData, start_update_loop};
+use backend::{
+    Configuration as ConfigurationData, Minimap as MinimapData, query_configs, start_update_loop,
+};
 use configuration::Configuration;
 use dioxus::{
     desktop::{
@@ -16,6 +18,7 @@ use dioxus::{
 };
 use minimap::Minimap;
 use tab::Tab;
+use tokio::task::spawn_blocking;
 use tracing_log::LogTracer;
 
 mod action;
@@ -60,7 +63,8 @@ fn App() -> Element {
 
     let minimap = use_signal::<Option<MinimapData>>(|| None);
     let preset = use_signal::<Option<String>>(|| None);
-    let configs = use_signal_sync(Vec::<ConfigurationData>::new);
+    let configs =
+        use_resource(|| async { spawn_blocking(|| query_configs().unwrap()).await.unwrap() });
     let config = use_signal_sync::<Option<ConfigurationData>>(|| None);
     let copy_position = use_signal::<Option<(i32, i32)>>(|| None);
     let mut active_tab = use_signal(|| TAB_CONFIGURATION.to_string());

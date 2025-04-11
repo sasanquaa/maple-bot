@@ -1,8 +1,8 @@
 use std::{fmt::Display, str::FromStr};
 
 use backend::{
-    Class, Configuration as ConfigurationData, IntoEnumIterator, KeyBinding,
-    KeyBindingConfiguration, PotionMode, query_configs, upsert_config,
+    Class, Configuration as ConfigurationData, IntoEnumIterator, KeyBindingConfiguration,
+    PotionMode, upsert_config,
 };
 use dioxus::prelude::*;
 use tokio::task::spawn_blocking;
@@ -33,47 +33,39 @@ const LEGION_LUCK: &str = "Legion's Luck";
 
 #[component]
 pub fn Configuration(
-    configs: SyncSignal<Vec<ConfigurationData>>,
+    configs: Resource<Vec<ConfigurationData>>,
     config: SyncSignal<Option<ConfigurationData>>,
 ) -> Element {
-    let config_names =
-        use_memo(move || configs().iter().map(|config| config.name.clone()).collect());
-    let config_view = use_memo(move || config().unwrap_or_default());
-    let mut active = use_signal(|| None);
-    let on_config = use_callback(move |new_config: ConfigurationData| {
-        if config.peek().is_some() {
-            let id = new_config.id;
-            if id.is_none() {
-                config.set(None);
-            } else {
-                config.set(Some(new_config.clone()));
-                *configs
-                    .write()
-                    .iter_mut()
-                    .find(|config| config.id == id)
-                    .unwrap() = new_config.clone();
-            }
-            spawn(async move {
-                spawn_blocking(move || {
-                    let mut new_config = new_config;
-                    upsert_config(&mut new_config).unwrap();
-                    if id.is_none() {
-                        config.set(Some(new_config.clone()));
-                        configs.write().push(new_config.clone());
-                    }
-                })
-                .await
-                .unwrap();
-            });
-        }
+    let is_disabled = use_memo(move || config().is_none());
+    let active = use_signal(|| None);
+    let configs_value = configs.value();
+    let config_names = use_memo(move || match configs_value() {
+        Some(configs) => configs
+            .into_iter()
+            .map(|config| config.name.clone())
+            .collect(),
+        None => vec![],
     });
-    let disabled = use_memo(move || config().is_none());
+    let config_view = use_memo(move || config().unwrap_or_default());
+    let on_config = use_callback(move |new_config: ConfigurationData| {
+        spawn(async move {
+            spawn_blocking(move || {
+                let mut new_config = new_config;
+                upsert_config(&mut new_config).unwrap();
+                config.set(Some(new_config.clone()));
+            })
+            .await
+            .unwrap();
+            configs.restart();
+        });
+    });
 
-    use_future(move || async move {
-        if config.peek().is_none() {
-            let result = spawn_blocking(|| query_configs().unwrap()).await.unwrap();
-            config.set(result.first().cloned());
-            configs.set(result);
+    use_effect(move || {
+        if let Some(configs) = configs_value() {
+            debug_assert!(!configs.is_empty());
+            if config.peek().is_none() {
+                config.set(Some(configs.into_iter().next().unwrap()));
+            }
         }
     });
 
@@ -87,22 +79,19 @@ pub fn Configuration(
                         ..ConfigurationData::default()
                     });
                 },
-                disabled: disabled(),
+                disabled: is_disabled(),
                 on_select: move |(i, _)| {
-                    config.set(configs.peek().get(i).cloned());
+                    config.set(configs_value().unwrap().get(i).cloned());
                 },
                 options: config_names(),
                 selected: config_view().name,
             }
-            ConfigHeader { text: "Key Bindings", disabled: disabled() }
+            ConfigHeader { text: "Key Bindings", disabled: is_disabled() }
             div { class: "space-y-1",
                 KeyBindingConfigurationInput {
                     label: ROPE_LIFT,
-                    input_disabled: disabled(),
-                    is_active: matches!(active(), Some(ROPE_LIFT)),
-                    on_active: move |value: bool| {
-                        active.set(value.then_some(ROPE_LIFT));
-                    },
+                    label_active: active,
+                    is_disabled: is_disabled(),
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             ropelift_key: key.unwrap(),
@@ -113,12 +102,9 @@ pub fn Configuration(
                 }
                 KeyBindingConfigurationInput {
                     label: TELEPORT,
-                    input_disabled: disabled(),
+                    label_active: active,
+                    is_disabled: is_disabled(),
                     is_optional: true,
-                    is_active: matches!(active(), Some(TELEPORT)),
-                    on_active: move |value: bool| {
-                        active.set(value.then_some(TELEPORT));
-                    },
                     on_input: move |key| {
                         on_config(ConfigurationData {
                             teleport_key: key,
@@ -129,12 +115,9 @@ pub fn Configuration(
                 }
                 KeyBindingConfigurationInput {
                     label: UP_JUMP,
-                    input_disabled: disabled(),
+                    label_active: active,
+                    is_disabled: is_disabled(),
                     is_optional: true,
-                    is_active: matches!(active(), Some(UP_JUMP)),
-                    on_active: move |value: bool| {
-                        active.set(value.then_some(UP_JUMP));
-                    },
                     on_input: move |key| {
                         on_config(ConfigurationData {
                             up_jump_key: key,
@@ -145,11 +128,8 @@ pub fn Configuration(
                 }
                 KeyBindingConfigurationInput {
                     label: INTERACT,
-                    input_disabled: disabled(),
-                    is_active: matches!(active(), Some(INTERACT)),
-                    on_active: move |value: bool| {
-                        active.set(value.then_some(INTERACT));
-                    },
+                    label_active: active,
+                    is_disabled: is_disabled(),
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             interact_key: key.unwrap(),
@@ -160,11 +140,8 @@ pub fn Configuration(
                 }
                 KeyBindingConfigurationInput {
                     label: CASH_SHOP,
-                    input_disabled: disabled(),
-                    is_active: matches!(active(), Some(CASH_SHOP)),
-                    on_active: move |value: bool| {
-                        active.set(value.then_some(CASH_SHOP));
-                    },
+                    label_active: active,
+                    is_disabled: is_disabled(),
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             cash_shop_key: key.unwrap(),
@@ -175,12 +152,9 @@ pub fn Configuration(
                 }
                 KeyBindingConfigurationInput {
                     label: FEED_PET,
-                    input_disabled: disabled(),
-                    is_active: matches!(active(), Some(FEED_PET)),
-                    on_active: move |value: bool| {
-                        active.set(value.then_some(FEED_PET));
-                    },
-                    can_disable: true,
+                    label_active: active,
+                    is_disabled: is_disabled(),
+                    is_toggleable: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             feed_pet_key: key.unwrap(),
@@ -188,11 +162,9 @@ pub fn Configuration(
                         });
                     },
                     value: Some(config_view().feed_pet_key),
-                    MillisInput {
+                    ConfigMillisInput {
                         label: "Every Milliseconds",
-                        div_class: DIV_CLASS,
-                        label_class: LABEL_CLASS,
-                        input_class: INPUT_CLASS,
+                        disabled: is_disabled(),
                         on_input: move |value| {
                             on_config(ConfigurationData {
                                 feed_pet_millis: value,
@@ -204,12 +176,9 @@ pub fn Configuration(
                 }
                 KeyBindingConfigurationInput {
                     label: POTION,
-                    input_disabled: disabled(),
-                    is_active: matches!(active(), Some(POTION)),
-                    on_active: move |value: bool| {
-                        active.set(value.then_some(POTION));
-                    },
-                    can_disable: true,
+                    label_active: active,
+                    is_disabled: is_disabled(),
+                    is_toggleable: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             potion_key: key.unwrap(),
@@ -225,16 +194,14 @@ pub fn Configuration(
                                 ..config_view.peek().clone()
                             });
                         },
-                        disabled: disabled(),
+                        disabled: is_disabled(),
                         selected: config_view().potion_mode,
                     }
                     match config_view().potion_mode {
                         PotionMode::EveryMillis(value) => rsx! {
-                            MillisInput {
+                            ConfigMillisInput {
                                 label: "Every Milliseconds",
-                                div_class: DIV_CLASS,
-                                label_class: LABEL_CLASS,
-                                input_class: INPUT_CLASS,
+                                disabled: is_disabled(),
                                 on_input: move |value| {
                                     on_config(ConfigurationData {
                                         potion_mode: PotionMode::EveryMillis(value),
@@ -250,6 +217,7 @@ pub fn Configuration(
                                 div_class: DIV_CLASS,
                                 label_class: LABEL_CLASS,
                                 input_class: INPUT_CLASS,
+                                disabled: is_disabled(),
                                 on_input: move |value| {
                                     on_config(ConfigurationData {
                                         potion_mode: PotionMode::Percentage(value),
@@ -258,11 +226,9 @@ pub fn Configuration(
                                 },
                                 value,
                             }
-                            MillisInput {
+                            ConfigMillisInput {
                                 label: "Health Update Milliseconds",
-                                div_class: DIV_CLASS,
-                                label_class: LABEL_CLASS,
-                                input_class: INPUT_CLASS,
+                                disabled: is_disabled(),
                                 on_input: move |value| {
                                     on_config(ConfigurationData {
                                         health_update_millis: value,
@@ -276,12 +242,9 @@ pub fn Configuration(
                 }
                 KeyBindingConfigurationInput {
                     label: SAYRAM_ELIXIR,
-                    input_disabled: disabled(),
-                    is_active: matches!(active(), Some(SAYRAM_ELIXIR)),
-                    on_active: move |value: bool| {
-                        active.set(value.then_some(SAYRAM_ELIXIR));
-                    },
-                    can_disable: true,
+                    label_active: active,
+                    is_disabled: is_disabled(),
+                    is_toggleable: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             sayram_elixir_key: key.unwrap(),
@@ -292,12 +255,9 @@ pub fn Configuration(
                 }
                 KeyBindingConfigurationInput {
                     label: AURELIA_ELIXIR,
-                    input_disabled: disabled(),
-                    is_active: matches!(active(), Some(AURELIA_ELIXIR)),
-                    on_active: move |value: bool| {
-                        active.set(value.then_some(AURELIA_ELIXIR));
-                    },
-                    can_disable: true,
+                    label_active: active,
+                    is_disabled: is_disabled(),
+                    is_toggleable: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             aurelia_elixir_key: key.unwrap(),
@@ -308,12 +268,9 @@ pub fn Configuration(
                 }
                 KeyBindingConfigurationInput {
                     label: EXP_X3,
-                    input_disabled: disabled(),
-                    is_active: matches!(active(), Some(EXP_X3)),
-                    on_active: move |value: bool| {
-                        active.set(value.then_some(EXP_X3));
-                    },
-                    can_disable: true,
+                    label_active: active,
+                    is_disabled: is_disabled(),
+                    is_toggleable: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             exp_x3_key: key.unwrap(),
@@ -324,12 +281,9 @@ pub fn Configuration(
                 }
                 KeyBindingConfigurationInput {
                     label: BONUS_EXP,
-                    input_disabled: disabled(),
-                    is_active: matches!(active(), Some(BONUS_EXP)),
-                    on_active: move |value: bool| {
-                        active.set(value.then_some(BONUS_EXP));
-                    },
-                    can_disable: true,
+                    label_active: active,
+                    is_disabled: is_disabled(),
+                    is_toggleable: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             bonus_exp_key: key.unwrap(),
@@ -340,12 +294,9 @@ pub fn Configuration(
                 }
                 KeyBindingConfigurationInput {
                     label: LEGION_WEALTH,
-                    input_disabled: disabled(),
-                    is_active: matches!(active(), Some(LEGION_WEALTH)),
-                    on_active: move |value: bool| {
-                        active.set(value.then_some(LEGION_WEALTH));
-                    },
-                    can_disable: true,
+                    label_active: active,
+                    is_disabled: is_disabled(),
+                    is_toggleable: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             legion_wealth_key: key.unwrap(),
@@ -356,12 +307,9 @@ pub fn Configuration(
                 }
                 KeyBindingConfigurationInput {
                     label: LEGION_LUCK,
-                    input_disabled: disabled(),
-                    is_active: matches!(active(), Some(LEGION_LUCK)),
-                    on_active: move |value: bool| {
-                        active.set(value.then_some(LEGION_LUCK));
-                    },
-                    can_disable: true,
+                    label_active: active,
+                    is_disabled: is_disabled(),
+                    is_toggleable: true,
                     on_input: move |key: Option<KeyBindingConfiguration>| {
                         on_config(ConfigurationData {
                             legion_luck_key: key.unwrap(),
@@ -371,7 +319,7 @@ pub fn Configuration(
                     value: Some(config_view().legion_luck_key),
                 }
             }
-            ConfigHeader { text: "Others", disabled: disabled(), class: "mt-2" }
+            ConfigHeader { text: "Others", disabled: is_disabled(), class: "mt-2" }
             p { class: "font-normal italic text-xs text-gray-400 mb-1",
                 "Class affects only link key timing except Blaster"
             }
@@ -383,9 +331,29 @@ pub fn Configuration(
                         ..config_view.peek().clone()
                     });
                 },
-                disabled: disabled(),
+                disabled: is_disabled(),
                 selected: config_view().class,
             }
+        }
+    }
+}
+
+#[component]
+fn ConfigMillisInput(
+    label: String,
+    disabled: bool,
+    on_input: EventHandler<u64>,
+    value: u64,
+) -> Element {
+    rsx! {
+        MillisInput {
+            label: "Every Milliseconds",
+            div_class: DIV_CLASS,
+            label_class: LABEL_CLASS,
+            input_class: INPUT_CLASS,
+            disabled,
+            on_input,
+            value,
         }
     }
 }
@@ -429,50 +397,32 @@ fn ConfigEnumSelect<
     }
 }
 
-#[derive(PartialEq, Props, Clone)]
-struct KeyBindingConfigurationInputProps {
-    label: String,
-    input_disabled: bool,
-    #[props(default = false)]
-    is_optional: bool,
-    is_active: bool,
-    on_active: EventHandler<bool>,
-    #[props(default = false)]
-    can_disable: bool,
+#[component]
+fn KeyBindingConfigurationInput(
+    label: &'static str,
+    label_active: Signal<Option<&'static str>>,
+    is_disabled: bool,
+    #[props(default = false)] is_optional: bool,
+    #[props(default = false)] is_toggleable: bool,
     on_input: EventHandler<Option<KeyBindingConfiguration>>,
     value: Option<KeyBindingConfiguration>,
     children: Element,
-}
+) -> Element {
+    debug_assert!(is_optional || value.is_some());
 
-#[component]
-fn KeyBindingConfigurationInput(props: KeyBindingConfigurationInputProps) -> Element {
-    debug_assert!(props.is_optional || props.value.is_some());
-
-    let is_enabled = props.value.map(|key| key.enabled).unwrap_or(true);
-    let on_enabled_input = use_callback(move |enabled: bool| {
-        (props.on_input)(
-            props
-                .value
-                .map(|config| KeyBindingConfiguration { enabled, ..config }),
-        );
-    });
-    let on_key_input = use_callback(move |key: Option<KeyBinding>| {
-        (props.on_input)(key.map(|key| KeyBindingConfiguration {
-            key,
-            ..props.value.unwrap_or_default()
-        }));
-    });
-    let input_width = if props.can_disable { "w-24" } else { "w-44" };
+    let is_active = use_memo(move || label_active() == Some(label));
+    let is_enabled = value.map(|key| key.enabled).unwrap_or(true);
+    let input_width = if is_toggleable { "w-24" } else { "w-44" };
 
     rsx! {
-        div { class: "flex flex-col space-y-4 py-2 border-b border-gray-100",
+        div { class: "flex flex-col space-y-4 py-3 border-b border-gray-100",
             div { class: "flex items-center space-x-4",
                 div { class: "flex-1",
                     span {
                         class: "text-xs text-gray-700 data-[disabled]:text-gray-400",
-                        "data-disabled": props.input_disabled.then_some(true),
-                        {props.label}
-                        if props.is_optional {
+                        "data-disabled": is_disabled.then_some(true),
+                        {label}
+                        if is_optional {
                             span { class: "text-xs text-gray-400 ml-1", "(Optional)" }
                         }
                     }
@@ -481,35 +431,47 @@ fn KeyBindingConfigurationInput(props: KeyBindingConfigurationInputProps) -> Ele
                     div { class: "relative",
                         KeyInput {
                             class: "border rounded border-gray-300 h-7 {input_width} disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400",
-                            disabled: props.input_disabled,
-                            is_active: props.is_active,
-                            on_active: props.on_active,
-                            on_input: move |key| {
-                                on_key_input(Some(key));
+                            disabled: is_disabled,
+                            is_active: is_active(),
+                            on_active: move |is_active: bool| {
+                                label_active.set(is_active.then_some(label));
                             },
-                            value: props.value.map(|key| key.key),
+                            on_input: move |key| {
+                                (on_input)(
+                                    Some(KeyBindingConfiguration {
+                                        key,
+                                        ..value.unwrap_or_default()
+                                    }),
+                                );
+                            },
+                            value: value.map(|key| key.key),
                         }
-                        if props.is_optional && !props.is_active && props.value.is_some() {
+                        if is_optional && !is_active() && value.is_some() {
                             button {
                                 class: "absolute right-0 top-0 flex items-center h-full w-4",
                                 onclick: move |_| {
-                                    on_key_input(None);
+                                    (on_input)(None);
                                 },
                                 XIcon { class: "w-2 h-2 text-red-400 fill-current" }
                             }
                         }
                     }
-                    if props.can_disable {
+                    if is_toggleable {
                         button {
                             r#type: "button",
-                            disabled: props.input_disabled || props.value.is_none(),
+                            disabled: is_disabled || value.is_none(),
                             class: {
                                 let color = if is_enabled { "button-primary" } else { "button-danger" };
                                 format!("w-18 h-7 {color}")
                             },
                             onclick: move |_| {
-                                if let Some(config) = props.value {
-                                    on_enabled_input(!config.enabled);
+                                if let Some(config) = value {
+                                    (on_input)(
+                                        Some(KeyBindingConfiguration {
+                                            enabled: !config.enabled,
+                                            ..config
+                                        }),
+                                    );
                                 }
                             },
                             if is_enabled {
@@ -521,7 +483,7 @@ fn KeyBindingConfigurationInput(props: KeyBindingConfigurationInputProps) -> Ele
                     }
                 }
             }
-            {props.children}
+            {children}
         }
     }
 }

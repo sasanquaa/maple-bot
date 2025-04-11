@@ -53,8 +53,8 @@ const GRAPPLING_THRESHOLD: i32 = 26;
 pub const GRAPPLING_MAX_THRESHOLD: i32 = 41;
 
 /// The number of times a reachable y must successfuly ensures the player moves to that exact y
-/// Once the count is reached, it is considered "solidified" and guaranteed the reachable y is always
-/// a y that has platform(s)
+/// Once the count is reached, it is considered "solidified" and guaranteed the reachable y is
+/// always a y that has platform(s)
 const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 4;
 
 /// The acceptable y range above and below the detected mob position when matched with a reachable y
@@ -134,12 +134,14 @@ pub struct PlayerState {
     /// Indicates whether to use `ControlFlow::Immediate` on this update
     use_immediate_control_flow: bool,
     /// Indicates whether to ignore update_pos and use last_known_pos on next update
+    /// This is true whenever `use_immediate_control_flow` is true
     ignore_pos_update: bool,
     /// Indicates whether to reset the contextual state back to `Player::Idle` on next update
     reset_to_idle_next_update: bool,
     /// Indicates the last movement
     /// Helps coordinating between movement states (e.g. falling + double jumping)
-    /// Resets to `None` when the destination (possibly intermediate) is reached or in `Player::Idle`
+    /// Resets to `None` when the destination (possibly intermediate) is reached or
+    /// in [`Player::Idle`]
     last_movement: Option<LastMovement>,
     // TODO: 2 maps fr?
     /// Tracks `last_movement` to abort normal action when its position is not accurate
@@ -338,6 +340,8 @@ pub struct Moving {
     /// Whether to allow adjusting to precise destination
     exact: bool,
     /// Whether the movement has completed
+    /// For example, in up jump with fixed key like Corsair, it is considered complete
+    /// when the key is pressed
     completed: bool,
     /// Current timeout ticks for checking if the player position's changed
     timeout: Timeout,
@@ -554,7 +558,7 @@ impl Contextual for Player {
             //
             // `update_non_positional_context` is here to continue updating
             // `Player::Unstucking` returned from below when the player
-            // is inside the edges of the minimap
+            // is inside the edges of the minimap. And also `Player::CashShopThenExit`.
             if let Some(next) = update_non_positional_context(self, context, detector, state, true)
             {
                 return ControlFlow::Next(next);
@@ -1136,6 +1140,9 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
 /// It will first transition to `Player::DoubleJumping` and `Player::Adjusting` for
 /// matching `x` of `dest`. Then, `Player::Grappling`, `Player::UpJumping`, `Player::Jump` or
 /// `Player::Falling` for matching `y` of `dest`. (e.g. horizontal then vertical)
+///
+/// In auto mob or intermediate destination, most of the movement thresholds are relaxed for
+/// more fluid movement.
 fn update_moving_context(
     state: &mut PlayerState,
     cur_pos: Point,
@@ -1313,9 +1320,6 @@ fn update_adjusting_context(
     const USE_KEY_Y_THRESHOLD: i32 = 2;
     const ADJUSTING_SHORT_TIMEOUT: u32 = 3;
 
-    /// Handles `PlayerAction` for `Player::Adjusting`
-    ///
-    /// TODO
     fn on_player_action(
         context: &Context,
         state: &PlayerState,
@@ -1457,6 +1461,20 @@ fn update_adjusting_context(
     )
 }
 
+/// Updates the `Player::DoubleJumping` contextual state
+///
+/// This state continues to double jump as long as the distance x-wise is still
+/// `>= DOUBLE_JUMP_THRESHOLD`. Or when `forced`, this state will attempt a single double jump.
+/// When `require_stationary`, this state will wait for the player to be stationary before
+/// double jumping.
+///
+/// `forced` is currently true when it is transitioned from [`Player::Idle`], [`Player::Moving`],
+/// [`Player::Adjusting`], and [`Player::UseKey`] with [`PlayerState::last_known_direction`]
+/// matches the [`PlayerAction::Key`] direction.
+///
+/// `require_stationary` is currently true when it is transitioned from `Player::Idle` and
+/// `Player::UseKey` with `state.last_known_direction` matches the
+/// `PlayerAction::Key` direction.
 fn update_double_jumping_context(
     context: &Context,
     state: &mut PlayerState,
@@ -1628,9 +1646,9 @@ fn update_double_jumping_context(
     )
 }
 
-/// Updates the `Player::Grappling` contextual state
+/// Updates the [`Player::Grappling`] contextual state
 ///
-/// This state can only be transitioned via `Player::Moving` or `Player::DoubleJumping`
+/// This state can only be transitioned via [`Player::Moving`] or [`Player::DoubleJumping`]
 /// when the player has reached or close to the destination x-wise.
 ///
 /// This state will use the Rope Lift skill
@@ -1942,7 +1960,8 @@ fn update_unstucking_context(
 /// This state stalls for the specified number of `max_timeout`. Upon timing out,
 /// it will return to `state.stalling_timeout_state` if `Some` or `Player::Idle` if `None`.
 /// And `Player::Idle` is considered the terminal state if there is an action.
-/// `state.stalling_timeout_state` is currently only `Some` when it is transitioned via `Player::UseKey`.
+/// `state.stalling_timeout_state` is currently only `Some` when it is transitioned
+/// via [`Player::UseKey`].
 ///
 /// If this state timeout in auto mob with terminal state, it will perform
 /// auto mob reachable `y` solidifying if needed.
@@ -2241,6 +2260,10 @@ pub struct Timeout {
     started: bool,
 }
 
+/// Updates the `Timeout` current tick
+///
+/// This is basic building block for contextual states that can
+/// be timed out.
 #[inline]
 fn update_with_timeout<T>(
     timeout: Timeout,
@@ -2331,6 +2354,7 @@ fn reset_health(state: &mut PlayerState) {
     state.health_bar_task = None;
 }
 
+/// Increments the rune validation fail count and sets `state.rune_cash_shop` if needed
 #[inline]
 fn update_rune_fail_count_state(state: &mut PlayerState) {
     state.rune_failed_count += 1;

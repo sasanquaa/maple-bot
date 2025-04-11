@@ -163,7 +163,8 @@ type MatFn = Box<dyn FnOnce() -> Mat + Send>;
 
 /// A detector that temporary caches the transformed `Mat`.
 ///
-/// It is useful when there are multiple detections in a single tick that rely on grayscale (e.g. buffs).
+/// It is useful when there are multiple detections in a single tick that
+/// rely on grayscale (e.g. buffs).
 #[derive(Clone, Debug)]
 pub struct CachedDetector {
     mat: Arc<OwnedMat>,
@@ -1085,8 +1086,7 @@ fn extract_texts(mat: &impl MatTraitConst, bboxes: &[Rect]) -> Vec<String> {
 /// Extracts text bounding boxes from the preprocessed `Mat`.
 ///
 /// This function is adapted from
-/// https://github.com/clovaai/CRAFT-pytorch/blob/e332dd8b718e291f51b66ff8f9ef2c98ee4474c8/craft_utils.py#L19
-/// with minor changes
+/// https://github.com/clovaai/CRAFT-pytorch/blob/master/craft_utils.py#L19 with minor changes
 fn extract_text_bboxes(
     mat_in: &impl MatTraitConst,
     w_ratio: f32,
@@ -1268,7 +1268,8 @@ fn remap_from_yolo(pred: &[f32], size: Size, w_ratio: f32, h_ratio: f32) -> Rect
     )
 }
 
-/// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32` for YOLO detection.
+/// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32`
+/// for YOLO detection.
 ///
 /// Returns a triplet of `(Mat, width_ratio, height_ratio)` with the ratios calculed from
 /// `old_size / new_size`.
@@ -1287,7 +1288,8 @@ fn preprocess_for_yolo(mat: &impl MatTraitConst) -> (Mat, f32, f32) {
     (mat, w_ratio, h_ratio)
 }
 
-/// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32` for minimap name detection.
+/// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32`
+/// for minimap name detection.
 ///
 /// Returns a `(Mat, width_ratio, height_ratio, x_offset, y_offset)`.
 #[inline]
@@ -1305,9 +1307,10 @@ fn preprocess_for_minimap_name(
     (mat, w_ratio, h_ratio, x_offset, y_offset)
 }
 
-/// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32` for text bounding boxes detection.
+/// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32`
+/// for text bounding boxes detection.
 ///
-/// The preprocess is adapted from: https://github.com/clovaai/CRAFT-pytorch/blob/master/imgproc.py.
+/// The preprocess is adapted from: https://github.com/clovaai/CRAFT-pytorch/blob/master/imgproc.py
 ///
 /// Returns a `(Mat, width_ratio, height_ratio)`.
 #[inline]
@@ -1403,8 +1406,9 @@ fn from_output_value<'a>(result: &SessionOutputs) -> BoxedRef<'a, Mat> {
 
 /// Converts a continuous, normalized `f32` RGB `Mat` image to `SessionInputValue`.
 ///
-/// The input `Mat` is assumed to be continuous, normalized RGB `f32` data type and will panic if not.
-/// The `Mat` is reshaped to single channel, tranposed to `[1, 3, H, W]` and converted to `SessionInputValue`.
+/// The input `Mat` is assumed to be continuous, normalized RGB `f32` data type and
+/// will panic if not. The `Mat` is reshaped to single channel, tranposed to `[1, 3, H, W]` and
+/// converted to `SessionInputValue`.
 #[inline]
 fn norm_rgb_to_input_value(mat: &impl MatTraitConst) -> SessionInputValue {
     let mat = mat.reshape_nd(1, &[1, mat.rows(), mat.cols(), 3]).unwrap();
