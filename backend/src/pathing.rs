@@ -36,7 +36,7 @@ struct VisitingPlatform {
 
 impl PartialOrd for VisitingPlatform {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.score.partial_cmp(&other.score)
+        Some(self.cmp(other))
     }
 }
 
@@ -84,7 +84,7 @@ pub fn find_points_with(
     vertical_threshold: i32,
 ) -> Option<Vec<Point>> {
     let platforms = platforms
-        .into_iter()
+        .iter()
         .map(|platform| (platform.inner, *platform))
         .collect::<HashMap<_, _>>();
     let from_platform = find_platform(&platforms, from, jump_threshold)?;
@@ -112,7 +112,7 @@ pub fn find_points_with(
                 double_jump_threshold,
             );
         }
-        let neighbors = platforms[&current.platform].neighbors.clone();
+        let neighbors = platforms[&current.platform].neighbors;
         for neighbor in neighbors {
             let tentative_score = current_score.saturating_add(weight_score(
                 current.platform,
@@ -123,10 +123,9 @@ pub fn find_points_with(
             if tentative_score < neighbor_score {
                 came_from.insert(neighbor, current.platform);
                 score.insert(neighbor, tentative_score);
-                if visiting
+                if !visiting
                     .iter()
-                    .find(|platform| platform.0.platform == neighbor)
-                    .is_none()
+                    .any(|platform| platform.0.platform == neighbor)
                 {
                     visiting.push(Reverse(VisitingPlatform {
                         score: tentative_score,
@@ -212,7 +211,7 @@ fn points_from(
         current = next;
     }
     points.push(Point::new(to.x, to_platform.y));
-    return Some(points);
+    Some(points)
 }
 
 #[inline]
@@ -264,17 +263,12 @@ fn platforms_reachable(
 #[inline]
 fn ranges_overlap<R: Into<Range<i32>>>(first: R, second: R) -> bool {
     fn inner(first: Range<i32>, second: Range<i32>) -> bool {
-        if first.is_empty()
+        !(first.is_empty()
             || second.is_empty()
             || first.end < second.start
             || first.start >= second.end
             || second.end < first.start
-            || second.start >= first.end
-        {
-            false
-        } else {
-            true
-        }
+            || second.start >= first.end)
     }
     inner(first.into(), second.into())
 }

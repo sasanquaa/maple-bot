@@ -52,7 +52,16 @@ static REQUESTS: LazyLock<(
     (tx, Mutex::new(rx))
 });
 
-macro_rules! expect_variant {
+macro_rules! expect_unit_variant {
+    ($e:expr, $p:path) => {
+        match $e {
+            $p => (),
+            _ => unreachable!(),
+        }
+    };
+}
+
+macro_rules! expect_value_variant {
     ($e:expr, $p:path) => {
         match $e {
             $p(value) => value,
@@ -76,12 +85,12 @@ enum Request {
 
 #[derive(Debug)]
 enum Response {
-    RotateActions(()),
-    ToggleMinimapSelection(()),
+    RotateActions,
+    ToggleMinimapSelection,
     CreateMinimap(Option<Minimap>),
-    UpdateMinimap(()),
-    UpdateConfiguration(()),
-    RedetectMinimap(()),
+    UpdateMinimap,
+    UpdateConfiguration,
+    RedetectMinimap,
     PlayerState(PlayerState),
     MinimapFrame(Option<(Vec<u8>, usize, usize)>),
     MinimapData(Option<Minimap>),
@@ -119,58 +128,58 @@ pub struct PlayerState {
 }
 
 pub async fn rotate_actions(halting: bool) {
-    expect_variant!(
+    expect_unit_variant!(
         request(Request::RotateActions(halting)).await,
         Response::RotateActions
     )
 }
 
 pub async fn toggle_minimap_selection(is_manual: bool) {
-    expect_variant!(
+    expect_unit_variant!(
         request(Request::ToggleMinimapSelection(is_manual)).await,
         Response::ToggleMinimapSelection
     )
 }
 
 pub async fn create_minimap(name: String) -> Option<Minimap> {
-    expect_variant!(
+    expect_value_variant!(
         request(Request::CreateMinimap(name)).await,
         Response::CreateMinimap
     )
 }
 
 pub async fn update_minimap(preset: Option<String>, minimap: Minimap) {
-    expect_variant!(
+    expect_unit_variant!(
         request(Request::UpdateMinimap(preset, minimap)).await,
         Response::UpdateMinimap
     )
 }
 
 pub async fn update_configuration(config: Configuration) {
-    expect_variant!(
+    expect_unit_variant!(
         request(Request::UpdateConfiguration(config)).await,
         Response::UpdateConfiguration
     )
 }
 
 pub async fn redetect_minimap() {
-    expect_variant!(
+    expect_unit_variant!(
         request(Request::RedetectMinimap).await,
         Response::RedetectMinimap
     )
 }
 
 pub async fn player_state() -> PlayerState {
-    expect_variant!(request(Request::PlayerState).await, Response::PlayerState)
+    expect_value_variant!(request(Request::PlayerState).await, Response::PlayerState)
 }
 
 pub async fn minimap_frame() -> Result<(Vec<u8>, usize, usize)> {
-    expect_variant!(request(Request::MinimapFrame).await, Response::MinimapFrame)
+    expect_value_variant!(request(Request::MinimapFrame).await, Response::MinimapFrame)
         .ok_or(anyhow!("minimap frame not found"))
 }
 
 pub async fn minimap_data() -> Result<Minimap> {
-    expect_variant!(request(Request::MinimapData).await, Response::MinimapData)
+    expect_value_variant!(request(Request::MinimapData).await, Response::MinimapData)
         .ok_or(anyhow!("minimap data not found"))
 }
 
@@ -179,25 +188,26 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
         let result = match request {
             Request::RotateActions(halting) => {
                 handler.on_rotate_actions(halting);
-                Response::RotateActions(())
+                Response::RotateActions
             }
             Request::ToggleMinimapSelection(is_manual) => {
-                Response::ToggleMinimapSelection(handler.on_toggle_minimap_selection(is_manual))
+                handler.on_toggle_minimap_selection(is_manual);
+                Response::ToggleMinimapSelection
             }
             Request::CreateMinimap(name) => {
                 Response::CreateMinimap(handler.on_create_minimap(name))
             }
             Request::UpdateMinimap(preset, minimap) => {
                 handler.on_update_minimap(preset, minimap);
-                Response::UpdateMinimap(())
+                Response::UpdateMinimap
             }
             Request::UpdateConfiguration(config) => {
                 handler.on_update_configuration(config);
-                Response::UpdateConfiguration(())
+                Response::UpdateConfiguration
             }
             Request::RedetectMinimap => {
                 handler.on_redetect_minimap();
-                Response::RedetectMinimap(())
+                Response::RedetectMinimap
             }
             Request::PlayerState => Response::PlayerState(handler.on_player_state()),
             Request::MinimapFrame => Response::MinimapFrame(handler.on_minimap_frame()),

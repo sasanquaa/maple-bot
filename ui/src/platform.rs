@@ -16,7 +16,7 @@ pub fn Platforms(
     on_save: EventHandler<Minimap>,
     copy_position: ReadOnlySignal<Option<(i32, i32)>>,
 ) -> Element {
-    let mut editing = use_signal(|| Platform::default());
+    let mut editing = use_signal(Platform::default);
 
     rsx! {
         div { class: "flex flex-col space-y-2",
@@ -41,10 +41,10 @@ pub fn Platforms(
                     }
                 },
                 value: {
-                    let value = minimap()
+
+                    minimap()
                         .map(|data| data.rune_platforms_pathing_up_jump_only)
-                        .unwrap_or_default();
-                    value
+                        .unwrap_or_default()
                 },
             }
             PlatformCheckbox {
@@ -105,9 +105,8 @@ pub fn Platforms(
                 label: "Add",
                 delete: false,
                 disabled: {
-                    let disabled = minimap().is_none()
-                        || minimap().unwrap().platforms.len() >= MAX_PLATFORMS_COUNT;
-                    disabled
+                    minimap().is_none()
+                        || minimap().unwrap().platforms.len() >= MAX_PLATFORMS_COUNT
                 },
                 on_click: move |_| {
                     if let Some(minimap) = minimap.write().deref_mut() {

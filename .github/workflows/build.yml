@@ -32,15 +32,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-x86_64-pc-windows-msvc
+          components: clippy, rustfmt
 
       - uses: cargo-bins/cargo-binstall@main
 
       - run: cargo binstall dioxus-cli --no-confirm
 
       - name: Format
-        run: |
-          cargo fmt
-          dx fmt
+        # https://github.com/DioxusLabs/dioxus/issues/3433
+        # Need to add dx fmt
+        run: cargo fmt 
 
       - uses: Swatinem/rust-cache@v2
 
@@ -69,12 +70,17 @@ jobs:
         with:
           runVcpkgInstall: true
 
+      - name: Lint
+        run: cargo clippy -- -D warnings
+
+      - name: Test
+        run: cargo test --verbose
+
       - name: Build & test
         shell: pwsh
         run: |
           dx build --verbose --release --package ui
           dx build --verbose --package ui
-          cargo test --verbose
 
       - uses: actions/upload-artifact@v4
         with:

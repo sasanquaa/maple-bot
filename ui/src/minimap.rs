@@ -411,13 +411,12 @@ fn MinimapsSelect(minimap: Signal<Option<MinimapData>>) -> Element {
     use_effect(move || match minimap() {
         Some(_) | None => minimaps.restart(),
     });
-    use_effect(move || match minimaps_value() {
-        Some(minimaps) => {
+    use_effect(move || {
+        if let Some(minimaps) = minimaps_value() {
             if minimap.peek().is_none() && !minimaps.is_empty() {
                 minimap.set(minimaps.into_iter().next());
             }
         }
-        None => (),
     });
 
     rsx! {

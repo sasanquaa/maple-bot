@@ -770,16 +770,17 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
         debug!(target: "player", "auto mob reachable y {:?} {:?}", y, state.auto_mob_reachable_y_map);
         if state.config.auto_mob_platforms_pathing {
             if let Minimap::Idle(idle) = context.minimap {
-                if let Some((point, exact, index, array)) = find_points(
+                if let Some(array) = find_points(
                     &idle.platforms,
                     player_pos,
                     point,
                     mob_pos.allow_adjusting,
                     state.config.auto_mob_platforms_pathing_up_jump_only,
                 ) {
+                    let (point, exact) = array[0];
                     state.last_destinations =
                         Some(array.into_iter().map(|(point, _)| point).collect());
-                    return Player::Moving(point, exact, Some((index, array)));
+                    return Player::Moving(point, exact, Some((1, array)));
                 }
             }
         }
@@ -856,17 +857,18 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
                             if !state.is_stationary {
                                 return Some((Player::Idle, false));
                             }
-                            if let Some((point, exact, index, array)) = find_points(
+                            if let Some(array) = find_points(
                                 &idle.platforms,
                                 cur_pos,
                                 rune,
                                 true,
                                 state.config.rune_platforms_pathing_up_jump_only,
                             ) {
+                                let (point, exact) = array[0];
                                 state.last_destinations =
                                     Some(array.into_iter().map(|(point, _)| point).collect());
                                 return Some((
-                                    Player::Moving(point, exact, Some((index, array))),
+                                    Player::Moving(point, exact, Some((1, array))),
                                     false,
                                 ));
                             }
@@ -935,7 +937,7 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
             Class::Ark => 10,
             Class::Generic => 5,
         };
-        return update_with_timeout(
+        update_with_timeout(
             timeout,
             link_key_timeout,
             |timeout| {
@@ -965,7 +967,7 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
                     ..use_key
                 })
             },
-        );
+        )
     }
 
     // TODO: Am I cooked?
@@ -2324,7 +2326,7 @@ fn update_moving_axis_context(
         let moved = match axis {
             ChangeAxis::Horizontal => cur_pos.x != prev_pos.x,
             ChangeAxis::Vertical => cur_pos.y != prev_pos.y,
-            ChangeAxis::Both { .. } => cur_pos.x != prev_pos.x || cur_pos.y != prev_pos.y,
+            ChangeAxis::Both => cur_pos.x != prev_pos.x || cur_pos.y != prev_pos.y,
         };
         Timeout {
             current: if moved { 0 } else { timeout.current },
@@ -2379,7 +2381,7 @@ fn update_rune_validating_state(context: &Context, state: &mut PlayerState) {
         update_with_timeout(
             timeout,
             VALIDATE_TIMEOUT,
-            |timeout| Some(timeout),
+            Some,
             || {
                 if matches!(context.buffs[RUNE_BUFF_POSITION], Buff::NoBuff) {
                     update_rune_fail_count_state(state);
@@ -2388,7 +2390,7 @@ fn update_rune_validating_state(context: &Context, state: &mut PlayerState) {
                 }
                 None
             },
-            |timeout| Some(timeout),
+            Some,
         )
     });
 }
@@ -2493,7 +2495,7 @@ fn find_points(
     dest: Point,
     exact: bool,
     up_jump_only: bool,
-) -> Option<(Point, bool, usize, Array<(Point, bool), 16>)> {
+) -> Option<Array<(Point, bool), 16>> {
     let vertical_threshold = if up_jump_only {
         GRAPPLING_THRESHOLD
     } else {
@@ -2513,8 +2515,7 @@ fn find_points(
             .enumerate()
             .map(|(i, point)| (point, if i == len - 1 { exact } else { false })),
     );
-    let (point, exact) = array[0];
-    Some((point, exact, 1, array))
+    Some(array)
 }
 
 // TODO: add more tests

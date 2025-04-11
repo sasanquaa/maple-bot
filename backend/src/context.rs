@@ -330,13 +330,15 @@ fn update_loop() {
         let detector = CachedDetector::new(mat);
         context.minimap = fold_context(&context, &detector, context.minimap, &mut minimap_state);
         context.player = fold_context(&context, &detector, context.player, &mut player_state);
-        for i in 0..context.skills.len() {
-            context.skills[i] =
-                fold_context(&context, &detector, context.skills[i], &mut skill_states[i]);
+        for (i, state) in skill_states
+            .iter_mut()
+            .enumerate()
+            .take(context.skills.len())
+        {
+            context.skills[i] = fold_context(&context, &detector, context.skills[i], state);
         }
-        for i in 0..context.buffs.len() {
-            context.buffs[i] =
-                fold_context(&context, &detector, context.buffs[i], &mut buff_states[i]);
+        for (i, state) in buff_states.iter_mut().enumerate().take(context.buffs.len()) {
+            context.buffs[i] = fold_context(&context, &detector, context.buffs[i], state);
         }
         // rotating action must always be done last
         rotator.rotate_action(&context, &detector, &mut player_state);

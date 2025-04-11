@@ -1,5 +1,5 @@
 use std::{
-    cmp::{max, min},
+    cmp::{Ordering, max, min},
     fmt::Display,
     ops::DerefMut,
     str::FromStr,
@@ -176,15 +176,19 @@ fn ActionPresetTab(
 
             let editing = *editing_action.peek();
             if let Some((action, i)) = editing {
-                if index == i {
-                    editing_action.set(None);
-                } else if index < i {
-                    let new_i = i.saturating_sub(1);
-                    if new_i == index {
-                        editing_action.set(Some((*actions.get(index).unwrap(), new_i)));
-                    } else {
-                        editing_action.set(Some((action, new_i)));
+                match index.cmp(&i) {
+                    Ordering::Equal => {
+                        editing_action.set(None);
                     }
+                    Ordering::Less => {
+                        let new_i = i.saturating_sub(1);
+                        if new_i == index {
+                            editing_action.set(Some((*actions.get(index).unwrap(), new_i)));
+                        } else {
+                            editing_action.set(Some((action, new_i)));
+                        }
+                    }
+                    Ordering::Greater => (),
                 }
             }
             save_minimap(minimap.clone());

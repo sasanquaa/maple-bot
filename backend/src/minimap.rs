@@ -73,6 +73,7 @@ pub struct MinimapIdle {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[allow(clippy::large_enum_variant)] // There is only ever a single instance of Minimap
 pub enum Minimap {
     Detecting,
     Idle(MinimapIdle),
@@ -338,7 +339,7 @@ fn platforms_from_data(minimap: &MinimapData) -> Array<PlatformWithNeighbors, 24
             .platforms
             .iter()
             .copied()
-            .map(|platform| Platform::from(platform))
+            .map(Platform::from)
             .collect::<Vec<_>>(),
         DOUBLE_JUMP_THRESHOLD,
         JUMP_THRESHOLD,
@@ -352,8 +353,8 @@ fn center_of_bbox(bbox: Rect, minimap: Rect, scale_w: f32, scale_h: f32) -> Poin
     let br = bbox.br();
     let x = ((tl.x + br.x) / 2) as f32 / scale_w;
     let y = (minimap.height - br.y + 1) as f32 / scale_h;
-    let point = Point::new(x as i32, y as i32);
-    point
+
+    Point::new(x as i32, y as i32)
 }
 
 #[inline]

@@ -3,12 +3,11 @@ use std::{
     collections::VecDeque,
     sync::atomic::{AtomicU32, Ordering},
     time::Instant,
-    u32,
 };
 
 use anyhow::Result;
 use log::debug;
-use opencv::core::{Point, Rect};
+use opencv::core::Point;
 use ordered_hash_map::OrderedHashMap;
 use rand::seq::IndexedRandom;
 
@@ -28,8 +27,10 @@ use crate::{
 const COOLDOWN_BETWEEN_QUEUE_MILLIS: u128 = 20_000;
 const COOLDOWN_BETWEEN_POTION_QUEUE_MILLIS: u128 = 2_000;
 
+type ConditionFn = Box<dyn Fn(&Context, &mut PlayerState, Option<Instant>) -> bool>;
+
 /// Predicate for when a priority action can be queued
-struct Condition(Box<dyn Fn(&Context, &mut PlayerState, Option<Instant>) -> bool>);
+struct Condition(ConditionFn);
 
 impl std::fmt::Debug for Condition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -95,13 +96,7 @@ pub enum RotatorMode {
     StartToEnd,
     #[default]
     StartToEndThenReverse,
-    AutoMobbing {
-        bound: Rect,
-        key: KeyBinding,
-        key_count: u32,
-        key_wait_before_millis: u64,
-        key_wait_after_millis: u64,
-    },
+    AutoMobbing(AutoMobbing),
 }
 
 impl From<RotationMode> for RotatorMode {
@@ -109,19 +104,7 @@ impl From<RotationMode> for RotatorMode {
         match mode {
             RotationMode::StartToEnd => RotatorMode::StartToEnd,
             RotationMode::StartToEndThenReverse => RotatorMode::StartToEndThenReverse,
-            RotationMode::AutoMobbing(AutoMobbing {
-                bound,
-                key,
-                key_count,
-                key_wait_before_millis,
-                key_wait_after_millis,
-            }) => RotatorMode::AutoMobbing {
-                bound: bound.into(),
-                key,
-                key_count,
-                key_wait_before_millis,
-                key_wait_after_millis,
-            },
+            RotationMode::AutoMobbing(auto_mobbing) => RotatorMode::AutoMobbing(auto_mobbing),
         }
     }
 }
@@ -234,22 +217,9 @@ impl Rotator {
             match self.normal_rotate_mode {
                 RotatorMode::StartToEnd => self.rotate_start_to_end(player),
                 RotatorMode::StartToEndThenReverse => self.rotate_start_to_end_then_reverse(player),
-                RotatorMode::AutoMobbing {
-                    bound,
-                    key,
-                    key_count,
-                    key_wait_before_millis,
-                    key_wait_after_millis,
-                } => self.rotate_auto_mobbing(
-                    context,
-                    detector,
-                    player,
-                    bound,
-                    key,
-                    key_count,
-                    key_wait_before_millis,
-                    key_wait_after_millis,
-                ),
+                RotatorMode::AutoMobbing(auto_mobbing) => {
+                    self.rotate_auto_mobbing(context, detector, player, auto_mobbing)
+                }
             }
         }
     }
@@ -438,11 +408,7 @@ impl Rotator {
         context: &Context,
         detector: &impl Detector,
         player: &mut PlayerState,
-        bound: Rect,
-        key: KeyBinding,
-        key_count: u32,
-        key_wait_before_millis: u64,
-        key_wait_after_millis: u64,
+        auto_mobbing: AutoMobbing,
     ) {
         debug_assert!(!player.has_normal_action() && !player.has_priority_action());
         let Minimap::Idle(idle) = context.minimap else {
@@ -451,10 +417,17 @@ impl Rotator {
         let Some(pos) = player.last_known_pos else {
             return;
         };
+        let AutoMobbing {
+            bound,
+            key,
+            key_count,
+            key_wait_before_millis,
+            key_wait_after_millis,
+        } = auto_mobbing;
         let detector = detector.clone();
         let Update::Complete(Ok(points)) =
             update_task_repeatable(0, &mut self.auto_mob_task, move || {
-                detector.detect_mobs(idle.bbox, bound, pos)
+                detector.detect_mobs(idle.bbox, bound.into(), pos)
             })
         else {
             return;
@@ -586,8 +559,8 @@ fn rotator_action(
     };
     let mut current = &mut head;
     let mut offset = 1;
-    for i in start_index + 1..actions.len() {
-        match actions[i] {
+    for action in actions.iter().skip(start_index + 1) {
+        match action {
             Action::Move(ActionMove {
                 condition: ActionCondition::Linked,
                 ..
@@ -597,7 +570,7 @@ fn rotator_action(
                 ..
             }) => {
                 let action = LinkedAction {
-                    inner: actions[i].into(),
+                    inner: (*action).into(),
                     next: None,
                 };
                 current.next = Some(Box::new(action));
