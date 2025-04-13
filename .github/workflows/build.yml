@@ -45,7 +45,7 @@ jobs:
       - name: Format
         # https://github.com/DioxusLabs/dioxus/issues/3433
         # Need to add dx fmt
-        run: cargo fmt 
+        run: cargo fmt --check
 
       - uses: Swatinem/rust-cache@v2
 
