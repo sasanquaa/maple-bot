@@ -329,17 +329,11 @@ mod tests {
         })
     }
 
-    fn create_mock_detector() -> (MockDetector, Rect, Anchors, MinimapData, Rect) {
+    fn create_mock_detector() -> (MockDetector, Rect, Anchors, Rect) {
         let mut detector = MockDetector::new();
         let (mat, anchors) = create_test_mat();
         let bbox = Rect::new(0, 0, 100, 100);
         let rune_bbox = Rect::new(40, 40, 20, 20);
-        let data = MinimapData {
-            name: "TestMap".to_string(),
-            width: bbox.width,
-            height: bbox.height,
-            ..MinimapData::default()
-        };
         detector
             .expect_detect_minimap_rune()
             .withf(move |b| *b == bbox)
@@ -352,7 +346,7 @@ mod tests {
             .with(eq(MINIMAP_BORDER_WHITENESS_THRESHOLD))
             .returning(move |_| Ok(bbox));
         detector.expect_mat().return_const(mat.into());
-        (detector, bbox, anchors, data, rune_bbox)
+        (detector, bbox, anchors, rune_bbox)
     }
 
     async fn advance_task(
@@ -379,7 +373,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn minimap_detecting_to_idle() {
         let mut state = MinimapState::default();
-        let (detector, bbox, anchors, data, _) = create_mock_detector();
+        let (detector, bbox, anchors, _) = create_mock_detector();
 
         let minimap = advance_task(Minimap::Detecting, &detector, &mut state).await;
         assert_matches!(minimap, Minimap::Idle(_));
@@ -388,7 +382,7 @@ mod tests {
                 assert_eq!(idle.anchors, anchors);
                 assert_eq!(idle.bbox, bbox);
                 assert!(!idle.partially_overlapping);
-                assert_eq!(state.data, Some(data));
+                assert_eq!(state.data, None);
                 assert_eq!(idle.rune, None);
                 assert!(!idle.has_elite_boss);
             }
@@ -399,7 +393,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn minimap_idle_rune_detection() {
         let mut state = MinimapState::default();
-        let (detector, bbox, anchors, _, rune_bbox) = create_mock_detector();
+        let (detector, bbox, anchors, rune_bbox) = create_mock_detector();
 
         let idle = MinimapIdle {
             anchors,

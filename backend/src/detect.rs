@@ -1210,25 +1210,6 @@ fn preprocess_for_yolo(mat: &impl MatTraitConst) -> (Mat, f32, f32) {
 }
 
 /// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32`
-/// for minimap name detection.
-///
-/// Returns a `(Mat, width_ratio, height_ratio, x_offset, y_offset)`.
-#[inline]
-fn preprocess_for_minimap_name(
-    mat: &impl MatTraitConst,
-    minimap: Rect,
-) -> (Mat, f32, f32, i32, i32) {
-    let x_offset = minimap.x;
-    let y_offset = (minimap.y - minimap.height).max(0);
-    let bbox = Rect::from_points(
-        Point::new(x_offset, y_offset),
-        Point::new(minimap.x + minimap.width, minimap.y),
-    );
-    let (mat, w_ratio, h_ratio) = preprocess_for_text_bboxes(&mat.roi(bbox).unwrap());
-    (mat, w_ratio, h_ratio, x_offset, y_offset)
-}
-
-/// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32`
 /// for text bounding boxes detection.
 ///
 /// The preprocess is adapted from: https://github.com/clovaai/CRAFT-pytorch/blob/master/imgproc.py

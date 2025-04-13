@@ -62,12 +62,6 @@ impl<T: Copy, const N: usize> Array<T, N> {
     pub fn len(&self) -> usize {
         self.len
     }
-
-    // TODO: ???
-    #[inline]
-    pub fn consume<I: IntoIterator<Item = T>>(&mut self, iter: I) {
-        *self = Array::from_iter(iter);
-    }
 }
 
 impl<A: Copy, const N: usize> FromIterator<A> for Array<A, N> {
@@ -127,51 +121,14 @@ mod tests {
         assert_eq!(&array.inner, vec.as_slice());
     }
 
-    // #[test]
-    // fn remove() {
-    //     let mut array = Array::<u32, 7>::new();
-    //     for i in 0..7 {
-    //         array.push(i);
-    //     }
-
-    //     array.remove(1);
-    //     assert_eq!(array.len, 6);
-    //     assert_eq!(
-    //         [Some(0), Some(2), Some(3), Some(4), Some(5), Some(6), None],
-    //         array.inner
-    //     );
-
-    //     array.remove(2);
-    //     assert_eq!(array.len, 5);
-    //     assert_eq!(
-    //         [Some(0), Some(2), Some(4), Some(5), Some(6), None, None],
-    //         array.inner
-    //     );
-
-    //     array.remove(3);
-    //     assert_eq!(array.len, 4);
-    //     assert_eq!(
-    //         [Some(0), Some(2), Some(4), Some(6), None, None, None],
-    //         array.inner
-    //     );
-
-    //     array.remove(0);
-    //     assert_eq!(array.len, 3);
-    //     assert_eq!(
-    //         [Some(2), Some(4), Some(6), None, None, None, None],
-    //         array.inner
-    //     );
-    // }
-
     #[test]
     fn iter() {
-        let mut array = Array::<u32, 1000>::new();
         let mut vec = Vec::new();
         for i in 0..1000 {
             vec.push(i);
         }
         let len = vec.len();
-        array.consume(vec);
+        let array = Array::<u32, 1000>::from_iter(vec);
 
         assert_eq!(len, array.len());
         for (elem, i) in array.into_iter().zip(0..1000) {
@@ -183,7 +140,7 @@ mod tests {
             vec.push(i);
         }
         let len = vec.len();
-        array.consume(vec);
+        let array = Array::<u32, 1000>::from_iter(vec);
 
         assert_eq!(len, array.len());
         for (elem, i) in array.into_iter().zip(333..555) {
