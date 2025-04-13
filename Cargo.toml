@@ -2,6 +2,10 @@
 resolver = "2"
 members = ["ui", "backend", "platforms"]
 
+[workspace.package]
+version = "0.3.0"
+edition = "2024"
+
 [workspace.dependencies]
 serde = { version = "1.0.138", features = ["derive"] }
 tokio = { version = "1.43.1", default-features = false, features = [

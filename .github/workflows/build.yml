@@ -2,9 +2,6 @@ name: Build windows-x64-static-release
 
 on:
   push:
-    branches:
-      - "master"
-      - "v*.*.*"
     tags:
       - "v*.*.*"
   pull_request:
@@ -80,7 +77,7 @@ jobs:
       - name: Test
         run: cargo test --verbose
 
-      - name: Build & test
+      - name: Build
         shell: pwsh
         run: |
           dx build --verbose --release --package ui
