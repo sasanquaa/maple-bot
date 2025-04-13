@@ -25,6 +25,7 @@ fn main() {
     let cash_shop = dir.join("cash_shop.png");
     let hp_start = dir.join("hp_start_ideal_ratio.png");
     let hp_separator = dir.join("hp_separator_ideal_ratio.png");
+    let hp_shield = dir.join("hp_shield_ideal_ratio.png");
     let hp_end = dir.join("hp_end_ideal_ratio.png");
 
     let mob_model = dir.join("mob.onnx");
@@ -122,6 +123,10 @@ fn main() {
     println!(
         "cargo:rustc-env=HP_SEPARATOR_TEMPLATE={}",
         hp_separator.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=HP_SHIELD_TEMPLATE={}",
+        hp_shield.to_str().unwrap()
     );
     println!(
         "cargo:rustc-env=HP_END_TEMPLATE={}",

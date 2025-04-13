@@ -73,33 +73,27 @@ macro_rules! expect_value_variant {
 #[derive(Debug)]
 enum Request {
     RotateActions(bool),
-    ToggleMinimapSelection(bool),
     CreateMinimap(String),
     UpdateMinimap(Option<String>, Minimap),
     UpdateConfiguration(Configuration),
     RedetectMinimap,
     PlayerState,
     MinimapFrame,
-    MinimapData,
 }
 
 #[derive(Debug)]
 enum Response {
     RotateActions,
-    ToggleMinimapSelection,
     CreateMinimap(Option<Minimap>),
     UpdateMinimap,
     UpdateConfiguration,
     RedetectMinimap,
     PlayerState(PlayerState),
     MinimapFrame(Option<(Vec<u8>, usize, usize)>),
-    MinimapData(Option<Minimap>),
 }
 
 pub(crate) trait RequestHandler {
     fn on_rotate_actions(&mut self, halting: bool);
-
-    fn on_toggle_minimap_selection(&mut self, is_manual: bool);
 
     fn on_create_minimap(&self, name: String) -> Option<Minimap>;
 
@@ -112,8 +106,6 @@ pub(crate) trait RequestHandler {
     fn on_player_state(&mut self) -> PlayerState;
 
     fn on_minimap_frame(&mut self) -> Option<(Vec<u8>, usize, usize)>;
-
-    fn on_minimap_data(&mut self) -> Option<Minimap>;
 }
 
 #[derive(Debug, Clone)]
@@ -131,13 +123,6 @@ pub async fn rotate_actions(halting: bool) {
     expect_unit_variant!(
         request(Request::RotateActions(halting)).await,
         Response::RotateActions
-    )
-}
-
-pub async fn toggle_minimap_selection(is_manual: bool) {
-    expect_unit_variant!(
-        request(Request::ToggleMinimapSelection(is_manual)).await,
-        Response::ToggleMinimapSelection
     )
 }
 
@@ -178,21 +163,12 @@ pub async fn minimap_frame() -> Result<(Vec<u8>, usize, usize)> {
         .ok_or(anyhow!("minimap frame not found"))
 }
 
-pub async fn minimap_data() -> Result<Minimap> {
-    expect_value_variant!(request(Request::MinimapData).await, Response::MinimapData)
-        .ok_or(anyhow!("minimap data not found"))
-}
-
 pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
     if let Ok((request, sender)) = LazyLock::force(&REQUESTS).1.lock().unwrap().try_recv() {
         let result = match request {
             Request::RotateActions(halting) => {
                 handler.on_rotate_actions(halting);
                 Response::RotateActions
-            }
-            Request::ToggleMinimapSelection(is_manual) => {
-                handler.on_toggle_minimap_selection(is_manual);
-                Response::ToggleMinimapSelection
             }
             Request::CreateMinimap(name) => {
                 Response::CreateMinimap(handler.on_create_minimap(name))
@@ -211,7 +187,6 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
             }
             Request::PlayerState => Response::PlayerState(handler.on_player_state()),
             Request::MinimapFrame => Response::MinimapFrame(handler.on_minimap_frame()),
-            Request::MinimapData => Response::MinimapData(handler.on_minimap_data()),
         };
         let _ = sender.send(result);
     }

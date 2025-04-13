@@ -9,7 +9,7 @@ use std::{
     },
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use log::{debug, info};
 #[cfg(test)]
 use mockall::mock;
@@ -60,15 +60,9 @@ pub trait Detector: 'static + Send + Clone {
 
     /// Detects the minimap.
     ///
-    /// `confidence_threshold` determines the threshold for the detection to consider a match.
-    /// And the `border_threshold` determines the "whiteness" of the minimap's white border.
+    /// The `border_threshold` determines the "whiteness" (grayscale value from 0..255) of
+    /// the minimap's white border.
     fn detect_minimap(&self, border_threshold: u8) -> Result<Rect>;
-
-    /// Detects the minimap name from the given `minimap` rectangle.
-    ///
-    /// `minimap` provides the previously detected minimap region so it can be cropped into.
-    /// `score_threshold` determines the threshold for selecting text from the minimap region.
-    fn detect_minimap_name(&self, minimap: Rect) -> Result<String>;
 
     /// Detects the portals from the given `minimap` rectangle.
     ///
@@ -135,7 +129,6 @@ mock! {
         fn detect_esc_settings(&self) -> bool;
         fn detect_elite_boss_bar(&self) -> bool;
         fn detect_minimap(&self, border_threshold: u8) -> Result<Rect>;
-        fn detect_minimap_name(&self, minimap: Rect) -> Result<String>;
         fn detect_minimap_portals(&self, minimap: Rect) -> Result<Vec<Rect>>;
         fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect>;
         fn detect_player(&self, minimap: Rect) -> Result<Rect>;
@@ -210,10 +203,6 @@ impl Detector for CachedDetector {
 
     fn detect_minimap(&self, border_threshold: u8) -> Result<Rect> {
         detect_minimap(&*self.mat, border_threshold)
-    }
-
-    fn detect_minimap_name(&self, minimap: Rect) -> Result<String> {
-        detect_minimap_name(&*self.mat, minimap)
     }
 
     fn detect_minimap_portals(&self, minimap: Rect) -> Result<Vec<Rect>> {
@@ -384,14 +373,25 @@ fn detect_player_health_bars(
         )
         .unwrap()
     });
+    static HP_SHIELD: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("HP_SHIELD_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
 
     let hp_separator = detect_template(
         &grayscale.roi(hp_bar).unwrap(),
         &*HP_SEPARATOR,
         hp_bar.tl(),
-        0.9,
+        0.7,
         None,
     )?;
+    let hp_shield = detect_template(
+        &grayscale.roi(hp_bar).unwrap(),
+        &*HP_SHIELD,
+        hp_bar.tl(),
+        0.9,
+        None,
+    )
+    .ok();
     let left = mat
         .roi(Rect::new(
             hp_bar.x,
@@ -403,8 +403,17 @@ fn detect_player_health_bars(
     let (left_in, left_w_ratio, left_h_ratio) = preprocess_for_text_bboxes(&left);
     let left_bbox = extract_text_bboxes(&left_in, left_w_ratio, left_h_ratio, hp_bar.x, hp_bar.y)
         .into_iter()
-        .next()
+        .min_by_key(|bbox| ((bbox.x + bbox.width) - hp_separator.x).abs())
         .ok_or(anyhow!("failed to detect current health bar"))?;
+    let left_bbox_x = hp_shield
+        .map(|bbox| bbox.x + bbox.width)
+        .unwrap_or(left_bbox.x); // When there is shield, skips past it
+    let left_bbox = Rect::new(
+        left_bbox_x,
+        left_bbox.y - 1, // Add some space so the bound is not too tight
+        hp_separator.x - left_bbox_x + 1, // Help thin character like '1' detectable
+        left_bbox.height + 2,
+    );
     let right = mat
         .roi(Rect::new(
             hp_separator.x + hp_separator.width,
@@ -422,7 +431,7 @@ fn detect_player_health_bars(
         hp_bar.y,
     )
     .into_iter()
-    .next()
+    .reduce(|acc, cur| acc | cur)
     .ok_or(anyhow!("failed to detect max health bar"))?;
     Ok((left_bbox, right_bbox))
 }
@@ -442,10 +451,7 @@ fn detect_player_health(
         .first()
         .and_then(|value| value.parse::<u32>().ok())
         .ok_or(anyhow!("cannot detect max health"))?;
-    if current_health > max_health {
-        bail!("failed to detect player's health");
-    }
-    Ok((current_health, max_health))
+    Ok((current_health.min(max_health), max_health))
 }
 
 fn detect_player_rune_buff(mat: &impl ToInputArray) -> bool {
@@ -591,7 +597,6 @@ fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
     result
 }
 
-// TODO: need to divide by scale w scale h
 fn detect_mobs(
     mat: &impl MatTraitConst,
     minimap: Rect,
@@ -973,73 +978,6 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
     .ok_or(anyhow!("minimap not found"))
 }
 
-fn detect_minimap_name(mat: &impl MatTraitConst, minimap: Rect) -> Result<String> {
-    let (mat_in, w_ratio, h_ratio, x_offset, y_offset) = preprocess_for_minimap_name(mat, minimap);
-    let bboxes = extract_text_bboxes(&mat_in, w_ratio, h_ratio, x_offset, y_offset);
-    // find the text boxes with y
-    // closes to the minimap
-    let mut bbox_match_y = None::<i32>;
-    let mut bbox_min_y_diff = i32::MAX;
-    for bbox in &bboxes {
-        let y = bbox.y + bbox.height;
-        let diff = minimap.y - y;
-        if diff > 8 && diff < bbox_min_y_diff {
-            bbox_match_y = Some(y);
-            bbox_min_y_diff = diff;
-        }
-    }
-    let bbox_match_y = bbox_match_y.ok_or(anyhow!("minimap name not found"))?;
-    let bbox_match_x = minimap.x + minimap.width;
-    let mut bboxes = bboxes
-        .into_iter()
-        .filter(|bbox| {
-            let diff = bbox_match_y - (bbox.y + bbox.height);
-            diff <= 5 && (bbox.x + bbox.width) <= bbox_match_x
-        })
-        .collect::<Vec<Rect>>();
-    bboxes.sort_by(|a, b| a.x.cmp(&b.x));
-
-    // the model doesn't detect well on a single character level
-    // but it is crucial to be able to the detect the last character (a single number)
-    // as it helps distinguish between different map variations
-    // if the model is able to detect the digit, the number_bbox
-    // should contain all black pixels
-    let number_bbox = bboxes
-        .last()
-        .map(|bbox| {
-            let x = bbox.x + bbox.width;
-            let y = bbox.y;
-            let w = (minimap.x + minimap.width) - x;
-            let h = bbox.height;
-            Rect::new(x, y, w, h)
-        })
-        .and_then(|bbox| {
-            let mut number = to_grayscale(&mat.roi(bbox).unwrap(), true);
-            unsafe {
-                // SAFETY: threshold can be called in place.
-                number.modify_inplace(|mat, mat_mut| {
-                    let kernel = get_structuring_element_def(MORPH_RECT, Size::new(5, 5)).unwrap();
-                    threshold(mat, mat_mut, 180.0, 255.0, THRESH_BINARY).unwrap();
-                    dilate_def(mat, mat_mut, &kernel).unwrap();
-                });
-            }
-            bounding_rect(&number)
-                .ok()
-                .take_if(|bbox| bbox.area() > 0)
-                .map(|number| number + bbox.tl())
-        });
-    if let Some(bbox) = number_bbox {
-        debug!(target: "minimap", "detected trailing number identifier {bbox:?}");
-        bboxes.push(bbox);
-    }
-
-    let name = extract_texts(mat, &bboxes)
-        .into_iter()
-        .reduce(|a, b| a + &b);
-    debug!(target: "minimap", "name detection result {name:?}");
-    name.ok_or(anyhow!("minimap name not found"))
-}
-
 /// Extracts texts from the non-preprocessed `Mat` and detected text bounding boxes.
 fn extract_texts(mat: &impl MatTraitConst, bboxes: &[Rect]) -> Vec<String> {
     static TEXT_RECOGNITION_MODEL: LazyLock<Mutex<TextRecognitionModel>> = LazyLock::new(|| {
@@ -1083,7 +1021,7 @@ fn extract_texts(mat: &impl MatTraitConst, bboxes: &[Rect]) -> Vec<String> {
         .collect()
 }
 
-/// Extracts text bounding boxes from the preprocessed `Mat`.
+/// Extracts text bounding boxes from the preprocessed [`Mat`].
 ///
 /// This function is adapted from
 /// https://github.com/clovaai/CRAFT-pytorch/blob/master/craft_utils.py#L19 with minor changes
@@ -1177,13 +1115,9 @@ fn extract_text_bboxes(
     .unwrap();
     for i in 1..labels_count {
         let area = *stats.at_2d::<i32>(i, CC_STAT_AREA).unwrap();
-        if area < 210 {
-            // FIXME: this matters only for minimap, what about health?
-            // skip too small single character (number)
-            // and later re-detect afterward
+        if area < 10 {
             continue;
         }
-
         let mut mask = Mat::default();
         let mut max_score = 0.0f64;
         compare(&labels, &Scalar::all(i as f64), &mut mask, CMP_EQ).unwrap();
@@ -1204,12 +1138,8 @@ fn extract_text_bboxes(
         let sy = (y - size + 1).max(0);
         let ex = (x + w + size + 1).min(shape.width);
         let ey = (y + h + size + 1).min(shape.height);
-        let kernel_pad = if area < 250 { 6 } else { 4 };
-        let kernel = get_structuring_element_def(
-            MORPH_RECT,
-            Size::new(size + kernel_pad, size + kernel_pad),
-        )
-        .unwrap();
+        let kernel =
+            get_structuring_element_def(MORPH_RECT, Size::new(size + 1, size + 1)).unwrap();
 
         let mut link_mask = Mat::default();
         let mut text_mask = Mat::default();
@@ -1286,25 +1216,6 @@ fn preprocess_for_yolo(mat: &impl MatTraitConst) -> (Mat, f32, f32) {
         });
     }
     (mat, w_ratio, h_ratio)
-}
-
-/// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32`
-/// for minimap name detection.
-///
-/// Returns a `(Mat, width_ratio, height_ratio, x_offset, y_offset)`.
-#[inline]
-fn preprocess_for_minimap_name(
-    mat: &impl MatTraitConst,
-    minimap: Rect,
-) -> (Mat, f32, f32, i32, i32) {
-    let x_offset = minimap.x;
-    let y_offset = (minimap.y - minimap.height).max(0);
-    let bbox = Rect::from_points(
-        Point::new(x_offset, y_offset),
-        Point::new(minimap.x + minimap.width, minimap.y),
-    );
-    let (mat, w_ratio, h_ratio) = preprocess_for_text_bboxes(&mat.roi(bbox).unwrap());
-    (mat, w_ratio, h_ratio, x_offset, y_offset)
 }
 
 /// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32`

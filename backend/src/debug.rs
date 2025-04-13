@@ -87,7 +87,7 @@ pub fn debug_mat<T: AsRef<str>>(
 }
 
 #[allow(unused)]
-pub fn save_image_for_training(mat: &Mat) {
+pub fn save_image_for_training(mat: &impl MatTraitConst) {
     let name = Alphanumeric.sample_string(&mut rand::rng(), 8);
     let mat = to_grayscale(mat);
     // let mat = mat.clone();

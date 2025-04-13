@@ -2462,9 +2462,9 @@ fn update_state(
     };
     let tl = bbox.tl();
     let br = bbox.br();
-    let x = ((tl.x + br.x) / 2) as f32 / idle.scale_w;
-    let y = (minimap_bbox.height - br.y) as f32 / idle.scale_h;
-    let pos = Point::new(x as i32, y as i32);
+    let x = (tl.x + br.x) / 2;
+    let y = minimap_bbox.height - br.y;
+    let pos = Point::new(x, y);
     let last_known_pos = state.last_known_pos.unwrap_or(pos);
     if last_known_pos != pos {
         state.unstuck_counter = 0;

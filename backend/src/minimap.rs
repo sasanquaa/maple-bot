@@ -1,12 +1,11 @@
 use anyhow::{Result, anyhow};
 use log::debug;
 use opencv::core::{MatTraitConst, Point, Rect, Vec4b};
-use strsim::normalized_damerau_levenshtein;
 
 use crate::{
     array::Array,
     context::{Context, Contextual, ControlFlow},
-    database::{Action, ActionKey, ActionMove, Minimap as MinimapData, query_maps, upsert_map},
+    database::Minimap as MinimapData,
     detect::Detector,
     pathing::{MAX_PLATFORMS_COUNT, Platform, PlatformWithNeighbors, find_neighbors},
     player::{DOUBLE_JUMP_THRESHOLD, GRAPPLING_MAX_THRESHOLD, JUMP_THRESHOLD, Player},
@@ -15,13 +14,10 @@ use crate::{
 
 const MINIMAP_BORDER_WHITENESS_THRESHOLD: u8 = 170;
 
-type TaskData = (Anchors, Rect, Option<MinimapData>, f32, f32);
-
 #[derive(Debug, Default)]
 pub struct MinimapState {
     data: Option<MinimapData>,
-    pub data_manual_selection: bool,
-    data_task: Option<Task<Result<TaskData>>>,
+    data_task: Option<Task<Result<(Anchors, Rect)>>>,
     rune_task: Option<Task<Result<Point>>>,
     portals_task: Option<Task<Result<Vec<Rect>>>>,
     has_elite_boss_task: Option<Task<Result<bool>>>,
@@ -55,10 +51,6 @@ pub struct MinimapIdle {
     /// The bounding box of the minimap.
     pub bbox: Rect,
     /// Whether the UI width is scaled or not depending on the saved data
-    pub scale_w: f32,
-    /// Whether the UI height is scaled or not depending on the saved data
-    pub scale_h: f32,
-    /// Approximates whether the minimap UI has other UI partially overlapping it
     pub partially_overlapping: bool,
     /// The rune position
     pub rune: Option<Point>,
@@ -108,35 +100,26 @@ fn update_context(
 }
 
 fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) -> Minimap {
-    let is_manual_selection = state.data_manual_selection;
     let detector = detector.clone();
-    let Update::Complete(Ok((anchors, bbox, data, scale_w, scale_h))) =
+    let Update::Complete(Ok((anchors, bbox))) =
         update_task_repeatable(2000, &mut state.data_task, move || {
             let bbox = detector.detect_minimap(MINIMAP_BORDER_WHITENESS_THRESHOLD)?;
             let size = bbox.width.min(bbox.height) as usize;
             let tl = anchor_at(detector.mat(), bbox.tl(), size, 1)?;
             let br = anchor_at(detector.mat(), bbox.br(), size, -1)?;
             let anchors = Anchors { tl, br };
-            if is_manual_selection {
-                return Ok((anchors, bbox, None, 1.0, 1.0));
-            }
-            let name = detector.detect_minimap_name(bbox)?;
-            let (data, scale_w, scale_h) = query_data_for_minimap(bbox, &name)?;
             debug!(target: "minimap", "anchor points: {:?}", anchors);
-            Ok((anchors, bbox, Some(data), scale_w, scale_h))
+            Ok((anchors, bbox))
         })
     else {
         return Minimap::Detecting;
     };
-    state.data = data;
     state.update_platforms = false;
     state.rune_task = None;
     state.has_elite_boss_task = None;
     Minimap::Idle(MinimapIdle {
         anchors,
         bbox,
-        scale_w,
-        scale_h,
         partially_overlapping: false,
         rune: None,
         has_elite_boss: false,
@@ -161,11 +144,9 @@ fn update_idle_context(
     let MinimapIdle {
         anchors,
         bbox,
-        scale_w,
-        scale_h,
         rune,
         has_elite_boss,
-        mut portals,
+        portals,
         mut platforms,
         ..
     } = idle;
@@ -183,49 +164,10 @@ fn update_idle_context(
         );
         return None;
     }
-    let rune_detector = detector.clone();
-    let rune_update = if matches!(context.player, Player::SolvingRune(_)) && rune.is_some() {
-        Update::Pending
-    } else {
-        update_task_repeatable(10000, &mut state.rune_task, move || {
-            rune_detector
-                .detect_minimap_rune(bbox)
-                .map(|rune| center_of_bbox(rune, bbox, scale_w, scale_h))
-        })
-    };
-    let rune = match rune_update {
-        Update::Complete(rune) => rune.ok(),
-        Update::Pending => rune,
-    };
-    let elite_boss_detector = detector.clone();
-    let elite_boss_update =
-        update_task_repeatable(10000, &mut state.has_elite_boss_task, move || {
-            Ok(elite_boss_detector.detect_elite_boss_bar())
-        });
-    let has_elite_boss = match elite_boss_update {
-        Update::Complete(has_elite_boss) => has_elite_boss.unwrap(),
-        Update::Pending => has_elite_boss,
-    };
-    let portals_detector = detector.clone();
-    let portals_update = update_task_repeatable(5000, &mut state.portals_task, move || {
-        portals_detector.detect_minimap_portals(bbox)
-    });
-    let portals = match portals_update {
-        Update::Complete(Ok(vec)) => {
-            if portals.len() < vec.len() {
-                portals.consume(vec.into_iter().map(|portal| {
-                    Rect::new(
-                        portal.x,
-                        bbox.height - portal.y,
-                        portal.width,
-                        portal.height,
-                    )
-                }));
-            }
-            portals
-        }
-        Update::Complete(_) | Update::Pending => portals,
-    };
+    let partially_overlapping = (tl_match && !br_match) || (!tl_match && br_match);
+    let rune = update_rune_task(context, state, detector, bbox, rune);
+    let has_elite_boss = update_elite_boss_task(state, detector, has_elite_boss);
+    let portals = update_portals_task(state, detector, portals, bbox);
     // TODO: any better way to read persistent state in other contextual?
     if state.update_platforms {
         state.update_platforms = false;
@@ -233,7 +175,7 @@ fn update_idle_context(
     }
 
     Some(Minimap::Idle(MinimapIdle {
-        partially_overlapping: (tl_match && !br_match) || (!tl_match && br_match),
+        partially_overlapping,
         rune,
         has_elite_boss,
         portals,
@@ -242,94 +184,69 @@ fn update_idle_context(
     }))
 }
 
-fn query_data_for_minimap(bbox: Rect, name: &str) -> Result<(MinimapData, f32, f32)> {
-    const MATCH_SCORE: f64 = 0.9;
-
-    // TODO: Mock this
-    if cfg!(test) {
-        return Ok((
-            MinimapData {
-                name: name.to_string(),
-                width: bbox.width,
-                height: bbox.height,
-                ..MinimapData::default()
-            },
-            1.0,
-            1.0,
-        ));
+#[inline]
+fn update_rune_task(
+    context: &Context,
+    state: &mut MinimapState,
+    detector: &impl Detector,
+    minimap: Rect,
+    rune: Option<Point>,
+) -> Option<Point> {
+    let detector = detector.clone();
+    let update = if matches!(context.player, Player::SolvingRune(_)) && rune.is_some() {
+        Update::Pending
+    } else {
+        update_task_repeatable(10000, &mut state.rune_task, move || {
+            detector
+                .detect_minimap_rune(minimap)
+                .map(|rune| center_of_bbox(rune, minimap))
+        })
+    };
+    match update {
+        Update::Complete(rune) => rune.ok(),
+        Update::Pending => rune,
     }
+}
 
-    let candidate = query_maps()?.into_iter().find_map(|map| {
-        if normalized_damerau_levenshtein(name, &map.name) >= MATCH_SCORE {
-            debug!(target: "minimap", "possible candidate {map:?}");
-            let detected_numbers = name
-                .chars()
-                .filter(|c| c.is_ascii_digit())
-                .collect::<Vec<_>>();
-            let map_numbers = map
-                .name
-                .chars()
-                .filter(|c| c.is_ascii_digit())
-                .collect::<Vec<_>>();
-            if detected_numbers == map_numbers {
-                debug!(target: "minimap", "matched candidate found {map:?}");
-                return Some(map);
-            }
-        }
-        None
+#[inline]
+fn update_elite_boss_task(
+    state: &mut MinimapState,
+    detector: &impl Detector,
+    has_elite_boss: bool,
+) -> bool {
+    let detector = detector.clone();
+    let update = update_task_repeatable(10000, &mut state.has_elite_boss_task, move || {
+        Ok(detector.detect_elite_boss_bar())
     });
-    match candidate {
-        Some(mut map) => {
-            match (bbox.width, bbox.height, map.width, map.height) {
-                // in resolution above 1366 x 768 with Default Ratio applied, the UI is enlarged
-                // so try to prefer smaller resolution if detectable
-                // smaller resolution also helps with template matching as the template
-                // for player is created in 1024 x 768
-                (b_w, b_h, m_w, m_h) if b_w < m_w && b_h < m_h => {
-                    debug!(target: "minimap", "smaller minimap version detected (Ideal Ratio or resolution below 1366 x 768)");
-                    let w_ratio = b_w as f32 / m_w as f32;
-                    let h_ratio = b_h as f32 / m_h as f32;
-                    map.actions.values_mut().flatten().for_each(|action| {
-                        match action {
-                            Action::Move(ActionMove { position, .. }) => {
-                                position.x = (position.x as f32 * w_ratio) as i32;
-                                position.y = (position.y as f32 * h_ratio) as i32;
-                            }
-                            Action::Key(ActionKey { position, .. }) => {
-                                if let Some(position) = position {
-                                    position.x = (position.x as f32 * w_ratio) as i32;
-                                    position.y = (position.y as f32 * h_ratio) as i32;
-                                }
-                            }
-                        };
-                    });
-                    map.width = b_w;
-                    map.height = b_h;
-                    upsert_map(&mut map)?;
-                    Ok((map, 1.0, 1.0))
-                }
-                (b_w, b_h, m_w, m_h) if b_w > m_w && b_h > m_h => {
-                    let w_ratio = b_w as f32 / m_w as f32;
-                    let h_ratio = b_h as f32 / m_h as f32;
-                    debug!(target: "minimap", "UI enlarged by {w_ratio} / {h_ratio} (Default Ratio)");
-                    Ok((map, w_ratio, h_ratio))
-                }
-                // TODO: map that has "smaller" version that requires click to expand?
-                // TODO: check slight differences in width or height?
-                _ => Ok((map, 1.0, 1.0)),
-            }
+    match update {
+        Update::Complete(has_elite_boss) => has_elite_boss.unwrap(),
+        Update::Pending => has_elite_boss,
+    }
+}
+
+#[inline]
+fn update_portals_task(
+    state: &mut MinimapState,
+    detector: &impl Detector,
+    portals: Array<Rect, 16>,
+    minimap: Rect,
+) -> Array<Rect, 16> {
+    let detector = detector.clone();
+    let update = update_task_repeatable(5000, &mut state.portals_task, move || {
+        detector.detect_minimap_portals(minimap)
+    });
+    match update {
+        Update::Complete(Ok(vec)) if portals.len() < vec.len() => {
+            Array::from_iter(vec.into_iter().map(|portal| {
+                Rect::new(
+                    portal.x,
+                    minimap.height - portal.y,
+                    portal.width,
+                    portal.height,
+                )
+            }))
         }
-        None => {
-            let mut map = MinimapData {
-                name: name.to_string(),
-                width: bbox.width,
-                height: bbox.height,
-                ..MinimapData::default()
-            };
-            upsert_map(&mut map)?;
-            debug!(target: "minimap", "new minimap data detected {map:?}");
-            Ok((map, 1.0, 1.0))
-        }
+        Update::Complete(_) | Update::Pending => portals,
     }
 }
 
@@ -348,13 +265,12 @@ fn platforms_from_data(minimap: &MinimapData) -> Array<PlatformWithNeighbors, 24
 }
 
 #[inline]
-fn center_of_bbox(bbox: Rect, minimap: Rect, scale_w: f32, scale_h: f32) -> Point {
+fn center_of_bbox(bbox: Rect, minimap: Rect) -> Point {
     let tl = bbox.tl();
     let br = bbox.br();
-    let x = ((tl.x + br.x) / 2) as f32 / scale_w;
-    let y = (minimap.height - br.y + 1) as f32 / scale_h;
-
-    Point::new(x as i32, y as i32)
+    let x = (tl.x + br.x) / 2;
+    let y = minimap.height - br.y + 1;
+    Point::new(x, y)
 }
 
 #[inline]
@@ -407,23 +323,20 @@ mod tests {
         let br = Point::new(90, 90);
         *mat.at_pt_mut::<Vec4b>(tl).unwrap() = Vec4b::all(255);
         *mat.at_pt_mut::<Vec4b>(br).unwrap() = Vec4b::all(255);
-        (mat, Anchors {
-            tl: (tl, pixel),
-            br: (br, pixel),
-        })
+        (
+            mat,
+            Anchors {
+                tl: (tl, pixel),
+                br: (br, pixel),
+            },
+        )
     }
 
-    fn create_mock_detector() -> (MockDetector, Rect, Anchors, MinimapData, Rect) {
+    fn create_mock_detector() -> (MockDetector, Rect, Anchors, Rect) {
         let mut detector = MockDetector::new();
         let (mat, anchors) = create_test_mat();
         let bbox = Rect::new(0, 0, 100, 100);
         let rune_bbox = Rect::new(40, 40, 20, 20);
-        let data = MinimapData {
-            name: "TestMap".to_string(),
-            width: bbox.width,
-            height: bbox.height,
-            ..MinimapData::default()
-        };
         detector
             .expect_detect_minimap_rune()
             .withf(move |b| *b == bbox)
@@ -435,12 +348,8 @@ mod tests {
             .expect_detect_minimap()
             .with(eq(MINIMAP_BORDER_WHITENESS_THRESHOLD))
             .returning(move |_| Ok(bbox));
-        detector
-            .expect_detect_minimap_name()
-            .with(eq(bbox))
-            .returning(|_| Ok("TestMap".to_string()));
         detector.expect_mat().return_const(mat.into());
-        (detector, bbox, anchors, data, rune_bbox)
+        (detector, bbox, anchors, rune_bbox)
     }
 
     async fn advance_task(
@@ -467,7 +376,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn minimap_detecting_to_idle() {
         let mut state = MinimapState::default();
-        let (detector, bbox, anchors, data, _) = create_mock_detector();
+        let (detector, bbox, anchors, _) = create_mock_detector();
 
         let minimap = advance_task(Minimap::Detecting, &detector, &mut state).await;
         assert_matches!(minimap, Minimap::Idle(_));
@@ -476,7 +385,7 @@ mod tests {
                 assert_eq!(idle.anchors, anchors);
                 assert_eq!(idle.bbox, bbox);
                 assert!(!idle.partially_overlapping);
-                assert_eq!(state.data, Some(data));
+                assert_eq!(state.data, None);
                 assert_eq!(idle.rune, None);
                 assert!(!idle.has_elite_boss);
             }
@@ -487,13 +396,11 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn minimap_idle_rune_detection() {
         let mut state = MinimapState::default();
-        let (detector, bbox, anchors, _, rune_bbox) = create_mock_detector();
+        let (detector, bbox, anchors, rune_bbox) = create_mock_detector();
 
         let idle = MinimapIdle {
             anchors,
             bbox,
-            scale_w: 1.0,
-            scale_h: 1.0,
             partially_overlapping: false,
             rune: None,
             has_elite_boss: false,
@@ -505,7 +412,7 @@ mod tests {
         assert_matches!(minimap, Minimap::Idle(_));
         match minimap {
             Minimap::Idle(idle) => {
-                assert_eq!(idle.rune, Some(center_of_bbox(rune_bbox, bbox, 1.0, 1.0)));
+                assert_eq!(idle.rune, Some(center_of_bbox(rune_bbox, bbox)));
             }
             _ => unreachable!(),
         }

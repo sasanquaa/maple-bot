@@ -1,8 +1,7 @@
 use backend::{
     Action, ActionKey, ActionMove, Configuration, Minimap as MinimapData, PlayerState,
-    RotationMode, create_minimap, delete_map, minimap_data, minimap_frame, player_state,
-    query_maps, redetect_minimap, rotate_actions, toggle_minimap_selection, update_configuration,
-    update_minimap, upsert_map,
+    RotationMode, create_minimap, delete_map, minimap_frame, player_state, query_maps,
+    redetect_minimap, rotate_actions, update_configuration, update_minimap, upsert_map,
 };
 use dioxus::{document::EvalError, prelude::*};
 use serde::Serialize;
@@ -134,8 +133,8 @@ pub fn Minimap(
     config: ReadOnlySignal<Option<Configuration>, SyncStorage>,
 ) -> Element {
     let mut halting = use_signal(|| true);
-    let mut minimap_selection = use_signal(|| false);
     let mut state = use_signal::<Option<PlayerState>>(|| None);
+    let mut detected_minimap_size = use_signal::<Option<(usize, usize)>>(|| None);
     let actions = use_memo::<Vec<ActionView>>(move || {
         minimap()
             .zip(preset())
@@ -170,7 +169,7 @@ pub fn Minimap(
         copy_position.set(state().and_then(|state| state.position));
     });
     use_effect(move || {
-        if let (Some(minimap), preset, _) = (minimap(), preset(), minimap_selection()) {
+        if let (Some(minimap), preset) = (minimap(), preset()) {
             spawn(async move { update_minimap(preset, minimap).await });
         }
         if let Some(config) = config() {
@@ -222,18 +221,14 @@ pub fn Minimap(
             let player = player_state().await;
             let destinations = player.destinations.clone();
             state.set(Some(player));
-
             let minimap_frame = minimap_frame().await;
             let Ok((frame, width, height)) = minimap_frame else {
+                detected_minimap_size.set(None);
                 continue;
             };
-            if minimap.peek().is_none() {
-                let data = minimap_data().await.ok();
-                if data.is_some() {
-                    minimap.set(data);
-                }
+            if detected_minimap_size.peek().is_none() {
+                detected_minimap_size.set(Some((width, height)));
             }
-
             let Err(error) = canvas.send((frame, width, height, destinations)) else {
                 continue;
             };
@@ -246,19 +241,22 @@ pub fn Minimap(
 
     rsx! {
         div { class: "flex flex-col items-center justify-center space-y-4 mb-8",
-            div { class: "flex flex-col items-center justify-center space-y-2",
-                if minimap_selection() {
-                    MinimapsSelect { minimap }
-                } else {
-                    p { class: "text-gray-700 text-sm",
-                        {minimap().map(|minimap| minimap.name).unwrap_or("Detecting...".to_string())}
-                    }
-                }
-                p { class: "text-gray-700 text-xs",
+            div { class: "flex flex-col items-center justify-center space-y-2 text-gray-700 text-xs",
+                MinimapsSelect { minimap }
+                p {
                     {
                         minimap()
-                            .map(|minimap| format!("{}px x {}px", minimap.width, minimap.height))
-                            .unwrap_or("Width, Height".to_string())
+                            .map(|minimap| {
+                                format!("Selected: {}px x {}px", minimap.width, minimap.height)
+                            })
+                            .unwrap_or("Selected: Width, Height".to_string())
+                    }
+                }
+                p {
+                    {
+                        detected_minimap_size()
+                            .map(|(width, height)| { format!("Detected: {}px x {}px", width, height) })
+                            .unwrap_or("Detected: Width, Height".to_string())
                     }
                 }
             }
@@ -328,7 +326,7 @@ pub fn Minimap(
                     }
                 }
             }
-            div { class: "flex w-full space-x-4 items-center justify-center items-stretch h-7",
+            div { class: "flex w-full space-x-6 items-center justify-center items-stretch h-7",
                 button {
                     class: "button-tertiary w-24",
                     disabled: minimap().is_none(),
@@ -347,25 +345,7 @@ pub fn Minimap(
                     class: "button-secondary",
                     disabled: minimap().is_none(),
                     onclick: move |_| async move {
-                        let value = *minimap_selection.peek();
-                        minimap_selection.set(!value);
-                        toggle_minimap_selection(!value).await;
-                        if value {
-                            minimap.set(None);
-                        }
-                    },
-                    if minimap_selection() {
-                        "Automatic map"
-                    } else {
-                        "Manual map"
-                    }
-                }
-                button {
-                    class: "button-secondary",
-                    disabled: minimap().is_none(),
-                    onclick: move |_| async move {
                         redetect_minimap().await;
-                        minimap.set(None);
                     },
                     "Re-detect map"
                 }
@@ -373,15 +353,15 @@ pub fn Minimap(
                     class: "button-danger",
                     disabled: minimap().is_none(),
                     onclick: move |_| async move {
-                        if let Some(minimap) = minimap.peek().clone() {
+                        let data = minimap.peek().clone();
+                        if let Some(data) = data {
                             spawn_blocking(move || {
-                                    delete_map(&minimap).unwrap();
+                                    delete_map(&data).unwrap();
                                 })
                                 .await
                                 .unwrap();
+                            minimap.set(None);
                         }
-                        redetect_minimap().await;
-                        minimap.set(None);
                     },
                     "Delete map"
                 }
@@ -408,8 +388,9 @@ fn MinimapsSelect(minimap: Signal<Option<MinimapData>>) -> Element {
     });
 
     // why is it so easy to shoot myself in the foot
-    use_effect(move || match minimap() {
-        Some(_) | None => minimaps.restart(),
+    use_effect(move || {
+        minimap();
+        minimaps.restart()
     });
     use_effect(move || {
         if let Some(minimaps) = minimaps_value() {

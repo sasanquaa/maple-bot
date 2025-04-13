@@ -896,16 +896,19 @@ mod tests {
             ..Context::default()
         };
         context.buffs[RUNE_BUFF_POSITION] = Buff::NoBuff;
-        rotator.priority_actions.insert(55, PriorityAction {
-            condition: Condition(Box::new(|context, _, _| {
-                matches!(context.minimap, Minimap::Idle(_))
-            })),
-            condition_kind: None,
-            inner: RotatorAction::Single(PlayerAction::SolveRune),
-            queue_to_front: true,
-            ignoring: false,
-            last_queued_time: None,
-        });
+        rotator.priority_actions.insert(
+            55,
+            PriorityAction {
+                condition: Condition(Box::new(|context, _, _| {
+                    matches!(context.minimap, Minimap::Idle(_))
+                })),
+                condition_kind: None,
+                inner: RotatorAction::Single(PlayerAction::SolveRune),
+                queue_to_front: true,
+                ignoring: false,
+                last_queued_time: None,
+            },
+        );
 
         rotator.rotate_action(&context, &detector, &mut player);
         assert_eq!(rotator.priority_actions_queue.len(), 0);
@@ -919,36 +922,45 @@ mod tests {
         let detector = MockDetector::new();
         let context = Context::default();
         // queue 2 non-front priority actions
-        rotator.priority_actions.insert(2, PriorityAction {
-            condition: Condition(Box::new(|_, _, _| true)),
-            condition_kind: None,
-            inner: RotatorAction::Single(NORMAL_ACTION.into()),
-            queue_to_front: false,
-            ignoring: false,
-            last_queued_time: None,
-        });
-        rotator.priority_actions.insert(3, PriorityAction {
-            condition: Condition(Box::new(|_, _, _| true)),
-            condition_kind: None,
-            inner: RotatorAction::Single(NORMAL_ACTION.into()),
-            queue_to_front: false,
-            ignoring: false,
-            last_queued_time: None,
-        });
+        rotator.priority_actions.insert(
+            2,
+            PriorityAction {
+                condition: Condition(Box::new(|_, _, _| true)),
+                condition_kind: None,
+                inner: RotatorAction::Single(NORMAL_ACTION.into()),
+                queue_to_front: false,
+                ignoring: false,
+                last_queued_time: None,
+            },
+        );
+        rotator.priority_actions.insert(
+            3,
+            PriorityAction {
+                condition: Condition(Box::new(|_, _, _| true)),
+                condition_kind: None,
+                inner: RotatorAction::Single(NORMAL_ACTION.into()),
+                queue_to_front: false,
+                ignoring: false,
+                last_queued_time: None,
+            },
+        );
 
         rotator.rotate_action(&context, &detector, &mut player);
         assert_eq!(rotator.priority_actions_queue.len(), 1);
         assert_eq!(player.priority_action_id(), Some(2));
 
         // add 1 front priority action
-        rotator.priority_actions.insert(4, PriorityAction {
-            condition: Condition(Box::new(|_, _, _| true)),
-            condition_kind: None,
-            inner: RotatorAction::Single(NORMAL_ACTION.into()),
-            queue_to_front: true,
-            ignoring: false,
-            last_queued_time: None,
-        });
+        rotator.priority_actions.insert(
+            4,
+            PriorityAction {
+                condition: Condition(Box::new(|_, _, _| true)),
+                condition_kind: None,
+                inner: RotatorAction::Single(NORMAL_ACTION.into()),
+                queue_to_front: true,
+                ignoring: false,
+                last_queued_time: None,
+            },
+        );
 
         // non-front priority action get replaced
         rotator.rotate_action(&context, &detector, &mut player);
@@ -959,14 +971,17 @@ mod tests {
         assert_eq!(player.priority_action_id(), Some(4));
 
         // add another front priority action
-        rotator.priority_actions.insert(5, PriorityAction {
-            condition: Condition(Box::new(|_, _, _| true)),
-            condition_kind: None,
-            inner: RotatorAction::Single(NORMAL_ACTION.into()),
-            queue_to_front: true,
-            ignoring: false,
-            last_queued_time: None,
-        });
+        rotator.priority_actions.insert(
+            5,
+            PriorityAction {
+                condition: Condition(Box::new(|_, _, _| true)),
+                condition_kind: None,
+                inner: RotatorAction::Single(NORMAL_ACTION.into()),
+                queue_to_front: true,
+                ignoring: false,
+                last_queued_time: None,
+            },
+        );
 
         // queued front priority action cannot be replaced
         // by another front priority action
@@ -984,20 +999,23 @@ mod tests {
         let mut player = PlayerState::default();
         let detector = MockDetector::new();
         let context = Context::default();
-        rotator.priority_actions.insert(2, PriorityAction {
-            condition: Condition(Box::new(|_, _, _| true)),
-            condition_kind: None,
-            inner: RotatorAction::Linked(LinkedAction {
-                inner: NORMAL_ACTION.into(),
-                next: Some(Box::new(LinkedAction {
+        rotator.priority_actions.insert(
+            2,
+            PriorityAction {
+                condition: Condition(Box::new(|_, _, _| true)),
+                condition_kind: None,
+                inner: RotatorAction::Linked(LinkedAction {
                     inner: NORMAL_ACTION.into(),
-                    next: None,
-                })),
-            }),
-            queue_to_front: false,
-            ignoring: false,
-            last_queued_time: None,
-        });
+                    next: Some(Box::new(LinkedAction {
+                        inner: NORMAL_ACTION.into(),
+                        next: None,
+                    })),
+                }),
+                queue_to_front: false,
+                ignoring: false,
+                last_queued_time: None,
+            },
+        );
 
         // linked action queued
         rotator.rotate_action(&context, &detector, &mut player);
@@ -1006,14 +1024,17 @@ mod tests {
         assert_eq!(player.priority_action_id(), Some(2));
 
         // linked action cannot be replaced by queue to front
-        rotator.priority_actions.insert(4, PriorityAction {
-            condition: Condition(Box::new(|_, _, _| true)),
-            condition_kind: None,
-            inner: RotatorAction::Single(PlayerAction::SolveRune),
-            queue_to_front: true,
-            ignoring: false,
-            last_queued_time: None,
-        });
+        rotator.priority_actions.insert(
+            4,
+            PriorityAction {
+                condition: Condition(Box::new(|_, _, _| true)),
+                condition_kind: None,
+                inner: RotatorAction::Single(PlayerAction::SolveRune),
+                queue_to_front: true,
+                ignoring: false,
+                last_queued_time: None,
+            },
+        );
         rotator.rotate_action(&context, &detector, &mut player);
         assert_eq!(
             rotator.priority_actions_queue,

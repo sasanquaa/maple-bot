@@ -166,14 +166,8 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         }
     }
 
-    fn on_toggle_minimap_selection(&mut self, is_manual: bool) {
-        self.context.minimap = Minimap::Detecting;
-        self.minimap.data_manual_selection = is_manual;
-    }
-
     fn on_create_minimap(&self, name: String) -> Option<crate::Minimap> {
         if let Minimap::Idle(idle) = self.context.minimap {
-            // TODO: common logics for manual and automatic minimap creation?
             Some(crate::Minimap {
                 name,
                 width: idle.bbox.width,
@@ -256,10 +250,6 @@ impl RequestHandler for DefaultRequestHandler<'_> {
 
     fn on_minimap_frame(&mut self) -> Option<(Vec<u8>, usize, usize)> {
         extract_minimap(self.context, self.detector.mat())
-    }
-
-    fn on_minimap_data(&mut self) -> Option<crate::Minimap> {
-        self.minimap.data().cloned()
     }
 }
 
