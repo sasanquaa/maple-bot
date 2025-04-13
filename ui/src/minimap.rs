@@ -134,6 +134,7 @@ pub fn Minimap(
 ) -> Element {
     let mut halting = use_signal(|| true);
     let mut state = use_signal::<Option<PlayerState>>(|| None);
+    let mut detected_minimap_size = use_signal::<Option<(usize, usize)>>(|| None);
     let actions = use_memo::<Vec<ActionView>>(move || {
         minimap()
             .zip(preset())
@@ -222,8 +223,12 @@ pub fn Minimap(
             state.set(Some(player));
             let minimap_frame = minimap_frame().await;
             let Ok((frame, width, height)) = minimap_frame else {
+                detected_minimap_size.set(None);
                 continue;
             };
+            if detected_minimap_size.peek().is_none() {
+                detected_minimap_size.set(Some((width, height)));
+            }
             let Err(error) = canvas.send((frame, width, height, destinations)) else {
                 continue;
             };
@@ -236,13 +241,22 @@ pub fn Minimap(
 
     rsx! {
         div { class: "flex flex-col items-center justify-center space-y-4 mb-8",
-            div { class: "flex flex-col items-center justify-center space-y-2",
+            div { class: "flex flex-col items-center justify-center space-y-2 text-gray-700 text-xs",
                 MinimapsSelect { minimap }
-                p { class: "text-gray-700 text-xs",
+                p {
                     {
                         minimap()
-                            .map(|minimap| format!("{}px x {}px", minimap.width, minimap.height))
-                            .unwrap_or("Width, Height".to_string())
+                            .map(|minimap| {
+                                format!("Selected: {}px x {}px", minimap.width, minimap.height)
+                            })
+                            .unwrap_or("Selected: Width, Height".to_string())
+                    }
+                }
+                p {
+                    {
+                        detected_minimap_size()
+                            .map(|(width, height)| { format!("Detected: {}px x {}px", width, height) })
+                            .unwrap_or("Detected: Width, Height".to_string())
                     }
                 }
             }
