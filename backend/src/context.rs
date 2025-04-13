@@ -166,11 +166,6 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         }
     }
 
-    fn on_toggle_minimap_selection(&mut self, is_manual: bool) {
-        self.context.minimap = Minimap::Detecting;
-        self.minimap.data_manual_selection = is_manual;
-    }
-
     fn on_create_minimap(&self, name: String) -> Option<crate::Minimap> {
         if let Minimap::Idle(idle) = self.context.minimap {
             // TODO: common logics for manual and automatic minimap creation?

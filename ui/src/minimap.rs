@@ -1,8 +1,7 @@
 use backend::{
     Action, ActionKey, ActionMove, Configuration, Minimap as MinimapData, PlayerState,
     RotationMode, create_minimap, delete_map, minimap_data, minimap_frame, player_state,
-    query_maps, redetect_minimap, rotate_actions, toggle_minimap_selection, update_configuration,
-    update_minimap, upsert_map,
+    query_maps, redetect_minimap, rotate_actions, update_configuration, update_minimap, upsert_map,
 };
 use dioxus::{document::EvalError, prelude::*};
 use serde::Serialize;
@@ -134,7 +133,6 @@ pub fn Minimap(
     config: ReadOnlySignal<Option<Configuration>, SyncStorage>,
 ) -> Element {
     let mut halting = use_signal(|| true);
-    let mut minimap_selection = use_signal(|| false);
     let mut state = use_signal::<Option<PlayerState>>(|| None);
     let actions = use_memo::<Vec<ActionView>>(move || {
         minimap()
@@ -170,7 +168,7 @@ pub fn Minimap(
         copy_position.set(state().and_then(|state| state.position));
     });
     use_effect(move || {
-        if let (Some(minimap), preset, _) = (minimap(), preset(), minimap_selection()) {
+        if let (Some(minimap), preset) = (minimap(), preset()) {
             spawn(async move { update_minimap(preset, minimap).await });
         }
         if let Some(config) = config() {
@@ -247,13 +245,7 @@ pub fn Minimap(
     rsx! {
         div { class: "flex flex-col items-center justify-center space-y-4 mb-8",
             div { class: "flex flex-col items-center justify-center space-y-2",
-                if minimap_selection() {
-                    MinimapsSelect { minimap }
-                } else {
-                    p { class: "text-gray-700 text-sm",
-                        {minimap().map(|minimap| minimap.name).unwrap_or("Detecting...".to_string())}
-                    }
-                }
+                MinimapsSelect { minimap }
                 p { class: "text-gray-700 text-xs",
                     {
                         minimap()
@@ -341,23 +333,6 @@ pub fn Minimap(
                         "Start actions"
                     } else {
                         "Stop actions"
-                    }
-                }
-                button {
-                    class: "button-secondary",
-                    disabled: minimap().is_none(),
-                    onclick: move |_| async move {
-                        let value = *minimap_selection.peek();
-                        minimap_selection.set(!value);
-                        toggle_minimap_selection(!value).await;
-                        if value {
-                            minimap.set(None);
-                        }
-                    },
-                    if minimap_selection() {
-                        "Automatic map"
-                    } else {
-                        "Manual map"
                     }
                 }
                 button {

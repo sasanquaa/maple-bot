@@ -60,15 +60,9 @@ pub trait Detector: 'static + Send + Clone {
 
     /// Detects the minimap.
     ///
-    /// `confidence_threshold` determines the threshold for the detection to consider a match.
-    /// And the `border_threshold` determines the "whiteness" of the minimap's white border.
+    /// The `border_threshold` determines the "whiteness" (grayscale value from 0..255) of
+    /// the minimap's white border.
     fn detect_minimap(&self, border_threshold: u8) -> Result<Rect>;
-
-    /// Detects the minimap name from the given `minimap` rectangle.
-    ///
-    /// `minimap` provides the previously detected minimap region so it can be cropped into.
-    /// `score_threshold` determines the threshold for selecting text from the minimap region.
-    fn detect_minimap_name(&self, minimap: Rect) -> Result<String>;
 
     /// Detects the portals from the given `minimap` rectangle.
     ///
@@ -135,7 +129,6 @@ mock! {
         fn detect_esc_settings(&self) -> bool;
         fn detect_elite_boss_bar(&self) -> bool;
         fn detect_minimap(&self, border_threshold: u8) -> Result<Rect>;
-        fn detect_minimap_name(&self, minimap: Rect) -> Result<String>;
         fn detect_minimap_portals(&self, minimap: Rect) -> Result<Vec<Rect>>;
         fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect>;
         fn detect_player(&self, minimap: Rect) -> Result<Rect>;
@@ -210,10 +203,6 @@ impl Detector for CachedDetector {
 
     fn detect_minimap(&self, border_threshold: u8) -> Result<Rect> {
         detect_minimap(&*self.mat, border_threshold)
-    }
-
-    fn detect_minimap_name(&self, minimap: Rect) -> Result<String> {
-        detect_minimap_name(&*self.mat, minimap)
     }
 
     fn detect_minimap_portals(&self, minimap: Rect) -> Result<Vec<Rect>> {
@@ -591,7 +580,6 @@ fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
     result
 }
 
-// TODO: need to divide by scale w scale h
 fn detect_mobs(
     mat: &impl MatTraitConst,
     minimap: Rect,
@@ -971,73 +959,6 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
         )
     })
     .ok_or(anyhow!("minimap not found"))
-}
-
-fn detect_minimap_name(mat: &impl MatTraitConst, minimap: Rect) -> Result<String> {
-    let (mat_in, w_ratio, h_ratio, x_offset, y_offset) = preprocess_for_minimap_name(mat, minimap);
-    let bboxes = extract_text_bboxes(&mat_in, w_ratio, h_ratio, x_offset, y_offset);
-    // find the text boxes with y
-    // closes to the minimap
-    let mut bbox_match_y = None::<i32>;
-    let mut bbox_min_y_diff = i32::MAX;
-    for bbox in &bboxes {
-        let y = bbox.y + bbox.height;
-        let diff = minimap.y - y;
-        if diff > 8 && diff < bbox_min_y_diff {
-            bbox_match_y = Some(y);
-            bbox_min_y_diff = diff;
-        }
-    }
-    let bbox_match_y = bbox_match_y.ok_or(anyhow!("minimap name not found"))?;
-    let bbox_match_x = minimap.x + minimap.width;
-    let mut bboxes = bboxes
-        .into_iter()
-        .filter(|bbox| {
-            let diff = bbox_match_y - (bbox.y + bbox.height);
-            diff <= 5 && (bbox.x + bbox.width) <= bbox_match_x
-        })
-        .collect::<Vec<Rect>>();
-    bboxes.sort_by(|a, b| a.x.cmp(&b.x));
-
-    // the model doesn't detect well on a single character level
-    // but it is crucial to be able to the detect the last character (a single number)
-    // as it helps distinguish between different map variations
-    // if the model is able to detect the digit, the number_bbox
-    // should contain all black pixels
-    let number_bbox = bboxes
-        .last()
-        .map(|bbox| {
-            let x = bbox.x + bbox.width;
-            let y = bbox.y;
-            let w = (minimap.x + minimap.width) - x;
-            let h = bbox.height;
-            Rect::new(x, y, w, h)
-        })
-        .and_then(|bbox| {
-            let mut number = to_grayscale(&mat.roi(bbox).unwrap(), true);
-            unsafe {
-                // SAFETY: threshold can be called in place.
-                number.modify_inplace(|mat, mat_mut| {
-                    let kernel = get_structuring_element_def(MORPH_RECT, Size::new(5, 5)).unwrap();
-                    threshold(mat, mat_mut, 180.0, 255.0, THRESH_BINARY).unwrap();
-                    dilate_def(mat, mat_mut, &kernel).unwrap();
-                });
-            }
-            bounding_rect(&number)
-                .ok()
-                .take_if(|bbox| bbox.area() > 0)
-                .map(|number| number + bbox.tl())
-        });
-    if let Some(bbox) = number_bbox {
-        debug!(target: "minimap", "detected trailing number identifier {bbox:?}");
-        bboxes.push(bbox);
-    }
-
-    let name = extract_texts(mat, &bboxes)
-        .into_iter()
-        .reduce(|a, b| a + &b);
-    debug!(target: "minimap", "name detection result {name:?}");
-    name.ok_or(anyhow!("minimap name not found"))
 }
 
 /// Extracts texts from the non-preprocessed `Mat` and detected text bounding boxes.

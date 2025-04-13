@@ -73,7 +73,6 @@ macro_rules! expect_value_variant {
 #[derive(Debug)]
 enum Request {
     RotateActions(bool),
-    ToggleMinimapSelection(bool),
     CreateMinimap(String),
     UpdateMinimap(Option<String>, Minimap),
     UpdateConfiguration(Configuration),
@@ -86,7 +85,6 @@ enum Request {
 #[derive(Debug)]
 enum Response {
     RotateActions,
-    ToggleMinimapSelection,
     CreateMinimap(Option<Minimap>),
     UpdateMinimap,
     UpdateConfiguration,
@@ -98,8 +96,6 @@ enum Response {
 
 pub(crate) trait RequestHandler {
     fn on_rotate_actions(&mut self, halting: bool);
-
-    fn on_toggle_minimap_selection(&mut self, is_manual: bool);
 
     fn on_create_minimap(&self, name: String) -> Option<Minimap>;
 
@@ -131,13 +127,6 @@ pub async fn rotate_actions(halting: bool) {
     expect_unit_variant!(
         request(Request::RotateActions(halting)).await,
         Response::RotateActions
-    )
-}
-
-pub async fn toggle_minimap_selection(is_manual: bool) {
-    expect_unit_variant!(
-        request(Request::ToggleMinimapSelection(is_manual)).await,
-        Response::ToggleMinimapSelection
     )
 }
 
@@ -189,10 +178,6 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
             Request::RotateActions(halting) => {
                 handler.on_rotate_actions(halting);
                 Response::RotateActions
-            }
-            Request::ToggleMinimapSelection(is_manual) => {
-                handler.on_toggle_minimap_selection(is_manual);
-                Response::ToggleMinimapSelection
             }
             Request::CreateMinimap(name) => {
                 Response::CreateMinimap(handler.on_create_minimap(name))
