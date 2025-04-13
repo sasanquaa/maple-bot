@@ -373,14 +373,25 @@ fn detect_player_health_bars(
         )
         .unwrap()
     });
+    static HP_SHIELD: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("HP_SHIELD_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
 
     let hp_separator = detect_template(
         &grayscale.roi(hp_bar).unwrap(),
         &*HP_SEPARATOR,
         hp_bar.tl(),
-        0.9,
+        0.7,
         None,
     )?;
+    let hp_shield_x = detect_template(
+        &grayscale.roi(hp_bar).unwrap(),
+        &*HP_SHIELD,
+        hp_bar.tl(),
+        0.7,
+        None,
+    )
+    .map(|bbox| bbox.x + bbox.width);
     let left = mat
         .roi(Rect::new(
             hp_bar.x,
@@ -392,8 +403,14 @@ fn detect_player_health_bars(
     let (left_in, left_w_ratio, left_h_ratio) = preprocess_for_text_bboxes(&left);
     let left_bbox = extract_text_bboxes(&left_in, left_w_ratio, left_h_ratio, hp_bar.x, hp_bar.y)
         .into_iter()
-        .next()
+        .min_by_key(|bbox| ((bbox.x + bbox.width) - hp_separator.x).abs())
         .ok_or(anyhow!("failed to detect current health bar"))?;
+    let left_bbox = Rect::new(
+        hp_shield_x.unwrap_or(left_bbox.x), // When there is shield, skip past it
+        left_bbox.y,
+        hp_separator.x - left_bbox.x + 1, // For ensuring thin character like 1 gets detected
+        left_bbox.height,
+    );
     let right = mat
         .roi(Rect::new(
             hp_separator.x + hp_separator.width,
@@ -1004,7 +1021,7 @@ fn extract_texts(mat: &impl MatTraitConst, bboxes: &[Rect]) -> Vec<String> {
         .collect()
 }
 
-/// Extracts text bounding boxes from the preprocessed `Mat`.
+/// Extracts text bounding boxes from the preprocessed [`Mat`].
 ///
 /// This function is adapted from
 /// https://github.com/clovaai/CRAFT-pytorch/blob/master/craft_utils.py#L19 with minor changes
@@ -1098,13 +1115,9 @@ fn extract_text_bboxes(
     .unwrap();
     for i in 1..labels_count {
         let area = *stats.at_2d::<i32>(i, CC_STAT_AREA).unwrap();
-        if area < 210 {
-            // FIXME: this matters only for minimap, what about health?
-            // skip too small single character (number)
-            // and later re-detect afterward
+        if area < 10 {
             continue;
         }
-
         let mut mask = Mat::default();
         let mut max_score = 0.0f64;
         compare(&labels, &Scalar::all(i as f64), &mut mask, CMP_EQ).unwrap();
@@ -1125,12 +1138,8 @@ fn extract_text_bboxes(
         let sy = (y - size + 1).max(0);
         let ex = (x + w + size + 1).min(shape.width);
         let ey = (y + h + size + 1).min(shape.height);
-        let kernel_pad = if area < 250 { 6 } else { 4 };
-        let kernel = get_structuring_element_def(
-            MORPH_RECT,
-            Size::new(size + kernel_pad, size + kernel_pad),
-        )
-        .unwrap();
+        let kernel =
+            get_structuring_element_def(MORPH_RECT, Size::new(size + 1, size + 1)).unwrap();
 
         let mut link_mask = Mat::default();
         let mut text_mask = Mat::default();
