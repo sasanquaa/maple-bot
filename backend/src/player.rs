@@ -19,7 +19,8 @@ use crate::{
     task::{Task, Update, update_task_repeatable},
 };
 
-/// Maximum number of times `Player::Moving` state can be transitioned to without changing position
+/// Maximum number of times [`Player::Moving`] state can be transitioned to
+/// without changing position
 const UNSTUCK_TRACKER_THRESHOLD: u32 = 7;
 
 /// Minimium y distance required to perform a fall and double jump/adjusting
@@ -60,10 +61,10 @@ const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 4;
 /// The acceptable y range above and below the detected mob position when matched with a reachable y
 const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 8;
 
-/// The minimum x distance required to transition to `Player::UseKey` in auto mob action
+/// The minimum x distance required to transition to [`Player::UseKey`] in auto mob action
 const AUTO_MOB_USE_KEY_X_THRESHOLD: i32 = 14;
 
-/// The minimum y distance required to transition to `Player::UseKey` in auto mob action
+/// The minimum y distance required to transition to [`Player::UseKey`] in auto mob action
 const AUTO_MOB_USE_KEY_Y_THRESHOLD: i32 = JUMP_THRESHOLD;
 
 /// The maximum number of times rune solving can fail before transition to
@@ -85,9 +86,9 @@ pub struct PlayerConfiguration {
     pub interact_key: KeyKind,
     /// The RopeLift key
     pub grappling_key: KeyKind,
-    /// The teleport key with `None` indicating double jump
+    /// The teleport key with [`None`] indicating double jump
     pub teleport_key: Option<KeyKind>,
-    /// The up jump key with `None` indicating composite jump (Up arrow + Double Space)
+    /// The up jump key with [`None`] indicating composite jump (Up arrow + Double Space)
     pub upjump_key: Option<KeyKind>,
     /// The cash shop key
     pub cash_shop_key: KeyKind,
@@ -103,14 +104,15 @@ pub struct PlayerConfiguration {
 #[derive(Debug, Default)]
 pub struct PlayerState {
     pub config: PlayerConfiguration,
-    /// The id of the normal action provided by `Rotator`
+    /// The id of the normal action provided by [`Rotator`]
     normal_action_id: u32,
-    /// A normal action requested by `Rotator`
+    /// A normal action requested by [`Rotator`]
     normal_action: Option<PlayerAction>,
-    /// The id of the priority action provided by `Rotator`
+    /// The id of the priority action provided by [`Rotator`]
     priority_action_id: u32,
-    /// A priority action requested by `Rotator`, this action will override
-    /// the normal action if it is in the middle of executing.
+    /// A priority action requested by [`Rotator`]
+    ///
+    /// This action will override the normal action if it is in the middle of executing.
     priority_action: Option<PlayerAction>,
     /// The player current health and max health
     pub health: Option<(u32, u32)>,
@@ -127,51 +129,65 @@ pub struct PlayerState {
     /// Approximates the player direction for using key
     last_known_direction: ActionKeyDirection,
     /// Tracks last destination points for displaying to UI
-    /// Resets when all destinations are reached or in `Player::Idle`
+    ///
+    /// Resets when all destinations are reached or in [`Player::Idle`]
     pub last_destinations: Option<Vec<Point>>,
     /// Last known position after each detection used for unstucking, also for displaying to UI
     pub last_known_pos: Option<Point>,
-    /// Indicates whether to use `ControlFlow::Immediate` on this update
+    /// Indicates whether to use [`ControlFlow::Immediate`] on this update
     use_immediate_control_flow: bool,
     /// Indicates whether to ignore update_pos and use last_known_pos on next update
-    /// This is true whenever `use_immediate_control_flow` is true
+    ///
+    /// This is true whenever [`Self::use_immediate_control_flow`] is true
     ignore_pos_update: bool,
-    /// Indicates whether to reset the contextual state back to `Player::Idle` on next update
+    /// Indicates whether to reset the contextual state back to [`Player::Idle`] on next update
+    ///
+    /// This is true each time player receives [`PlayerAction`]
     reset_to_idle_next_update: bool,
     /// Indicates the last movement
-    /// Helps coordinating between movement states (e.g. falling + double jumping)
-    /// Resets to `None` when the destination (possibly intermediate) is reached or
-    /// in [`Player::Idle`]
+    ///
+    /// Helps coordinating between movement states (e.g. falling + double jumping). And resets
+    /// to [`None`] when the destination (possibly intermediate) is reached or
+    /// in [`Player::Idle`].
     last_movement: Option<LastMovement>,
     // TODO: 2 maps fr?
-    /// Tracks `last_movement` to abort normal action when its position is not accurate
+    /// Tracks [`Self::last_movement`] to abort normal action when its position is not accurate
+    ///
     /// Clears when a normal action is completed or aborted
     last_movement_normal_map: HashMap<LastMovement, u32>,
-    /// Tracks `last_movement` to abort priority action when its position is not accurate
+    /// Tracks [`Self::last_movement`] to abort priority action when its position is not accurate
+    ///
     /// Clears when a priority action is completed or aborted
     last_movement_priority_map: HashMap<LastMovement, u32>,
     /// Tracks a map of "reachable" y
+    ///
     /// A y is reachable if there is a platform the player can stand on
     auto_mob_reachable_y_map: HashMap<i32, u32>,
-    /// The matched reachable y and also the key in `auto_mob_reachable_y_map`
+    /// The matched reachable y and also the key in [`Self::auto_mob_reachable_y_map`]
     auto_mob_reachable_y: Option<i32>,
     /// Tracks whether movement-related actions do not change the player position after a while.
     /// Resets when a limit is reached (for unstucking) or position did change.
     unstuck_counter: u32,
-    /// The number of consecutive times player transtioned to `Player::Unstucking`
+    /// The number of consecutive times player transtioned to [`Player::Unstucking`]
+    ///
     /// Resets when position did change
     unstuck_consecutive_counter: u32,
     /// Unstuck task for detecting settings when mis-pressing ESC key
     unstuck_task: Option<Task<Result<bool>>>,
     /// Rune solving task
     rune_task: Option<Task<Result<[KeyKind; 4]>>>,
-    /// The number of times `Player::SolvingRune` failed
+    /// The number of times [`Player::SolvingRune`] failed
     rune_failed_count: u32,
-    /// Indicates the state will be transitioned to `Player::CashShopThenExit` in the next tick
+    /// Indicates the state will be transitioned to [`Player::CashShopThenExit`] in the next tick
     rune_cash_shop: bool,
+    /// [`Timeout`] for validating whether the rune is solved
+    ///
+    /// This is [`Some`] when [`Player::SolvingRune`] successfully detects the rune
+    /// and sends all the keys
     rune_validate_timeout: Option<Timeout>,
     /// A state to return to after stalling
-    /// Resets when `Player::Stalling` timed out or in `Player::Idle`
+    ///
+    /// Resets when [`Player::Stalling`] timed out or in [`Player::Idle`]
     stalling_timeout_state: Option<Player>,
 }
 
@@ -332,21 +348,24 @@ enum LastMovement {
 #[derive(Clone, Copy, Debug)]
 pub struct Moving {
     /// The player's previous position and will be updated to current position
-    /// after calling `update_moving_axis_timeout`
+    /// after calling [`update_moving_axis_timeout`].
     pos: Point,
-    /// The destination the player is moving to
-    /// When `intermediates` is `Some(...)`, this could be an intermediate point
+    /// The destination the player is moving to.
+    ///
+    /// When [`Self::intermediates`] is [`Some`], this could be an intermediate point.
     dest: Point,
-    /// Whether to allow adjusting to precise destination
+    /// Whether to allow adjusting to precise destination.
     exact: bool,
-    /// Whether the movement has completed
+    /// Whether the movement has completed.
+    ///
     /// For example, in up jump with fixed key like Corsair, it is considered complete
-    /// when the key is pressed
+    /// when the key is pressed.
     completed: bool,
-    /// Current timeout ticks for checking if the player position's changed
+    /// Current timeout ticks for checking if the player position's changed.
     timeout: Timeout,
-    /// Intermediate points to move to before reaching the destination
-    /// When `Some(...)`, the last point is the destination
+    /// Intermediate points to move to before reaching the destination.
+    ///
+    /// When [`Some`], the last point is the destination.
     intermediates: Option<(usize, Array<(Point, bool), 16>)>,
 }
 
@@ -415,10 +434,22 @@ impl Moving {
 /// The different stages of using key
 #[derive(Clone, Copy, Debug)]
 enum UseKeyStage {
+    /// Checks whether [`ActionKeyWith`] and [`ActionKeyDirection`] are satisfied and stalls
+    /// for [`UseKey::wait_before_use_ticks`]
     Precondition,
+    /// Changes direction to match [`ActionKeyDirection`]
+    ///
+    /// Returns to [`UseKeyStage::Precondition`] upon timeout
     ChangingDirection(Timeout),
+    /// Ensures player double jumped or is stationary
+    ///
+    /// Returns to [`UseKeyStage::Precondition`] if player is stationary or
+    /// transfers to [`Player::DoubleJumping`]
     EnsuringUseWith,
+    /// Uses the actual key with optional [`LinkKeyBinding`] and stalls
+    /// for [`UseKey::wait_after_use_ticks`]
     Using(Timeout, bool),
+    /// Ensures all [`UseKey::count`] times executed
     PostCondition,
 }
 
@@ -496,29 +527,34 @@ pub enum CashShop {
 /// The player contextual states
 #[derive(Clone, Copy, Debug, Display)]
 pub enum Player {
+    /// Detects player on the minimap
     Detecting,
+    /// Does nothing state
+    ///
+    /// Acts as entry to other state when there is a [`PlayerAction`]
     Idle,
     UseKey(UseKey),
     /// Movement-related coordinator state
     Moving(Point, bool, Option<(usize, Array<(Point, bool), 16>)>),
-    /// Perform walk or small adjustment x-wise action
+    /// Performs walk or small adjustment x-wise action
     Adjusting(Moving),
-    /// Perform double jump action
+    /// Performs double jump action
     DoubleJumping(Moving, bool, bool),
-    /// Perform a grappling action
+    /// Performs a grappling action
     Grappling(Moving),
+    /// Performs a normal jump
     Jumping(Moving),
-    /// Perform an up jump action
+    /// Performs an up jump action
     UpJumping(Moving),
-    /// Perform a falling action
+    /// Performs a falling action
     Falling(Moving, Point),
-    /// Unstuck when inside non-detecting position or because of `state.unstuck_counter`
+    /// Unstucks when inside non-detecting position or because of [`PlayerState::unstuck_counter`]
     Unstucking(Timeout, Option<bool>),
-    /// Stall for time and return to `Player::Idle` or `state.stalling_timeout_state`
+    /// Stalls for time and return to [`Player::Idle`] or [`PlayerState::stalling_timeout_state`]
     Stalling(Timeout, u32),
-    /// Try to solve a rune
+    /// Tries to solve a rune
     SolvingRune(SolvingRune),
-    /// Enter the cash shop then exit after 10 seconds
+    /// Enters the cash shop then exit after 10 seconds
     CashShopThenExit(Timeout, CashShop),
 }
 
@@ -736,7 +772,7 @@ fn update_positional_context(
     }
 }
 
-/// Updates `Player::Idle` contextual state
+/// Updates [`Player::Idle`] contextual state
 ///
 /// This state does not do much on its own except when auto mobbing. It acts as entry
 /// to other state when there is an action and helps clearing keys.
@@ -1133,15 +1169,15 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
     )
 }
 
-/// Updates the `Player::Moving` contextual state
+/// Updates the [`Player::Moving`] contextual state
 ///
 /// This state does not perform any movement but acts as coordinator
-/// for other movement states. It keeps track of `state.unstuck_counter`, avoids
+/// for other movement states. It keeps track of [`PlayerState::unstuck_counter`], avoids
 /// state looping and advancing `intermediates` when the current destination is reached.
 ///
-/// It will first transition to `Player::DoubleJumping` and `Player::Adjusting` for
-/// matching `x` of `dest`. Then, `Player::Grappling`, `Player::UpJumping`, `Player::Jump` or
-/// `Player::Falling` for matching `y` of `dest`. (e.g. horizontal then vertical)
+/// It will first transition to [`Player::DoubleJumping`] and [`Player::Adjusting`] for
+/// matching `x` of `dest`. Then, [`Player::Grappling`], [`Player::UpJumping`], [`Player::Jumping`]
+/// or [`Player::Falling`] for matching `y` of `dest`. (e.g. horizontal then vertical)
 ///
 /// In auto mob or intermediate destination, most of the movement thresholds are relaxed for
 /// more fluid movement.
@@ -1309,9 +1345,9 @@ fn update_moving_context(
     }
 }
 
-/// Updates the `Player::Adjusting` contextual state
+/// Updates the [`Player::Adjusting`] contextual state
 ///
-/// This state just walks towards the destination. If `moving.exact` is true,
+/// This state just walks towards the destination. If [`Moving::exact`] is true,
 /// then it will perform small movement to ensure the `x` is as close as possible.
 fn update_adjusting_context(
     context: &Context,
@@ -1463,7 +1499,7 @@ fn update_adjusting_context(
     )
 }
 
-/// Updates the `Player::DoubleJumping` contextual state
+/// Updates the [`Player::DoubleJumping`] contextual state
 ///
 /// This state continues to double jump as long as the distance x-wise is still
 /// `>= DOUBLE_JUMP_THRESHOLD`. Or when `forced`, this state will attempt a single double jump.
@@ -1474,9 +1510,9 @@ fn update_adjusting_context(
 /// [`Player::Adjusting`], and [`Player::UseKey`] with [`PlayerState::last_known_direction`]
 /// matches the [`PlayerAction::Key`] direction.
 ///
-/// `require_stationary` is currently true when it is transitioned from `Player::Idle` and
-/// `Player::UseKey` with `state.last_known_direction` matches the
-/// `PlayerAction::Key` direction.
+/// `require_stationary` is currently true when it is transitioned from [`Player::Idle`] and
+/// [`Player::UseKey`] with [`PlayerState::last_known_direction`] matches the
+/// [`PlayerAction::Key`] direction.
 fn update_double_jumping_context(
     context: &Context,
     state: &mut PlayerState,
@@ -1653,7 +1689,7 @@ fn update_double_jumping_context(
 /// This state can only be transitioned via [`Player::Moving`] or [`Player::DoubleJumping`]
 /// when the player has reached or close to the destination x-wise.
 ///
-/// This state will use the Rope Lift skill
+/// This state will use the Rope Lift skill.
 fn update_grappling_context(
     context: &Context,
     state: &mut PlayerState,
@@ -1701,9 +1737,9 @@ fn update_grappling_context(
     )
 }
 
-/// Updates the `Player::UpJumping` contextual state
+/// Updates the [`Player::UpJumping`] contextual state
 ///
-/// This state can only be transitioned via `Player::Moving` when the
+/// This state can only be transitioned via [`Player::Moving`] when the
 /// player has reached the destination x-wise.
 ///
 /// This state will:
@@ -1803,7 +1839,7 @@ fn update_up_jumping_context(
     )
 }
 
-/// Updates the `Player::Falling` contextual state
+/// Updates the [`Player::Falling`] contextual state
 ///
 /// This state will perform a drop down `Down Key + Space`
 fn update_falling_context(
@@ -1862,16 +1898,16 @@ fn update_falling_context(
     )
 }
 
-/// Updates the `Player::Unstucking` contextual state
+/// Updates the [`Player::Unstucking`] contextual state
 ///
-/// This state can only be transitioned to when `state.unstuck_counter` reached the fixed
+/// This state can only be transitioned to when [`PlayerState::unstuck_counter`] reached the fixed
 /// threshold or when the player moved into the edges of the minimap.
-/// If `state.unstuck_consecutive_counter` has not reached the threshold and the player
+/// If [`PlayerState::unstuck_consecutive_counter`] has not reached the threshold and the player
 /// moved into the left/right/top edges of the minimap, it will try to move
 /// out as appropriate. It will also try to press ESC key to exit any dialog.
 ///
-/// Each initial transition to `Player::Unstucking` increases
-/// the `state.unstuck_consecutive_counter` by one. If the threshold is reached, this
+/// Each initial transition to [`Player::Unstucking`] increases
+/// the [`PlayerState::unstuck_consecutive_counter`] by one. If the threshold is reached, this
 /// state will enter GAMBA mode. And by definition, it means `random bullsh*t go`.
 fn update_unstucking_context(
     context: &Context,
@@ -1957,13 +1993,13 @@ fn update_unstucking_context(
     )
 }
 
-/// Updates the `Player::Stalling` contextual state
+/// Updates the [`Player::Stalling`] contextual state
 ///
 /// This state stalls for the specified number of `max_timeout`. Upon timing out,
-/// it will return to `state.stalling_timeout_state` if `Some` or `Player::Idle` if `None`.
-/// And `Player::Idle` is considered the terminal state if there is an action.
-/// `state.stalling_timeout_state` is currently only `Some` when it is transitioned
-/// via [`Player::UseKey`].
+/// it will return to [`PlayerState::stalling_timeout_state`] if [`Some`] or
+/// [`Player::Idle`] if [`None`]. And [`Player::Idle`] is considered the terminal state if
+/// there is an action. [`PlayerState::stalling_timeout_state`] is currently only [`Some`] when
+/// it is transitioned via [`Player::UseKey`].
 ///
 /// If this state timeout in auto mob with terminal state, it will perform
 /// auto mob reachable `y` solidifying if needed.
@@ -2016,10 +2052,10 @@ fn update_stalling_context(state: &mut PlayerState, timeout: Timeout, max_timeou
     )
 }
 
-/// Updates the `Player::SolvingRune` contextual state
+/// Updates the [`Player::SolvingRune`] contextual state
 ///
-/// Though this state can only be transitioned via `Player::Moving` with `PlayerAction::SolveRune`,
-/// it is not required. This state does:
+/// Though this state can only be transitioned via [`Player::Moving`]
+/// with [`PlayerAction::SolveRune`], it is not required. This state does:
 /// - On timeout start, sends the interact key
 /// - On timeout update, detects the rune and sends the keys
 /// - On timeout end or rune is solved before timing out, transitions to `Player::Idle`
@@ -2123,7 +2159,7 @@ fn update_solving_rune_context(
     )
 }
 
-/// Checks proximity in `PlayerAction::AutoMob` for transitioning to `Player::UseKey`
+/// Checks proximity in [`PlayerAction::AutoMob`] for transitioning to [`Player::UseKey`]
 ///
 /// This is common logics shared with other contextual states when there is auto mob action
 #[inline]
@@ -2144,9 +2180,9 @@ fn on_auto_mob_use_key_action(
     }
 }
 
-/// Callbacks for when there is a normal or priority `PlayerAction`
+/// Callbacks for when there is a normal or priority [`PlayerAction`]
 ///
-/// This version does not require `PlayerState` in the callbacks arguments
+/// This version does not require [`PlayerState`] in the callbacks arguments
 #[inline]
 fn on_action(
     state: &mut PlayerState,
@@ -2160,9 +2196,9 @@ fn on_action(
     )
 }
 
-/// Callbacks for when there is a normal or priority `PlayerAction`
+/// Callbacks for when there is a normal or priority [`PlayerAction`]
 ///
-/// This version requires a shared reference `PlayerState` in the callbacks arguments
+/// This version requires a shared reference [`PlayerState`] in the callbacks arguments
 #[inline]
 fn on_action_state(
     state: &mut PlayerState,
@@ -2176,10 +2212,10 @@ fn on_action_state(
     )
 }
 
-/// Callbacks for when there is a normal or priority `PlayerAction`
+/// Callbacks for when there is a normal or priority [`PlayerAction`]
 ///
 /// When there is a priority action, it takes precendece over the normal action. The callback
-/// should return a tuple `Option<(Player, bool)>` with:
+/// should return a tuple [`Option<(Player, bool)>`] with:
 /// - `Some((Player, false))` indicating the callback is handled but `Player` is not terminal state
 /// - `Some((Player, true))` indicating the callback is handled and `Player` is terminal state
 /// - `None` indicating the callback is not handled and will be defaulted to `on_default_context`
@@ -2253,16 +2289,19 @@ enum ChangeAxis {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Timeout {
     /// The current timeout tick.
+    ///
     /// The timeout tick can be reset to 0 in the context of movement.
     current: u32,
-    /// The total number of passed ticks. Useful when `current` can be reset
-    /// Currently only used for delaying upjumping and stopping down key early in falling
+    /// The total number of passed ticks.
+    ///
+    /// Useful when [`Self::current`] can be reset. And currently only used for delaying
+    /// up-jumping and stopping down key early in falling
     total: u32,
     /// Inidcates whether the timeout has started
     started: bool,
 }
 
-/// Updates the `Timeout` current tick
+/// Updates the [`Timeout`] current tick
 ///
 /// This is basic building block for contextual states that can
 /// be timed out.
@@ -2300,8 +2339,8 @@ fn update_with_timeout<T>(
 
 /// Updates movement-related contextual states
 ///
-/// This function helps resetting the `Timeout` when the player's position changed
-/// based on `ChangeAxis`. Upon timing out, it returns to `Player::Moving`.
+/// This function helps resetting the [`Timeout`] when the player's position changed
+/// based on [`ChangeAxis`]. Upon timing out, it returns to [`Player::Moving`].
 #[inline]
 fn update_moving_axis_context(
     moving: Moving,
@@ -2356,7 +2395,7 @@ fn reset_health(state: &mut PlayerState) {
     state.health_bar_task = None;
 }
 
-/// Increments the rune validation fail count and sets `state.rune_cash_shop` if needed
+/// Increments the rune validation fail count and sets [`PlayerState::rune_cash_shop`] if needed
 #[inline]
 fn update_rune_fail_count_state(state: &mut PlayerState) {
     state.rune_failed_count += 1;
@@ -2366,9 +2405,9 @@ fn update_rune_fail_count_state(state: &mut PlayerState) {
     }
 }
 
-/// Updates the rune validation `Timeout`
+/// Updates the rune validation [`Timeout`]
 ///
-/// `state.rune_validate_timeout` is `Some` only when `Player::SolvingRune`
+/// [`PlayerState::rune_validate_timeout`] is [`Some`] only when [`Player::SolvingRune`]
 /// successfully detects and sends all the keys. After about 12 seconds, it
 /// will check if the player has the rune buff.
 #[inline]
@@ -2438,7 +2477,7 @@ fn update_health_state(context: &Context, detector: &impl Detector, state: &mut 
     }
 }
 
-/// Updates the `PlayerState`
+/// Updates the [`PlayerState`]
 ///
 /// This function:
 /// - Returns the player current position or `None` when the minimap or player cannot be detected
