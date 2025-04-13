@@ -62,7 +62,7 @@ const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 4;
 const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 8;
 
 /// The minimum x distance required to transition to [`Player::UseKey`] in auto mob action
-const AUTO_MOB_USE_KEY_X_THRESHOLD: i32 = 14;
+const AUTO_MOB_USE_KEY_X_THRESHOLD: i32 = 16;
 
 /// The minimum y distance required to transition to [`Player::UseKey`] in auto mob action
 const AUTO_MOB_USE_KEY_Y_THRESHOLD: i32 = JUMP_THRESHOLD;
@@ -101,6 +101,9 @@ pub struct PlayerConfiguration {
 }
 
 /// The player persistent states
+///
+/// TODO: Should have a separate struct or trait for Rotator to access PlayerState instead direct
+/// TODO: access
 #[derive(Debug, Default)]
 pub struct PlayerState {
     pub config: PlayerConfiguration,
@@ -330,6 +333,16 @@ impl PlayerState {
         } else {
             DOUBLE_JUMP_THRESHOLD
         }
+    }
+
+    #[inline]
+    fn should_disable_grappling(&self) -> bool {
+        (self.has_auto_mob_action_only()
+            && self.config.auto_mob_platforms_pathing
+            && self.config.auto_mob_platforms_pathing_up_jump_only)
+            || (self.has_rune_action()
+                && self.config.rune_platforms_pathing
+                && self.config.rune_platforms_pathing_up_jump_only)
     }
 }
 
@@ -802,26 +815,36 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
             .min_by_key(|y| (mob_pos.y - y).abs())
             .filter(|y| (mob_pos.y - y).abs() <= AUTO_MOB_REACHABLE_Y_THRESHOLD);
         let point = Point::new(mob_pos.x, y.unwrap_or(mob_pos.y));
-        state.auto_mob_reachable_y = y;
-        debug!(target: "player", "auto mob reachable y {:?} {:?}", y, state.auto_mob_reachable_y_map);
-        if state.config.auto_mob_platforms_pathing {
-            if let Minimap::Idle(idle) = context.minimap {
-                if let Some(array) = find_points(
+        let intermediates = if state.config.auto_mob_platforms_pathing {
+            match context.minimap {
+                Minimap::Idle(idle) => find_points(
                     &idle.platforms,
                     player_pos,
                     point,
                     mob_pos.allow_adjusting,
                     state.config.auto_mob_platforms_pathing_up_jump_only,
-                ) {
-                    let (point, exact) = array[0];
-                    state.last_destinations =
-                        Some(array.into_iter().map(|(point, _)| point).collect());
-                    return Player::Moving(point, exact, Some((1, array)));
-                }
+                ),
+                _ => unreachable!(),
             }
-        }
-        state.last_destinations = Some(vec![point]);
-        Player::Moving(point, mob_pos.allow_adjusting, None)
+        } else {
+            None
+        };
+        debug!(target: "player", "auto mob reachable y {:?} {:?}", y, state.auto_mob_reachable_y_map);
+        state.auto_mob_reachable_y = y;
+        state.last_destinations = intermediates
+            .map(|array| {
+                array
+                    .into_iter()
+                    .map(|(point, _)| point)
+                    .collect::<Vec<_>>()
+            })
+            .or(Some(vec![point]));
+        intermediates
+            .map(|array| {
+                let (point, exact) = array[0];
+                Player::Moving(point, exact, Some((1, array)))
+            })
+            .unwrap_or(Player::Moving(point, mob_pos.allow_adjusting, None))
     }
 
     fn on_player_action(
@@ -893,16 +916,17 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
                             if !state.is_stationary {
                                 return Some((Player::Idle, false));
                             }
-                            if let Some(array) = find_points(
+                            let intermediates = find_points(
                                 &idle.platforms,
                                 cur_pos,
                                 rune,
                                 true,
                                 state.config.rune_platforms_pathing_up_jump_only,
-                            ) {
-                                let (point, exact) = array[0];
+                            );
+                            if let Some(array) = intermediates {
                                 state.last_destinations =
                                     Some(array.into_iter().map(|(point, _)| point).collect());
+                                let (point, exact) = array[0];
                                 return Some((
                                     Player::Moving(point, exact, Some((1, array))),
                                     false,
@@ -1197,6 +1221,15 @@ fn update_moving_context(
     /// Aborts the action when state starts looping.
     fn abort_action_on_state_repeat(next: Player, state: &mut PlayerState) -> Player {
         if let Some(last_movement) = state.last_movement {
+            let count_map = if state.has_priority_action() {
+                &mut state.last_movement_priority_map
+            } else {
+                &mut state.last_movement_normal_map
+            };
+            let count = count_map.entry(last_movement).or_insert(0);
+            *count += 1;
+            let count = *count;
+            debug!(target: "player", "last movement {:?}", count_map);
             let count_max = match last_movement {
                 LastMovement::Adjusting | LastMovement::DoubleJumping => {
                     if state.has_auto_mob_action_only() {
@@ -1216,16 +1249,7 @@ fn update_moving_context(
                     }
                 }
             };
-            let count_map = if state.has_priority_action() {
-                &mut state.last_movement_priority_map
-            } else {
-                &mut state.last_movement_normal_map
-            };
-            let count = count_map.entry(last_movement).or_insert(0);
-            debug_assert!(*count < count_max);
-            *count += 1;
-            let count = *count;
-            debug!(target: "player", "last movement {:?}", count_map);
+            debug_assert!(count <= count_max);
             if count >= count_max {
                 info!(target: "player", "abort action due to repeated state");
                 state.clear_action_and_movement();
@@ -1301,7 +1325,7 @@ fn update_moving_context(
         }
         // y > 0: cur_pos is below dest
         // y < 0: cur_pos is above of dest
-        (_, y, d) if y > 0 && d >= GRAPPLING_THRESHOLD => {
+        (_, y, d) if y > 0 && d >= GRAPPLING_THRESHOLD && !state.should_disable_grappling() => {
             abort_action_on_state_repeat(Player::Grappling(moving), state)
         }
         (_, y, d) if y > 0 && d >= UP_JUMP_THRESHOLD => {
@@ -1569,13 +1593,7 @@ fn update_double_jumping_context(
     }
 
     debug_assert!(moving.timeout.started || !moving.completed);
-    let ignore_grappling = forced
-        || (state.has_auto_mob_action_only()
-            && state.config.auto_mob_platforms_pathing
-            && state.config.auto_mob_platforms_pathing_up_jump_only)
-        || (state.has_rune_action()
-            && state.config.rune_platforms_pathing
-            && state.config.rune_platforms_pathing_up_jump_only);
+    let ignore_grappling = forced || state.should_disable_grappling();
     let x_changed = (cur_pos.x - moving.pos.x).abs();
     let (x_distance, x_direction) = x_distance_direction(moving.dest, cur_pos);
     let (y_distance, y_direction) = y_distance_direction(moving.dest, cur_pos);
