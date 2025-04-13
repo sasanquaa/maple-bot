@@ -323,10 +323,13 @@ mod tests {
         let br = Point::new(90, 90);
         *mat.at_pt_mut::<Vec4b>(tl).unwrap() = Vec4b::all(255);
         *mat.at_pt_mut::<Vec4b>(br).unwrap() = Vec4b::all(255);
-        (mat, Anchors {
-            tl: (tl, pixel),
-            br: (br, pixel),
-        })
+        (
+            mat,
+            Anchors {
+                tl: (tl, pixel),
+                br: (br, pixel),
+            },
+        )
     }
 
     fn create_mock_detector() -> (MockDetector, Rect, Anchors, Rect) {
