@@ -9,7 +9,7 @@ use std::{
     },
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use log::{debug, info};
 #[cfg(test)]
 use mockall::mock;
@@ -384,14 +384,14 @@ fn detect_player_health_bars(
         0.7,
         None,
     )?;
-    let hp_shield_x = detect_template(
+    let hp_shield = detect_template(
         &grayscale.roi(hp_bar).unwrap(),
         &*HP_SHIELD,
         hp_bar.tl(),
-        0.7,
+        0.9,
         None,
     )
-    .map(|bbox| bbox.x + bbox.width);
+    .ok();
     let left = mat
         .roi(Rect::new(
             hp_bar.x,
@@ -405,11 +405,14 @@ fn detect_player_health_bars(
         .into_iter()
         .min_by_key(|bbox| ((bbox.x + bbox.width) - hp_separator.x).abs())
         .ok_or(anyhow!("failed to detect current health bar"))?;
+    let left_bbox_x = hp_shield
+        .map(|bbox| bbox.x + bbox.width)
+        .unwrap_or(left_bbox.x); // When there is shield, skips past it
     let left_bbox = Rect::new(
-        hp_shield_x.unwrap_or(left_bbox.x), // When there is shield, skip past it
-        left_bbox.y,
-        hp_separator.x - left_bbox.x + 1, // For ensuring thin character like 1 gets detected
-        left_bbox.height,
+        left_bbox_x,
+        left_bbox.y - 1, // Add some space so the bound is not too tight
+        hp_separator.x - left_bbox_x + 1, // Help thin character like '1' detectable
+        left_bbox.height + 2,
     );
     let right = mat
         .roi(Rect::new(
@@ -428,7 +431,7 @@ fn detect_player_health_bars(
         hp_bar.y,
     )
     .into_iter()
-    .next()
+    .reduce(|acc, cur| acc | cur)
     .ok_or(anyhow!("failed to detect max health bar"))?;
     Ok((left_bbox, right_bbox))
 }
@@ -448,10 +451,7 @@ fn detect_player_health(
         .first()
         .and_then(|value| value.parse::<u32>().ok())
         .ok_or(anyhow!("cannot detect max health"))?;
-    if current_health > max_health {
-        bail!("failed to detect player's health");
-    }
-    Ok((current_health, max_health))
+    Ok((current_health.min(max_health), max_health))
 }
 
 fn detect_player_rune_buff(mat: &impl ToInputArray) -> bool {
