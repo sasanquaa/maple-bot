@@ -424,10 +424,15 @@ impl Rotator {
             key_wait_before_millis,
             key_wait_after_millis,
         } = auto_mobbing;
+        let bound = if player.config.auto_mob_platforms_bound {
+            idle.platforms_bound.unwrap_or(bound.into())
+        } else {
+            bound.into()
+        };
         let detector = detector.clone();
         let Update::Complete(Ok(points)) =
             update_task_repeatable(0, &mut self.auto_mob_task, move || {
-                detector.detect_mobs(idle.bbox, bound.into(), pos)
+                detector.detect_mobs(idle.bbox, bound, pos)
             })
         else {
             return;

@@ -70,6 +70,7 @@ macro_rules! expect_value_variant {
     };
 }
 
+/// Represents request from UI
 #[derive(Debug)]
 enum Request {
     RotateActions(bool),
@@ -79,8 +80,13 @@ enum Request {
     RedetectMinimap,
     PlayerState,
     MinimapFrame,
+    MinimapPlatformsBound,
 }
 
+/// Represents response to UI [`Request`]
+///
+/// All internal (e.g. OpenCV) structs must be converted to either database structs
+/// or appropriate counterparts before passing to UI.
 #[derive(Debug)]
 enum Response {
     RotateActions,
@@ -90,6 +96,7 @@ enum Response {
     RedetectMinimap,
     PlayerState(PlayerState),
     MinimapFrame(Option<(Vec<u8>, usize, usize)>),
+    MinimapPlatformsBound(Option<Bound>),
 }
 
 pub(crate) trait RequestHandler {
@@ -103,9 +110,11 @@ pub(crate) trait RequestHandler {
 
     fn on_redetect_minimap(&mut self);
 
-    fn on_player_state(&mut self) -> PlayerState;
+    fn on_player_state(&self) -> PlayerState;
 
-    fn on_minimap_frame(&mut self) -> Option<(Vec<u8>, usize, usize)>;
+    fn on_minimap_frame(&self) -> Option<(Vec<u8>, usize, usize)>;
+
+    fn on_minimap_platforms_bound(&self) -> Option<Bound>;
 }
 
 #[derive(Debug, Clone)]
@@ -163,6 +172,13 @@ pub async fn minimap_frame() -> Result<(Vec<u8>, usize, usize)> {
         .ok_or(anyhow!("minimap frame not found"))
 }
 
+pub async fn minimap_platforms_bound() -> Option<Bound> {
+    expect_value_variant!(
+        request(Request::MinimapPlatformsBound).await,
+        Response::MinimapPlatformsBound
+    )
+}
+
 pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
     if let Ok((request, sender)) = LazyLock::force(&REQUESTS).1.lock().unwrap().try_recv() {
         let result = match request {
@@ -187,6 +203,9 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
             }
             Request::PlayerState => Response::PlayerState(handler.on_player_state()),
             Request::MinimapFrame => Response::MinimapFrame(handler.on_minimap_frame()),
+            Request::MinimapPlatformsBound => {
+                Response::MinimapPlatformsBound(handler.on_minimap_platforms_bound())
+            }
         };
         let _ = sender.send(result);
     }

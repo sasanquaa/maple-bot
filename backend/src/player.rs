@@ -82,6 +82,10 @@ pub struct PlayerConfiguration {
     pub auto_mob_platforms_pathing: bool,
     /// Uses only up jump(s) in auto mob platform pathing
     pub auto_mob_platforms_pathing_up_jump_only: bool,
+    /// Uses platforms to compute auto mobbing bound
+    ///
+    /// TODO: This shouldn't be here...
+    pub auto_mob_platforms_bound: bool,
     /// The interact key
     pub interact_key: KeyKind,
     /// The RopeLift key

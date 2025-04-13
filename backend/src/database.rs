@@ -110,6 +110,17 @@ impl From<Bound> for Rect {
     }
 }
 
+impl From<Rect> for Bound {
+    fn from(value: Rect) -> Self {
+        Self {
+            x: value.x,
+            y: value.y,
+            width: value.width,
+            height: value.height,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize)]
 pub struct AutoMobbing {
     pub bound: Bound,
@@ -154,6 +165,7 @@ pub struct Minimap {
     pub rune_platforms_pathing_up_jump_only: bool,
     pub auto_mob_platforms_pathing: bool,
     pub auto_mob_platforms_pathing_up_jump_only: bool,
+    pub auto_mob_platforms_bound: bool,
     pub actions: HashMap<String, Vec<Action>>,
 }
 

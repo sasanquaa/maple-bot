@@ -17,7 +17,8 @@ use platforms::windows::{self, Capture, Error, Handle, KeyKind, Keys};
 use strum::IntoEnumIterator;
 
 use crate::{
-    Action, ActionCondition, ActionKey, KeyBindingConfiguration, RequestHandler, RotatorMode,
+    Action, ActionCondition, ActionKey, Bound, KeyBindingConfiguration, RequestHandler,
+    RotatorMode,
     buff::{Buff, BuffKind, BuffState},
     database::{Configuration, KeyBinding, PotionMode, query_configs},
     detect::{CachedDetector, Detector},
@@ -190,6 +191,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         self.player.config.auto_mob_platforms_pathing = minimap.auto_mob_platforms_pathing;
         self.player.config.auto_mob_platforms_pathing_up_jump_only =
             minimap.auto_mob_platforms_pathing_up_jump_only;
+        self.player.config.auto_mob_platforms_bound = minimap.auto_mob_platforms_bound;
         *self.actions = preset
             .and_then(|preset| minimap.actions.get(&preset).cloned())
             .unwrap_or_default();
@@ -226,7 +228,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         self.context.minimap = Minimap::Detecting;
     }
 
-    fn on_player_state(&mut self) -> crate::PlayerState {
+    fn on_player_state(&self) -> crate::PlayerState {
         crate::PlayerState {
             position: self.player.last_known_pos.map(|pos| (pos.x, pos.y)),
             health: self.player.health,
@@ -248,8 +250,16 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         }
     }
 
-    fn on_minimap_frame(&mut self) -> Option<(Vec<u8>, usize, usize)> {
+    fn on_minimap_frame(&self) -> Option<(Vec<u8>, usize, usize)> {
         extract_minimap(self.context, self.detector.mat())
+    }
+
+    fn on_minimap_platforms_bound(&self) -> Option<Bound> {
+        if let Minimap::Idle(idle) = self.context.minimap {
+            idle.platforms_bound.map(|bound| bound.into())
+        } else {
+            None
+        }
     }
 }
 

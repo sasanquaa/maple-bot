@@ -74,6 +74,17 @@ pub fn Platforms(
                     .map(|data| data.auto_mob_platforms_pathing_up_jump_only)
                     .unwrap_or_default(),
             }
+            PlatformCheckbox {
+                label: "Auto Mobbing Bound By Platforms",
+                disabled: minimap().is_none(),
+                on_input: move |bound| {
+                    if let Some(minimap) = minimap.write().deref_mut() {
+                        minimap.auto_mob_platforms_bound = bound;
+                        on_save(minimap.clone());
+                    }
+                },
+                value: minimap().map(|data| data.auto_mob_platforms_bound).unwrap_or_default(),
+            }
             div { class: "flex items-center justify-between text-xs text-gray-700 border-b border-gray-300 mt-3 mb-2 data-[disabled]:text-gray-400",
                 p { class: "w-26", "X Start" }
                 p { class: "w-26", "X End" }

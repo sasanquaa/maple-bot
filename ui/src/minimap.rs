@@ -1,7 +1,7 @@
 use backend::{
     Action, ActionKey, ActionMove, Configuration, Minimap as MinimapData, PlayerState,
-    RotationMode, create_minimap, delete_map, minimap_frame, player_state, query_maps,
-    redetect_minimap, rotate_actions, update_configuration, update_minimap, upsert_map,
+    RotationMode, create_minimap, delete_map, minimap_frame, minimap_platforms_bound, player_state,
+    query_maps, redetect_minimap, rotate_actions, update_configuration, update_minimap, upsert_map,
 };
 use dioxus::{document::EvalError, prelude::*};
 use serde::Serialize;
@@ -135,6 +135,7 @@ pub fn Minimap(
     let mut halting = use_signal(|| true);
     let mut state = use_signal::<Option<PlayerState>>(|| None);
     let mut detected_minimap_size = use_signal::<Option<(usize, usize)>>(|| None);
+    let mut platforms_bound = use_signal(|| None);
     let actions = use_memo::<Vec<ActionView>>(move || {
         minimap()
             .zip(preset())
@@ -170,7 +171,9 @@ pub fn Minimap(
     });
     use_effect(move || {
         if let (Some(minimap), preset) = (minimap(), preset()) {
-            spawn(async move { update_minimap(preset, minimap).await });
+            spawn(async move {
+                update_minimap(preset, minimap).await;
+            });
         }
         if let Some(config) = config() {
             spawn(async move {
@@ -185,31 +188,33 @@ pub fn Minimap(
             {
                 preset.set(minimap.actions.keys().next().cloned());
             }
+            spawn(async move {
+                platforms_bound.set(minimap_platforms_bound().await);
+            });
         } else {
             preset.set(None);
         }
     });
     // draw actions, auto mob bound
     use_effect(move || {
-        let config = minimap().map(|minimap| {
+        let actions = actions();
+        let platforms_bound = platforms_bound();
+        if let Some(minimap) = minimap() {
             let bound = if let RotationMode::AutoMobbing(mobbing) = minimap.rotation_mode {
-                Some(mobbing.bound)
+                platforms_bound.or(Some(mobbing.bound))
             } else {
                 None
             };
-            (
-                minimap.width,
-                minimap.height,
-                bound.is_some(),
-                bound.unwrap_or_default(),
-                minimap.platforms,
-            )
-        });
-        let actions = actions();
-        if let Some((width, height, enabled, bound, platforms)) = config {
             spawn(async move {
                 document::eval(MINIMAP_ACTIONS_JS)
-                    .send((width, height, actions, enabled, bound, platforms))
+                    .send((
+                        minimap.width,
+                        minimap.height,
+                        actions,
+                        bound.is_some(),
+                        bound.unwrap_or_default(),
+                        minimap.platforms,
+                    ))
                     .unwrap();
             });
         }
@@ -223,11 +228,18 @@ pub fn Minimap(
             state.set(Some(player));
             let minimap_frame = minimap_frame().await;
             let Ok((frame, width, height)) = minimap_frame else {
+                platforms_bound.set(None);
                 detected_minimap_size.set(None);
                 continue;
             };
             if detected_minimap_size.peek().is_none() {
                 detected_minimap_size.set(Some((width, height)));
+            }
+            if platforms_bound.peek().is_none() {
+                let bound = minimap_platforms_bound().await;
+                if bound.is_some() {
+                    platforms_bound.set(bound);
+                }
             }
             let Err(error) = canvas.send((frame, width, height, destinations)) else {
                 continue;
