@@ -2,11 +2,15 @@ name: Build windows-x64-static-release
 
 on:
   push:
-    branches: ["master"]
+    branches:
+      - "master"
+      - "v*.*.*"
     tags:
       - "v*.*.*"
   pull_request:
-    branches: ["master"]
+    branches:
+      - "master"
+      - "v*.*.*"
 
 permissions:
   contents: write
