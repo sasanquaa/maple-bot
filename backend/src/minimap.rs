@@ -421,6 +421,7 @@ mod tests {
             has_elite_boss: false,
             portals: Array::new(),
             platforms: Array::new(),
+            platforms_bound: None,
         };
 
         let minimap = advance_task(Minimap::Idle(idle), &detector, &mut state).await;

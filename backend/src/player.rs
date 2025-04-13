@@ -363,6 +363,7 @@ enum LastMovement {
 
 /// A contextual state that stores moving-related data
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(test, derive(Default))]
 pub struct Moving {
     /// The player's previous position and will be updated to current position
     /// after calling [`update_moving_axis_timeout`].
@@ -2586,11 +2587,14 @@ mod tests {
 
     use std::assert_matches::assert_matches;
 
+    use opencv::core::Point;
     use platforms::windows::KeyKind;
 
-    use super::{PlayerState, UseKey, UseKeyStage, update_use_key_context};
+    use super::{
+        Moving, PlayerState, UseKey, UseKeyStage, update_falling_context, update_use_key_context,
+    };
     use crate::{
-        ActionKeyDirection, ActionKeyWith, KeyBinding,
+        ActionKeyDirection, ActionKeyWith, KeyBinding, Position,
         context::{Context, MockKeySender},
         detect::MockDetector,
         player::{Player, Timeout, update_non_positional_context},
@@ -2634,8 +2638,80 @@ mod tests {
     }
 
     #[test]
-    fn falling() {
-        // TODO
+    fn falling_start() {
+        let mut keys = MockKeySender::new();
+        keys.expect_send_down()
+            .withf(|key| matches!(key, KeyKind::Down))
+            .returning(|_| Ok(()));
+        keys.expect_send()
+            .withf(|key| matches!(key, KeyKind::Space))
+            .returning(|_| Ok(()));
+        let context = Context {
+            keys: Box::leak(Box::new(keys)),
+            ..Default::default()
+        };
+        let pos = Point::new(5, 5);
+        let mut state = PlayerState::default();
+        let moving = Moving {
+            pos,
+            dest: pos,
+            ..Default::default()
+        };
+        // Send keys if stationary
+        state.is_stationary = true;
+        update_falling_context(&context, &mut state, pos, moving, Point::default());
+
+        // Don't send keys if not stationary
+        let mut keys = MockKeySender::new();
+        keys.expect_send_down().never();
+        keys.expect_send().never();
+        let context = Context {
+            keys: Box::leak(Box::new(keys)),
+            ..Default::default()
+        };
+        state.is_stationary = false;
+        update_falling_context(&context, &mut state, pos, moving, Point::default());
+    }
+
+    #[test]
+    fn falling_update() {
+        let mut keys = MockKeySender::new();
+        keys.expect_send_up()
+            .withf(|key| matches!(key, KeyKind::Down))
+            .returning(|_| Ok(()));
+        let context = Context {
+            keys: Box::leak(Box::new(keys)),
+            ..Default::default()
+        };
+        let pos = Point::new(5, 5);
+        let anchor = Point::new(6, 6);
+        let dest = Point::new(2, 2);
+        let mut state = PlayerState {
+            is_stationary: true,
+            ..Default::default()
+        };
+        let moving = Moving {
+            pos,
+            dest,
+            timeout: Timeout {
+                started: true,
+                total: 2,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // Send up key because total = 2 and timeout early
+        assert_matches!(
+            update_falling_context(&context, &mut state, pos, moving, anchor),
+            Player::Falling(
+                Moving {
+                    timeout: Timeout { current: 10, .. },
+                    ..
+                },
+                _
+            )
+        );
     }
 
     #[test]
