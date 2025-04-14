@@ -27,20 +27,18 @@
 - Platforms pathing (find a path to reach a platform)
 - ~~Barely maintainable~~ UI ~~(please help)~~
 - Work by taking an image and send key inputs (no memory hacking)
-- Not a feature but currently only work in GMS (haven't tested MSEA but it is in English...)
-  - From v0.2.0, because of `Manual map`, map's name should be language-agnostic but there are still other detection resources in English... (just PNGs)
+- Not a feature but currently only work in GMS:
+  - Haven't tested MSEA but it is in English...
+  - Updating PNGs are required to support non-English regions
 - I hate this game 
 - Why do Jett gets free BOD just to be deleted?
 
 ## How to use
-#### Map
-- Map is automatically detected, saved and restored anytime you go to the map
+#### Map (Update for v0.3.0)
+- Map is automatically detected but must be created manually by providing a name
+- The created map is saved and can be selected again later
 - Any actions preset created in the detected map is saved to that map only
 - **Map detection can be wrong**, see [Troubleshooting](#troubleshooting)
-- From v0.2.0, `Manual map` can now be selected:
-  - This allows opting out of automatic map's name detection
-  - You can manually add a new map with custom name based on current map detection
-  - Maybe removing automatic map detection altogether?
 
 The arcs are only for visual and do not represent the actual moving path. However, it does represent
 the order of one action to another depending on rotation mode.
@@ -171,25 +169,29 @@ from the ground level.
 Without this feature, the bot movement is quite simple. It just moves horizontally first so the `x` matches the destination
 and then try to up jump, rope lift or drop down as appropriate to match the `y`.
 
+Hot keys can be used to add platforms more quickly.
+
 ![Platforms](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/platforms.png?raw=true)
 
 ## Troubleshooting
-#### Wrong map detection
+#### Wrong map detection (Update for v0.3.0)
+Since v0.3.0, most of the times, there wouldn't be any problem because automatic map's name is no longer detected
+but map detection can still be wrong sometimes. You will most likely notice it right away because it does not look
+"tight", well cropped or aligned with actual map in the game.
+
 Wrong map detection can happen when:
-- The detected map's name is too different from existing map's name and see it as a new map
-- Some maps can have different name detected at different position
+- Moving quickly between different maps
 - Other UIs overlapping
 
-Rule of thumb is: Make sure the map's name is detected persistently each time you enter the map. As long as 
-the detected name is similar, the map data will be restored. **Note that the detected name may not be accurate
-but as long as the same name (or similar name) is detected each time, it should be fine**.
+Rule of thumb is:  Map detection will always try to crop the white border and make it is as tight as possbile. So before
+creating a new map, double-check to see if the map being displayed has white border cropped and looks similar to the
+one in the game.
 
 Fix methods:
 - Below the map are three buttons, two of which can be used to help troubleshooting:
     - `Re-detect map`: Use this button to re-detect the map
-    - `Delete map`: Use this to **permanently delete** the map, only use when you know the map's name is wrong
+    - `Delete map`: Use this to **permanently delete** the map
 - Move the map UI around
-- Move around the map (I encountered this in some Sellas maps)
 - When moving around different maps, it may detect previous map due to delay. Just use `Re-detect map` 
 button for this case.
 
