@@ -1,7 +1,8 @@
 use backend::{
     Action, ActionKey, ActionMove, Configuration, Minimap as MinimapData, PlayerState,
     RotationMode, create_minimap, delete_map, minimap_frame, minimap_platforms_bound, player_state,
-    query_maps, redetect_minimap, rotate_actions, update_configuration, update_minimap, upsert_map,
+    query_maps, redetect_minimap, rotate_actions, rotate_actions_halting, update_configuration,
+    update_minimap, upsert_map,
 };
 use dioxus::{document::EvalError, prelude::*};
 use serde::Serialize;
@@ -132,6 +133,7 @@ pub fn Minimap(
     copy_position: Signal<Option<(i32, i32)>>,
     config: ReadOnlySignal<Option<Configuration>, SyncStorage>,
 ) -> Element {
+    // TODO: State management is really hard... Apply Android MVVM?
     let mut halting = use_signal(|| true);
     let mut state = use_signal::<Option<PlayerState>>(|| None);
     let mut detected_minimap_size = use_signal::<Option<(usize, usize)>>(|| None);
@@ -223,6 +225,10 @@ pub fn Minimap(
     use_future(move || async move {
         let mut canvas = document::eval(MINIMAP_JS);
         loop {
+            let is_halting = rotate_actions_halting().await;
+            if *halting.peek() != is_halting {
+                halting.set(is_halting);
+            }
             let player = player_state().await;
             let destinations = player.destinations.clone();
             state.set(Some(player));
@@ -343,9 +349,7 @@ pub fn Minimap(
                     class: "button-tertiary w-24",
                     disabled: minimap().is_none(),
                     onclick: move |_| async move {
-                        let value = *halting.peek();
-                        halting.set(!value);
-                        rotate_actions(!value).await;
+                        rotate_actions(!*halting.peek()).await;
                     },
                     if halting() {
                         "Start actions"

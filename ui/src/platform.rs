@@ -1,6 +1,8 @@
 use std::ops::DerefMut;
 
-use backend::{MAX_PLATFORMS_COUNT, Minimap, Platform};
+use backend::{
+    HotKeys, KeyBindingConfiguration, MAX_PLATFORMS_COUNT, Minimap, Platform, key_receiver,
+};
 use dioxus::prelude::*;
 
 use crate::{
@@ -13,6 +15,7 @@ const DIV_CLASS: &str = "flex h-6 items-center space-x-2";
 #[component]
 pub fn Platforms(
     minimap: Signal<Option<Minimap>>,
+    hot_keys: ReadOnlySignal<Option<HotKeys>>,
     on_save: EventHandler<Minimap>,
     copy_position: ReadOnlySignal<Option<(i32, i32)>>,
 ) -> Element {
@@ -20,6 +23,44 @@ pub fn Platforms(
     let add_platform_disabled = use_memo(move || {
         let minimap = minimap();
         minimap.is_none() || minimap.unwrap().platforms.len() >= MAX_PLATFORMS_COUNT
+    });
+
+    use_future(move || async move {
+        let mut key_receiver = key_receiver().await;
+        loop {
+            let received_key = key_receiver.recv().await.unwrap();
+            if minimap.peek().is_none() {
+                continue;
+            }
+            if let Some((hot_keys, pos)) = hot_keys.peek().clone().zip(*copy_position.peek()) {
+                let KeyBindingConfiguration { key, enabled } = hot_keys.platform_start_key;
+                if enabled && key == received_key {
+                    editing.with_mut(|platform| {
+                        platform.x_start = pos.0;
+                        platform.y = pos.1;
+                    });
+                    continue;
+                }
+
+                let KeyBindingConfiguration { key, enabled } = hot_keys.platform_end_key;
+                if enabled && key == received_key {
+                    editing.with_mut(|platform| {
+                        platform.x_end = pos.0;
+                        platform.y = pos.1;
+                    });
+                    continue;
+                }
+
+                let KeyBindingConfiguration { key, enabled } = hot_keys.platform_add_key;
+                if enabled && key == received_key {
+                    if let Some(minimap) = minimap.write().deref_mut() {
+                        minimap.platforms.push(*editing.peek());
+                        on_save(minimap.clone());
+                    }
+                    continue;
+                }
+            }
+        }
     });
 
     rsx! {

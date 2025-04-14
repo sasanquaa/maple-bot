@@ -32,6 +32,10 @@ static CONNECTION: LazyLock<Mutex<Connection>> = LazyLock::new(|| {
             id INTEGER PRIMARY KEY,
             data TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS hot_keys (
+            id INTEGER PRIMARY KEY,
+            data TEXT NOT NULL
+        );
         "#,
     )
     .unwrap();
@@ -44,7 +48,71 @@ trait Identifiable {
     fn set_id(&mut self, id: i64);
 }
 
-#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HotKeys {
+    #[serde(skip_serializing, default)]
+    pub id: Option<i64>,
+    #[serde(default = "toggle_actions_key_default")]
+    pub toggle_actions_key: KeyBindingConfiguration,
+    #[serde(default = "platform_start_key_default")]
+    pub platform_start_key: KeyBindingConfiguration,
+    #[serde(default = "platform_end_key_default")]
+    pub platform_end_key: KeyBindingConfiguration,
+    #[serde(default = "platform_add_key_default")]
+    pub platform_add_key: KeyBindingConfiguration,
+}
+
+impl Default for HotKeys {
+    fn default() -> Self {
+        Self {
+            id: None,
+            toggle_actions_key: toggle_actions_key_default(),
+            platform_start_key: platform_start_key_default(),
+            platform_end_key: platform_end_key_default(),
+            platform_add_key: platform_add_key_default(),
+        }
+    }
+}
+
+impl Identifiable for HotKeys {
+    fn id(&self) -> Option<i64> {
+        self.id
+    }
+
+    fn set_id(&mut self, id: i64) {
+        self.id = Some(id);
+    }
+}
+
+fn toggle_actions_key_default() -> KeyBindingConfiguration {
+    KeyBindingConfiguration {
+        key: KeyBinding::Comma,
+        enabled: false,
+    }
+}
+
+fn platform_start_key_default() -> KeyBindingConfiguration {
+    KeyBindingConfiguration {
+        key: KeyBinding::J,
+        enabled: false,
+    }
+}
+
+fn platform_end_key_default() -> KeyBindingConfiguration {
+    KeyBindingConfiguration {
+        key: KeyBinding::K,
+        enabled: false,
+    }
+}
+
+fn platform_add_key_default() -> KeyBindingConfiguration {
+    KeyBindingConfiguration {
+        key: KeyBinding::L,
+        enabled: false,
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Configuration {
     #[serde(skip_serializing, default)]
     pub id: Option<i64>,
@@ -67,6 +135,32 @@ pub struct Configuration {
     pub legion_luck_key: KeyBindingConfiguration,
     #[serde(default)]
     pub class: Class,
+}
+
+impl Default for Configuration {
+    fn default() -> Self {
+        Self {
+            id: None,
+            name: String::new(),
+            ropelift_key: KeyBindingConfiguration::default(),
+            teleport_key: None,
+            up_jump_key: None,
+            interact_key: KeyBindingConfiguration::default(),
+            cash_shop_key: KeyBindingConfiguration::default(),
+            feed_pet_key: KeyBindingConfiguration::default(),
+            feed_pet_millis: 320000,
+            potion_key: KeyBindingConfiguration::default(),
+            potion_mode: PotionMode::EveryMillis(180000),
+            health_update_millis: 1000,
+            sayram_elixir_key: KeyBindingConfiguration::default(),
+            aurelia_elixir_key: KeyBindingConfiguration::default(),
+            exp_x3_key: KeyBindingConfiguration::default(),
+            bonus_exp_key: KeyBindingConfiguration::default(),
+            legion_wealth_key: KeyBindingConfiguration::default(),
+            legion_luck_key: KeyBindingConfiguration::default(),
+            class: Class::default(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, EnumIter, Display, EnumString)]
@@ -359,6 +453,9 @@ pub enum KeyBinding {
     F11,
     F12,
     Up,
+    Down,
+    Left,
+    Right,
     Home,
     End,
     PageUp,
@@ -431,6 +528,9 @@ impl From<KeyBinding> for KeyKind {
             KeyBinding::F11 => KeyKind::F11,
             KeyBinding::F12 => KeyKind::F12,
             KeyBinding::Up => KeyKind::Up,
+            KeyBinding::Down => KeyKind::Down,
+            KeyBinding::Left => KeyKind::Left,
+            KeyBinding::Right => KeyKind::Right,
             KeyBinding::Home => KeyKind::Home,
             KeyBinding::End => KeyKind::End,
             KeyBinding::PageUp => KeyKind::PageUp,
@@ -451,6 +551,96 @@ impl From<KeyBinding> for KeyKind {
             KeyBinding::Alt => KeyKind::Alt,
         }
     }
+}
+
+impl From<KeyKind> for KeyBinding {
+    fn from(value: KeyKind) -> Self {
+        match value {
+            KeyKind::A => KeyBinding::A,
+            KeyKind::B => KeyBinding::B,
+            KeyKind::C => KeyBinding::C,
+            KeyKind::D => KeyBinding::D,
+            KeyKind::E => KeyBinding::E,
+            KeyKind::F => KeyBinding::F,
+            KeyKind::G => KeyBinding::G,
+            KeyKind::H => KeyBinding::H,
+            KeyKind::I => KeyBinding::I,
+            KeyKind::J => KeyBinding::J,
+            KeyKind::K => KeyBinding::K,
+            KeyKind::L => KeyBinding::L,
+            KeyKind::M => KeyBinding::M,
+            KeyKind::N => KeyBinding::N,
+            KeyKind::O => KeyBinding::O,
+            KeyKind::P => KeyBinding::P,
+            KeyKind::Q => KeyBinding::Q,
+            KeyKind::R => KeyBinding::R,
+            KeyKind::S => KeyBinding::S,
+            KeyKind::T => KeyBinding::T,
+            KeyKind::U => KeyBinding::U,
+            KeyKind::V => KeyBinding::V,
+            KeyKind::W => KeyBinding::W,
+            KeyKind::X => KeyBinding::X,
+            KeyKind::Y => KeyBinding::Y,
+            KeyKind::Z => KeyBinding::Z,
+            KeyKind::Zero => KeyBinding::Zero,
+            KeyKind::One => KeyBinding::One,
+            KeyKind::Two => KeyBinding::Two,
+            KeyKind::Three => KeyBinding::Three,
+            KeyKind::Four => KeyBinding::Four,
+            KeyKind::Five => KeyBinding::Five,
+            KeyKind::Six => KeyBinding::Six,
+            KeyKind::Seven => KeyBinding::Seven,
+            KeyKind::Eight => KeyBinding::Eight,
+            KeyKind::Nine => KeyBinding::Nine,
+            KeyKind::F1 => KeyBinding::F1,
+            KeyKind::F2 => KeyBinding::F2,
+            KeyKind::F3 => KeyBinding::F3,
+            KeyKind::F4 => KeyBinding::F4,
+            KeyKind::F5 => KeyBinding::F5,
+            KeyKind::F6 => KeyBinding::F6,
+            KeyKind::F7 => KeyBinding::F7,
+            KeyKind::F8 => KeyBinding::F8,
+            KeyKind::F9 => KeyBinding::F9,
+            KeyKind::F10 => KeyBinding::F10,
+            KeyKind::F11 => KeyBinding::F11,
+            KeyKind::F12 => KeyBinding::F12,
+            KeyKind::Up => KeyBinding::Up,
+            KeyKind::Down => KeyBinding::Down,
+            KeyKind::Left => KeyBinding::Left,
+            KeyKind::Right => KeyBinding::Right,
+            KeyKind::Home => KeyBinding::Home,
+            KeyKind::End => KeyBinding::End,
+            KeyKind::PageUp => KeyBinding::PageUp,
+            KeyKind::PageDown => KeyBinding::PageDown,
+            KeyKind::Insert => KeyBinding::Insert,
+            KeyKind::Delete => KeyBinding::Delete,
+            KeyKind::Enter => KeyBinding::Enter,
+            KeyKind::Space => KeyBinding::Space,
+            KeyKind::Tilde => KeyBinding::Tilde,
+            KeyKind::Quote => KeyBinding::Quote,
+            KeyKind::Semicolon => KeyBinding::Semicolon,
+            KeyKind::Comma => KeyBinding::Comma,
+            KeyKind::Period => KeyBinding::Period,
+            KeyKind::Slash => KeyBinding::Slash,
+            KeyKind::Esc => KeyBinding::Esc,
+            KeyKind::Shift => KeyBinding::Shift,
+            KeyKind::Ctrl => KeyBinding::Ctrl,
+            KeyKind::Alt => KeyBinding::Alt,
+        }
+    }
+}
+
+pub fn query_hot_keys() -> HotKeys {
+    let mut hot_keys = query_from_table("hot_keys").unwrap().into_iter().next();
+    if hot_keys.is_none() {
+        hot_keys = Some(HotKeys::default());
+        upsert_hot_keys(hot_keys.as_mut().unwrap()).unwrap();
+    }
+    hot_keys.unwrap()
+}
+
+pub fn upsert_hot_keys(hot_keys: &mut HotKeys) -> Result<()> {
+    upsert_to_table("hot_keys", hot_keys)
 }
 
 pub fn query_configs() -> Result<Vec<Configuration>> {

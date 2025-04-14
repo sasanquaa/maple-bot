@@ -21,7 +21,7 @@ rand = { workspace = true }
 rusqlite = { version = "0.33.0", features = ["bundled"] }
 serde = { workspace = true }
 serde_json = { version = "1.0.138" }
-strum = { version = "0.27", features = ["derive"] }
+strum = { workspace = true }
 ordered_hash_map = "0.4.0"
 
 [dev-dependencies]

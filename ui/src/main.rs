@@ -5,7 +5,7 @@ use std::string::ToString;
 
 use action::Actions;
 use backend::{
-    Configuration as ConfigurationData, Minimap as MinimapData, query_configs, start_update_loop,
+    Configuration as ConfigurationData, Minimap as MinimapData, query_configs, query_hot_keys,
 };
 use configuration::Configuration;
 use dioxus::{
@@ -16,6 +16,7 @@ use dioxus::{
     },
     prelude::*,
 };
+use hot_key::HotKeys;
 use minimap::Minimap;
 use tab::Tab;
 use tokio::task::spawn_blocking;
@@ -23,6 +24,7 @@ use tracing_log::LogTracer;
 
 mod action;
 mod configuration;
+mod hot_key;
 mod icons;
 mod input;
 mod key;
@@ -38,7 +40,7 @@ const AUTO_NUMERIC_JS: Asset = asset!("assets/autoNumeric.min.js");
 // TODO: Fix spaghetti UI
 fn main() {
     LogTracer::init().unwrap();
-    start_update_loop();
+    backend::init();
     let window = WindowBuilder::new()
         .with_inner_size(Size::Physical(PhysicalSize::new(448, 820)))
         .with_inner_size_constraints(WindowSizeConstraints::new(
@@ -60,12 +62,14 @@ fn main() {
 fn App() -> Element {
     const TAB_CONFIGURATION: &str = "Configuration";
     const TAB_ACTIONS: &str = "Actions";
+    const TAB_HOT_KEYS: &str = "Hot Keys";
 
     let minimap = use_signal::<Option<MinimapData>>(|| None);
     let preset = use_signal::<Option<String>>(|| None);
     let configs =
         use_resource(|| async { spawn_blocking(|| query_configs().unwrap()).await.unwrap() });
     let config = use_signal_sync::<Option<ConfigurationData>>(|| None);
+    let hot_keys = use_resource(|| async { spawn_blocking(query_hot_keys).await.unwrap() });
     let copy_position = use_signal::<Option<(i32, i32)>>(|| None);
     let mut active_tab = use_signal(|| TAB_CONFIGURATION.to_string());
     let mut script_loaded = use_signal(|| false);
@@ -99,7 +103,11 @@ fn App() -> Element {
                     config,
                 }
                 Tab {
-                    tabs: vec![TAB_CONFIGURATION.to_string(), TAB_ACTIONS.to_string()],
+                    tabs: vec![
+                        TAB_CONFIGURATION.to_string(),
+                        TAB_ACTIONS.to_string(),
+                        TAB_HOT_KEYS.to_string(),
+                    ],
                     class: "py-2 px-4 font-medium text-sm focus:outline-none",
                     selected_class: "bg-white text-gray-800",
                     unselected_class: "hover:text-gray-700 text-gray-400 bg-gray-100",
@@ -115,7 +123,15 @@ fn App() -> Element {
                         }
                     },
                     TAB_ACTIONS => rsx! {
-                        Actions { minimap, preset, copy_position }
+                        Actions {
+                            minimap,
+                            hot_keys,
+                            preset,
+                            copy_position,
+                        }
+                    },
+                    TAB_HOT_KEYS => rsx! {
+                        HotKeys { hot_keys }
                     },
                     _ => unreachable!(),
                 }
