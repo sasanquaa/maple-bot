@@ -9,7 +9,7 @@ use std::sync::{LazyLock, Mutex};
 
 use anyhow::{Result, anyhow};
 use tokio::sync::{
-    mpsc,
+    broadcast, mpsc,
     oneshot::{self, Sender},
 };
 
@@ -30,12 +30,12 @@ mod skill;
 mod task;
 
 pub use {
-    context::start_update_loop,
+    context::init,
     database::{
         Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
-        AutoMobbing, Bound, Class, Configuration, KeyBinding, KeyBindingConfiguration,
+        AutoMobbing, Bound, Class, Configuration, HotKeys, KeyBinding, KeyBindingConfiguration,
         LinkKeyBinding, Minimap, Platform, Position, PotionMode, RotationMode, delete_map,
-        query_configs, query_maps, upsert_config, upsert_map,
+        query_configs, query_hot_keys, query_maps, upsert_config, upsert_hot_keys, upsert_map,
     },
     pathing::MAX_PLATFORMS_COUNT,
     rotator::RotatorMode,
@@ -70,30 +70,45 @@ macro_rules! expect_value_variant {
     };
 }
 
+/// Represents request from UI
 #[derive(Debug)]
 enum Request {
     RotateActions(bool),
+    RotateActionsHalting,
     CreateMinimap(String),
     UpdateMinimap(Option<String>, Minimap),
     UpdateConfiguration(Configuration),
+    UpdateHotKeys(HotKeys),
     RedetectMinimap,
     PlayerState,
     MinimapFrame,
+    MinimapPlatformsBound,
+    KeyReceiver,
 }
 
+/// Represents response to UI [`Request`]
+///
+/// All internal (e.g. OpenCV) structs must be converted to either database structs
+/// or appropriate counterparts before passing to UI.
 #[derive(Debug)]
 enum Response {
     RotateActions,
+    RotateActionsHalting(bool),
     CreateMinimap(Option<Minimap>),
     UpdateMinimap,
     UpdateConfiguration,
+    UpdateHotKeys,
     RedetectMinimap,
     PlayerState(PlayerState),
     MinimapFrame(Option<(Vec<u8>, usize, usize)>),
+    MinimapPlatformsBound(Option<Bound>),
+    KeyReceiver(broadcast::Receiver<KeyBinding>),
 }
 
 pub(crate) trait RequestHandler {
     fn on_rotate_actions(&mut self, halting: bool);
+
+    fn on_rotate_actions_halting(&self) -> bool;
 
     fn on_create_minimap(&self, name: String) -> Option<Minimap>;
 
@@ -101,11 +116,17 @@ pub(crate) trait RequestHandler {
 
     fn on_update_configuration(&mut self, config: Configuration);
 
+    fn on_update_hot_keys(&mut self, hot_keys: HotKeys);
+
     fn on_redetect_minimap(&mut self);
 
-    fn on_player_state(&mut self) -> PlayerState;
+    fn on_player_state(&self) -> PlayerState;
 
-    fn on_minimap_frame(&mut self) -> Option<(Vec<u8>, usize, usize)>;
+    fn on_minimap_frame(&self) -> Option<(Vec<u8>, usize, usize)>;
+
+    fn on_minimap_platforms_bound(&self) -> Option<Bound>;
+
+    fn on_key_receiver(&self) -> broadcast::Receiver<KeyBinding>;
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +144,13 @@ pub async fn rotate_actions(halting: bool) {
     expect_unit_variant!(
         request(Request::RotateActions(halting)).await,
         Response::RotateActions
+    )
+}
+
+pub async fn rotate_actions_halting() -> bool {
+    expect_value_variant!(
+        request(Request::RotateActionsHalting).await,
+        Response::RotateActionsHalting
     )
 }
 
@@ -147,6 +175,13 @@ pub async fn update_configuration(config: Configuration) {
     )
 }
 
+pub async fn update_hot_keys(hot_keys: HotKeys) {
+    expect_unit_variant!(
+        request(Request::UpdateHotKeys(hot_keys)).await,
+        Response::UpdateHotKeys
+    )
+}
+
 pub async fn redetect_minimap() {
     expect_unit_variant!(
         request(Request::RedetectMinimap).await,
@@ -163,12 +198,26 @@ pub async fn minimap_frame() -> Result<(Vec<u8>, usize, usize)> {
         .ok_or(anyhow!("minimap frame not found"))
 }
 
+pub async fn minimap_platforms_bound() -> Option<Bound> {
+    expect_value_variant!(
+        request(Request::MinimapPlatformsBound).await,
+        Response::MinimapPlatformsBound
+    )
+}
+
+pub async fn key_receiver() -> broadcast::Receiver<KeyBinding> {
+    expect_value_variant!(request(Request::KeyReceiver).await, Response::KeyReceiver)
+}
+
 pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
     if let Ok((request, sender)) = LazyLock::force(&REQUESTS).1.lock().unwrap().try_recv() {
         let result = match request {
             Request::RotateActions(halting) => {
                 handler.on_rotate_actions(halting);
                 Response::RotateActions
+            }
+            Request::RotateActionsHalting => {
+                Response::RotateActionsHalting(handler.on_rotate_actions_halting())
             }
             Request::CreateMinimap(name) => {
                 Response::CreateMinimap(handler.on_create_minimap(name))
@@ -181,12 +230,20 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
                 handler.on_update_configuration(config);
                 Response::UpdateConfiguration
             }
+            Request::UpdateHotKeys(hot_keys) => {
+                handler.on_update_hot_keys(hot_keys);
+                Response::UpdateHotKeys
+            }
             Request::RedetectMinimap => {
                 handler.on_redetect_minimap();
                 Response::RedetectMinimap
             }
             Request::PlayerState => Response::PlayerState(handler.on_player_state()),
             Request::MinimapFrame => Response::MinimapFrame(handler.on_minimap_frame()),
+            Request::MinimapPlatformsBound => {
+                Response::MinimapPlatformsBound(handler.on_minimap_platforms_bound())
+            }
+            Request::KeyReceiver => Response::KeyReceiver(handler.on_key_receiver()),
         };
         let _ = sender.send(result);
     }

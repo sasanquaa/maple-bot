@@ -2,14 +2,14 @@ use thiserror::Error;
 
 #[derive(Error, PartialEq, Clone, Debug)]
 pub enum Error {
-    #[error("at least either class or title must be provided")]
-    InvalidHandle,
     #[error("the current window size is invalid")]
     InvalidWindowSize,
     #[error("key or click was not sent due to the window not focused or other error")]
     NotSent,
     #[error("window matching provided class and title cannot be found")]
     WindowNotFound,
+    #[error("key not found")]
+    KeyNotFound,
     #[error("win32 API error {0}: {1}")]
     Win32(u32, String),
 }

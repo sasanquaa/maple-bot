@@ -86,7 +86,11 @@ pub fn Configuration(
                 options: config_names(),
                 selected: config_view().name,
             }
-            ConfigHeader { text: "Key Bindings", disabled: is_disabled() }
+            ConfigHeader {
+                text: "Key Bindings",
+                disabled: is_disabled(),
+                class: "mt-2",
+            }
             div { class: "space-y-1",
                 KeyBindingConfigurationInput {
                     label: ROPE_LIFT,
@@ -397,8 +401,9 @@ fn ConfigEnumSelect<
     }
 }
 
+// FIXME: pub for hot_keys
 #[component]
-fn KeyBindingConfigurationInput(
+pub fn KeyBindingConfigurationInput(
     label: &'static str,
     label_active: Signal<Option<&'static str>>,
     is_disabled: bool,

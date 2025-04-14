@@ -7,6 +7,7 @@ version = "0.3.0"
 edition = "2024"
 
 [workspace.dependencies]
+strum = { version = "0.27", features = ["derive"] }
 serde = { version = "1.0.138", features = ["derive"] }
 tokio = { version = "1.43.1", default-features = false, features = [
     "sync",

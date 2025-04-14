@@ -29,6 +29,7 @@ pub fn Rotations(
                 li { "Action in preset with Any condition is ignored when auto mobbing enabled" }
                 li { "Mob detected outside of bound is ignored" }
                 li { "Auto mobbing X,Y origin is top-left of minimap" }
+                li { "Overrides the below bound if auto mobbing bound by platforms enabled" }
             }
             div { class: "h-2 border-b border-gray-300 mb-2" }
             EnumSelect {

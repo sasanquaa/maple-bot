@@ -6,7 +6,7 @@ use std::{
 };
 
 use backend::{
-    Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
+    Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, HotKeys,
     IntoEnumIterator, LinkKeyBinding, Minimap, ParseError, Position, upsert_map,
 };
 use dioxus::prelude::*;
@@ -31,6 +31,7 @@ const INPUT_CLASS: &str = "w-22 h-full border border-gray-300 rounded text-xs te
 #[component]
 pub fn Actions(
     minimap: Signal<Option<Minimap>>,
+    hot_keys: ReadOnlySignal<Option<HotKeys>>,
     preset: Signal<Option<String>>,
     copy_position: ReadOnlySignal<Option<(i32, i32)>>,
 ) -> Element {
@@ -100,7 +101,12 @@ pub fn Actions(
                     }
                 },
                 TAB_PLATFORMS => rsx! {
-                    Platforms { minimap, on_save: save_minimap, copy_position }
+                    Platforms {
+                        minimap,
+                        on_save: save_minimap,
+                        copy_position,
+                        hot_keys,
+                    }
                 },
                 _ => unreachable!(),
             }

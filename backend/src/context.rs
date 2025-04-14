@@ -13,13 +13,15 @@ use log::info;
 #[cfg(test)]
 use mockall::automock;
 use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
-use platforms::windows::{self, Capture, Error, Handle, KeyKind, Keys};
+use platforms::windows::{self, Capture, Error, Handle, KeyKind, KeyReceiver, Keys};
 use strum::IntoEnumIterator;
+use tokio::sync::broadcast;
 
 use crate::{
-    Action, ActionCondition, ActionKey, KeyBindingConfiguration, RequestHandler, RotatorMode,
+    Action, ActionCondition, ActionKey, Bound, HotKeys, KeyBindingConfiguration, RequestHandler,
+    RotatorMode,
     buff::{Buff, BuffKind, BuffState},
-    database::{Configuration, KeyBinding, PotionMode, query_configs},
+    database::{Configuration, KeyBinding, PotionMode},
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
@@ -134,12 +136,14 @@ impl Default for Context {
 struct DefaultRequestHandler<'a> {
     context: &'a mut Context,
     config: &'a mut Configuration,
+    hot_keys: &'a mut HotKeys,
     buffs: &'a mut Vec<(usize, KeyBinding)>,
     actions: &'a mut Vec<Action>,
     rotator: &'a mut Rotator,
     detector: &'a CachedDetector,
     player: &'a mut PlayerState,
     minimap: &'a mut MinimapState,
+    key_sender: &'a broadcast::Sender<KeyBinding>,
 }
 
 impl DefaultRequestHandler<'_> {
@@ -159,11 +163,17 @@ impl DefaultRequestHandler<'_> {
 
 impl RequestHandler for DefaultRequestHandler<'_> {
     fn on_rotate_actions(&mut self, halting: bool) {
-        self.context.halting = halting;
-        if halting {
-            self.rotator.reset_queue();
-            self.player.abort_actions();
+        if self.minimap.data().is_some() {
+            self.context.halting = halting;
+            if halting {
+                self.rotator.reset_queue();
+                self.player.abort_actions();
+            }
         }
+    }
+
+    fn on_rotate_actions_halting(&self) -> bool {
+        self.context.halting
     }
 
     fn on_create_minimap(&self, name: String) -> Option<crate::Minimap> {
@@ -190,6 +200,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         self.player.config.auto_mob_platforms_pathing = minimap.auto_mob_platforms_pathing;
         self.player.config.auto_mob_platforms_pathing_up_jump_only =
             minimap.auto_mob_platforms_pathing_up_jump_only;
+        self.player.config.auto_mob_platforms_bound = minimap.auto_mob_platforms_bound;
         *self.actions = preset
             .and_then(|preset| minimap.actions.get(&preset).cloned())
             .unwrap_or_default();
@@ -222,11 +233,15 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         );
     }
 
+    fn on_update_hot_keys(&mut self, hot_keys: HotKeys) {
+        *self.hot_keys = hot_keys;
+    }
+
     fn on_redetect_minimap(&mut self) {
         self.context.minimap = Minimap::Detecting;
     }
 
-    fn on_player_state(&mut self) -> crate::PlayerState {
+    fn on_player_state(&self) -> crate::PlayerState {
         crate::PlayerState {
             position: self.player.last_known_pos.map(|pos| (pos.x, pos.y)),
             health: self.player.health,
@@ -248,12 +263,24 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         }
     }
 
-    fn on_minimap_frame(&mut self) -> Option<(Vec<u8>, usize, usize)> {
+    fn on_minimap_frame(&self) -> Option<(Vec<u8>, usize, usize)> {
         extract_minimap(self.context, self.detector.mat())
+    }
+
+    fn on_minimap_platforms_bound(&self) -> Option<Bound> {
+        if let Minimap::Idle(idle) = self.context.minimap {
+            idle.platforms_bound.map(|bound| bound.into())
+        } else {
+            None
+        }
+    }
+
+    fn on_key_receiver(&self) -> broadcast::Receiver<KeyBinding> {
+        self.key_sender.subscribe()
     }
 }
 
-pub fn start_update_loop() {
+pub fn init() {
     static LOOPING: AtomicBool = AtomicBool::new(false);
 
     if LOOPING
@@ -286,10 +313,12 @@ pub fn start_update_loop() {
 
 #[inline]
 fn update_loop() {
-    let handle = Handle::new(Some("MapleStoryClass"), None).unwrap();
+    let handle = Handle::new("MapleStoryClass");
     let keys = DefaultKeySender {
         keys: Keys::new(handle),
     };
+    let key_sender = broadcast::channel::<KeyBinding>(1).0; // Callback to UI
+    let mut key_receiver = KeyReceiver::new(handle);
     let mut capture = Capture::new(handle);
     let mut player_state = PlayerState::default();
     let mut minimap_state = MinimapState::default();
@@ -301,7 +330,7 @@ fn update_loop() {
         .collect::<Vec<BuffState>>();
     let mut rotator = Rotator::default();
     let mut actions = Vec::<Action>::new();
-    let mut config = query_configs().unwrap().into_iter().next().unwrap();
+    let mut config = Configuration::default(); // Override by UI
     let mut buffs = config_buffs(&config);
     let mut context = Context {
         keys: Box::leak(Box::new(keys)),
@@ -311,6 +340,7 @@ fn update_loop() {
         buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
         halting: true,
     };
+    let mut hot_keys = HotKeys::default(); // Override by UI
 
     loop_with_fps(FPS, || {
         let Ok(mat) = capture.grab().map(OwnedMat::new) else {
@@ -336,15 +366,30 @@ fn update_loop() {
         let mut handler = DefaultRequestHandler {
             context: &mut context,
             config: &mut config,
+            hot_keys: &mut hot_keys,
             buffs: &mut buffs,
             actions: &mut actions,
             rotator: &mut rotator,
             detector: &detector,
             player: &mut player_state,
             minimap: &mut minimap_state,
+            key_sender: &key_sender,
         };
         poll_request(&mut handler);
+        poll_key(&mut handler, &mut key_receiver);
     });
+}
+
+#[inline]
+fn poll_key(handler: &mut DefaultRequestHandler, receiver: &mut KeyReceiver) {
+    let Some(received_key) = receiver.try_recv() else {
+        return;
+    };
+    let KeyBindingConfiguration { key, enabled } = handler.hot_keys.toggle_actions_key;
+    if enabled && KeyKind::from(key) == received_key {
+        handler.on_rotate_actions(!handler.context.halting);
+    }
+    let _ = handler.key_sender.send(received_key.into());
 }
 
 #[inline]

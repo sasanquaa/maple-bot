@@ -4,7 +4,7 @@ use std::{
     collections::{BinaryHeap, HashMap},
 };
 
-use opencv::core::Point;
+use opencv::core::{Point, Rect};
 
 use crate::array::Array;
 
@@ -44,6 +44,24 @@ impl Ord for VisitingPlatform {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.score.cmp(&other.score)
     }
+}
+
+pub fn find_platforms_bound(minimap: Rect, platforms: &[PlatformWithNeighbors]) -> Option<Rect> {
+    platforms
+        .iter()
+        .map(|platform| {
+            Rect::new(
+                platform.inner.xs.start,
+                minimap.height - platform.inner.y,
+                platform.inner.xs.end - platform.inner.xs.start,
+                1,
+            )
+        })
+        .reduce(|acc, cur| acc | cur)
+        .map(|bound| {
+            // Increase top edge
+            Rect::new(bound.x, bound.y - 3, bound.width, bound.height + 3)
+        })
 }
 
 pub fn find_neighbors(

@@ -1,6 +1,8 @@
 use std::ops::DerefMut;
 
-use backend::{MAX_PLATFORMS_COUNT, Minimap, Platform};
+use backend::{
+    HotKeys, KeyBindingConfiguration, MAX_PLATFORMS_COUNT, Minimap, Platform, key_receiver,
+};
 use dioxus::prelude::*;
 
 use crate::{
@@ -13,6 +15,7 @@ const DIV_CLASS: &str = "flex h-6 items-center space-x-2";
 #[component]
 pub fn Platforms(
     minimap: Signal<Option<Minimap>>,
+    hot_keys: ReadOnlySignal<Option<HotKeys>>,
     on_save: EventHandler<Minimap>,
     copy_position: ReadOnlySignal<Option<(i32, i32)>>,
 ) -> Element {
@@ -20,6 +23,44 @@ pub fn Platforms(
     let add_platform_disabled = use_memo(move || {
         let minimap = minimap();
         minimap.is_none() || minimap.unwrap().platforms.len() >= MAX_PLATFORMS_COUNT
+    });
+
+    use_future(move || async move {
+        let mut key_receiver = key_receiver().await;
+        loop {
+            let received_key = key_receiver.recv().await.unwrap();
+            if minimap.peek().is_none() {
+                continue;
+            }
+            if let Some((hot_keys, pos)) = hot_keys.peek().clone().zip(*copy_position.peek()) {
+                let KeyBindingConfiguration { key, enabled } = hot_keys.platform_start_key;
+                if enabled && key == received_key {
+                    editing.with_mut(|platform| {
+                        platform.x_start = pos.0;
+                        platform.y = pos.1;
+                    });
+                    continue;
+                }
+
+                let KeyBindingConfiguration { key, enabled } = hot_keys.platform_end_key;
+                if enabled && key == received_key {
+                    editing.with_mut(|platform| {
+                        platform.x_end = pos.0;
+                        platform.y = pos.1;
+                    });
+                    continue;
+                }
+
+                let KeyBindingConfiguration { key, enabled } = hot_keys.platform_add_key;
+                if enabled && key == received_key {
+                    if let Some(minimap) = minimap.write().deref_mut() {
+                        minimap.platforms.push(*editing.peek());
+                        on_save(minimap.clone());
+                    }
+                    continue;
+                }
+            }
+        }
     });
 
     rsx! {
@@ -73,6 +114,17 @@ pub fn Platforms(
                 value: minimap()
                     .map(|data| data.auto_mob_platforms_pathing_up_jump_only)
                     .unwrap_or_default(),
+            }
+            PlatformCheckbox {
+                label: "Auto Mobbing Bound By Platforms",
+                disabled: minimap().is_none(),
+                on_input: move |bound| {
+                    if let Some(minimap) = minimap.write().deref_mut() {
+                        minimap.auto_mob_platforms_bound = bound;
+                        on_save(minimap.clone());
+                    }
+                },
+                value: minimap().map(|data| data.auto_mob_platforms_bound).unwrap_or_default(),
             }
             div { class: "flex items-center justify-between text-xs text-gray-700 border-b border-gray-300 mt-3 mb-2 data-[disabled]:text-gray-400",
                 p { class: "w-26", "X Start" }

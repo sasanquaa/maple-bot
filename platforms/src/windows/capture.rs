@@ -2,8 +2,6 @@ use std::ffi::c_void;
 use std::ptr;
 use std::slice;
 
-use windows::Win32::Foundation::ERROR_INVALID_HANDLE;
-use windows::Win32::Foundation::ERROR_INVALID_WINDOW_HANDLE;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Gdi::BI_BITFIELDS;
@@ -16,6 +14,7 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 use windows::core::Owned;
 
+use super::HandleCell;
 use super::error::Error;
 use super::handle::Handle;
 
@@ -56,31 +55,25 @@ struct Bitmap {
 
 #[derive(Debug)]
 pub struct Capture {
-    handle: Handle,
+    handle: HandleCell,
     bitmap: Option<Bitmap>,
 }
 
 impl Capture {
     pub fn new(handle: Handle) -> Self {
         Self {
-            handle,
+            handle: HandleCell::new(handle),
             bitmap: None,
         }
     }
 
     #[inline]
     pub fn grab(&mut self) -> Result<Frame, Error> {
-        let result = self.grab_inner();
-        if let Err(Error::Win32(code, _)) = result {
-            if code == ERROR_INVALID_HANDLE.0 || code == ERROR_INVALID_WINDOW_HANDLE.0 {
-                self.handle.reset_inner();
-            }
-        }
-        result
+        self.grab_inner()
     }
 
     fn grab_inner(&mut self) -> Result<Frame, Error> {
-        let handle = self.handle.as_inner()?;
+        let handle = self.handle.as_inner().ok_or(Error::WindowNotFound)?;
         let rect = get_rect(handle)?;
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;

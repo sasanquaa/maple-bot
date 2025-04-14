@@ -7,7 +7,9 @@ use crate::{
     context::{Context, Contextual, ControlFlow},
     database::Minimap as MinimapData,
     detect::Detector,
-    pathing::{MAX_PLATFORMS_COUNT, Platform, PlatformWithNeighbors, find_neighbors},
+    pathing::{
+        MAX_PLATFORMS_COUNT, Platform, PlatformWithNeighbors, find_neighbors, find_platforms_bound,
+    },
     player::{DOUBLE_JUMP_THRESHOLD, GRAPPLING_MAX_THRESHOLD, JUMP_THRESHOLD, Player},
     task::{Task, Update, update_task_repeatable},
 };
@@ -62,6 +64,7 @@ pub struct MinimapIdle {
     // initially it is only 8 until it crashes at Henesys with 10 portals smh
     pub portals: Array<Rect, 16>,
     pub platforms: Array<PlatformWithNeighbors, MAX_PLATFORMS_COUNT>,
+    pub platforms_bound: Option<Rect>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -114,6 +117,11 @@ fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) 
     else {
         return Minimap::Detecting;
     };
+    let (platforms, platforms_bound) = state
+        .data
+        .as_ref()
+        .map(|data| platforms_from_data(bbox, data))
+        .unwrap_or_default();
     state.update_platforms = false;
     state.rune_task = None;
     state.has_elite_boss_task = None;
@@ -124,11 +132,8 @@ fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) 
         rune: None,
         has_elite_boss: false,
         portals: Array::new(),
-        platforms: state
-            .data
-            .as_ref()
-            .map(platforms_from_data)
-            .unwrap_or_default(),
+        platforms,
+        platforms_bound,
     })
 }
 
@@ -148,6 +153,7 @@ fn update_idle_context(
         has_elite_boss,
         portals,
         mut platforms,
+        mut platforms_bound,
         ..
     } = idle;
     let tl_pixel = pixel_at(detector.mat(), anchors.tl.0)?;
@@ -170,8 +176,11 @@ fn update_idle_context(
     let portals = update_portals_task(state, detector, portals, bbox);
     // TODO: any better way to read persistent state in other contextual?
     if state.update_platforms {
+        let (updated_platforms, updated_bound) =
+            platforms_from_data(bbox, state.data.as_mut().unwrap());
         state.update_platforms = false;
-        platforms = platforms_from_data(state.data.as_mut().unwrap());
+        platforms = updated_platforms;
+        platforms_bound = updated_bound
     }
 
     Some(Minimap::Idle(MinimapIdle {
@@ -180,6 +189,7 @@ fn update_idle_context(
         has_elite_boss,
         portals,
         platforms,
+        platforms_bound,
         ..idle
     }))
 }
@@ -250,8 +260,11 @@ fn update_portals_task(
     }
 }
 
-fn platforms_from_data(minimap: &MinimapData) -> Array<PlatformWithNeighbors, 24> {
-    Array::from_iter(find_neighbors(
+fn platforms_from_data(
+    bbox: Rect,
+    minimap: &MinimapData,
+) -> (Array<PlatformWithNeighbors, 24>, Option<Rect>) {
+    let platforms = Array::from_iter(find_neighbors(
         &minimap
             .platforms
             .iter()
@@ -261,7 +274,9 @@ fn platforms_from_data(minimap: &MinimapData) -> Array<PlatformWithNeighbors, 24
         DOUBLE_JUMP_THRESHOLD,
         JUMP_THRESHOLD,
         GRAPPLING_MAX_THRESHOLD,
-    ))
+    ));
+    let bound = find_platforms_bound(bbox, &platforms);
+    (platforms, bound)
 }
 
 #[inline]
@@ -406,6 +421,7 @@ mod tests {
             has_elite_boss: false,
             portals: Array::new(),
             platforms: Array::new(),
+            platforms_bound: None,
         };
 
         let minimap = advance_task(Minimap::Idle(idle), &detector, &mut state).await;
