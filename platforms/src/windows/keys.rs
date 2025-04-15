@@ -40,13 +40,15 @@ use windows::{
 use super::{HandleCell, error::Error, handle::Handle};
 
 static KEY_CHANNEL: LazyLock<Sender<KeyKind>> = LazyLock::new(|| broadcast::channel(1).0);
+static PROCESS_ID: LazyLock<u32> = LazyLock::new(|| unsafe { GetCurrentProcessId() });
 
 pub(crate) fn init() {
     unsafe extern "system" fn keyboard_ll(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         if code as u32 == HC_ACTION && wparam.0 as u32 == WM_KEYUP {
             let key = unsafe { ptr::read(lparam.0 as *const KBDLLHOOKSTRUCT) };
             let vkey = unsafe { mem::transmute::<u16, VIRTUAL_KEY>(key.vkCode as u16) };
-            if let Ok(key) = vkey.try_into() {
+            let ignore = key.dwExtraInfo == *PROCESS_ID as usize;
+            if !ignore && let Ok(key) = vkey.try_into() {
                 let _ = KEY_CHANNEL.send(key);
             }
         }
@@ -72,7 +74,6 @@ pub(crate) fn init() {
 pub struct KeyReceiver {
     handle: HandleCell,
     rx: Receiver<KeyKind>,
-    pid: u32,
 }
 
 impl KeyReceiver {
@@ -80,7 +81,6 @@ impl KeyReceiver {
         Self {
             handle: HandleCell::new(handle),
             rx: KEY_CHANNEL.subscribe(),
-            pid: unsafe { GetCurrentProcessId() },
         }
     }
 
@@ -107,7 +107,7 @@ impl KeyReceiver {
         let fg = unsafe { GetForegroundWindow() };
         let mut fg_pid = 0;
         unsafe { GetWindowThreadProcessId(fg, Some(&raw mut fg_pid)) };
-        fg_pid == self.pid || fg == handle
+        fg_pid == *PROCESS_ID || fg == handle
     }
 }
 
@@ -481,6 +481,7 @@ fn to_input(key: VIRTUAL_KEY, scan_code: u16, is_extended: bool, is_up: bool) ->
                 wVk: key,
                 wScan: scan_code,
                 dwFlags: is_extended | is_up,
+                dwExtraInfo: *PROCESS_ID as usize,
                 ..KEYBDINPUT::default()
             },
         },

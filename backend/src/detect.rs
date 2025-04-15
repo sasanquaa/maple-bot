@@ -680,13 +680,13 @@ fn detect_mobs(
     // SAFETY: 0..result.rows() is within Mat bounds
     let points = (0..result.rows())
         .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
-        .filter(|pred| pred[4] > 0.8)
+        .filter(|pred| pred[4] >= 0.5)
         .map(|pred| remap_from_yolo(pred, size, w_ratio, h_ratio))
         .filter_map(|bbox| to_minimap_coordinate(bbox, minimap, bound, player, size))
         .collect::<Vec<_>>();
     // let bboxes = (0..result.rows())
     //     .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
-    //     .filter_map(|pred| if pred[4] > 0.8 { Some(pred) } else { None })
+    //     .filter_map(|pred| if pred[4] > 0.5 { Some(pred) } else { None })
     //     .map(|pred| remap_from_yolo(pred, size, w_ratio, h_ratio))
     //     .collect::<Vec<_>>();
     // let points = bboxes

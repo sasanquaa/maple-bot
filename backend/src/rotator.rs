@@ -9,7 +9,7 @@ use anyhow::Result;
 use log::debug;
 use opencv::core::Point;
 use ordered_hash_map::OrderedHashMap;
-use rand::seq::IndexedRandom;
+use rand::seq::IteratorRandom;
 
 use crate::{
     ActionKeyDirection, ActionKeyWith, AutoMobbing, KeyBinding, Position, RotationMode,
@@ -18,7 +18,7 @@ use crate::{
     database::{Action, ActionCondition, ActionKey, ActionMove},
     detect::Detector,
     minimap::Minimap,
-    player::{Player, PlayerState},
+    player::{GRAPPLING_THRESHOLD, Player, PlayerState},
     player_actions::{PlayerAction, PlayerActionAutoMob, PlayerActionKey},
     skill::Skill,
     task::{Task, Update, update_task_repeatable},
@@ -165,7 +165,7 @@ impl Rotator {
                     );
                 }
                 ActionCondition::Any => {
-                    if matches!(self.normal_rotate_mode, RotatorMode::AutoMobbing { .. }) {
+                    if matches!(self.normal_rotate_mode, RotatorMode::AutoMobbing(_)) {
                         continue;
                     }
                     self.normal_actions
@@ -437,7 +437,20 @@ impl Rotator {
         else {
             return;
         };
-        let Some(point) = points.choose(&mut rand::rng()) else {
+        let Some(point) = points
+            .iter()
+            .filter(|point| {
+                let y = idle.bbox.height - point.y;
+                y <= pos.y || (y - pos.y).abs() <= GRAPPLING_THRESHOLD
+            })
+            .choose(&mut rand::rng())
+            .copied()
+            .or_else(|| {
+                let point = player.auto_mob_pathing_point(idle.bbox);
+                debug!(target: "rotator", "auto mob use pathing point {point:?}");
+                point
+            })
+        else {
             return;
         };
         player.set_normal_action(

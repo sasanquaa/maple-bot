@@ -80,6 +80,6 @@ fn is_class_matched(handle: HWND, class: &'static str) -> bool {
     }
     OsString::from_wide(&buf[..count])
         .to_str()
-        .map(|s| s == class)
+        .map(|s| s.starts_with(class))
         .unwrap_or(false)
 }

@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+use std::{cmp::Ordering, collections::HashMap};
 
 use anyhow::Result;
 use log::{debug, info};
 use opencv::core::{Point, Rect};
 use platforms::windows::KeyKind;
+use rand::seq::IteratorRandom;
 use strum::Display;
 
 use crate::{
@@ -48,7 +49,7 @@ const FALLING_THRESHOLD: i32 = 4;
 pub const JUMP_THRESHOLD: i32 = 7;
 
 /// Minimum y distance from the destination required to perform a grappling hook
-const GRAPPLING_THRESHOLD: i32 = 26;
+pub const GRAPPLING_THRESHOLD: i32 = 26;
 
 /// Maximum y distance from the destination required to perform a grappling hook
 pub const GRAPPLING_MAX_THRESHOLD: i32 = 41;
@@ -58,14 +59,17 @@ pub const GRAPPLING_MAX_THRESHOLD: i32 = 41;
 /// always a y that has platform(s)
 const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 4;
 
+/// The maximum of number points for auto mobbing to periodically move to
+const AUTO_MOB_MAX_PATHING_POINTS: usize = 5;
+
 /// The acceptable y range above and below the detected mob position when matched with a reachable y
-const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 8;
+const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 10;
 
 /// The minimum x distance required to transition to [`Player::UseKey`] in auto mob action
-const AUTO_MOB_USE_KEY_X_THRESHOLD: i32 = 16;
+const AUTO_MOB_USE_KEY_X_THRESHOLD: i32 = 20;
 
 /// The minimum y distance required to transition to [`Player::UseKey`] in auto mob action
-const AUTO_MOB_USE_KEY_Y_THRESHOLD: i32 = JUMP_THRESHOLD;
+const AUTO_MOB_USE_KEY_Y_THRESHOLD: i32 = 8;
 
 /// The maximum number of times rune solving can fail before transition to
 /// `Player::CashShopThenExit`
@@ -108,6 +112,7 @@ pub struct PlayerConfiguration {
 ///
 /// TODO: Should have a separate struct or trait for Rotator to access PlayerState instead direct
 /// TODO: access
+/// TODO: counter should not be u32?
 #[derive(Debug, Default)]
 pub struct PlayerState {
     pub config: PlayerConfiguration,
@@ -172,7 +177,13 @@ pub struct PlayerState {
     auto_mob_reachable_y_map: HashMap<i32, u32>,
     /// The matched reachable y and also the key in [`Self::auto_mob_reachable_y_map`]
     auto_mob_reachable_y: Option<i32>,
+    /// Stores points to periodically move to when auto mobbing
+    ///
+    /// Helps changing location for detecting more mobs. It is populated in terminal state of
+    /// [`Player::UseKey`].
+    auto_mob_pathing_points: Vec<Point>,
     /// Tracks whether movement-related actions do not change the player position after a while.
+    ///
     /// Resets when a limit is reached (for unstucking) or position did change.
     unstuck_counter: u32,
     /// The number of consecutive times player transtioned to [`Player::Unstucking`]
@@ -199,6 +210,9 @@ pub struct PlayerState {
 }
 
 impl PlayerState {
+    /// Resets the player state except for configuration
+    ///
+    /// Used whenever minimap data or configuration changes
     #[inline]
     pub fn reset(&mut self) {
         *self = PlayerState {
@@ -208,11 +222,13 @@ impl PlayerState {
         };
     }
 
+    /// The normal action name for displaying to UI
     #[inline]
     pub fn normal_action_name(&self) -> Option<String> {
         self.normal_action.map(|action| action.to_string())
     }
 
+    /// The normal action id provided by [`Rotator`]
     #[inline]
     pub fn normal_action_id(&self) -> Option<u32> {
         self.has_normal_action().then_some(self.normal_action_id)
@@ -223,6 +239,7 @@ impl PlayerState {
         self.normal_action.is_some()
     }
 
+    /// Sets the normal action to `id` and `action` and resets to [`Player::Idle`] on next update
     #[inline]
     pub fn set_normal_action(&mut self, id: u32, action: PlayerAction) {
         self.reset_to_idle_next_update = true;
@@ -230,11 +247,13 @@ impl PlayerState {
         self.normal_action = Some(action);
     }
 
+    /// The priority action name for displaying to UI
     #[inline]
     pub fn priority_action_name(&self) -> Option<String> {
         self.priority_action.map(|action| action.to_string())
     }
 
+    /// The priority action id provided by [`Rotator`]
     #[inline]
     pub fn priority_action_id(&self) -> Option<u32> {
         self.has_priority_action()
@@ -251,6 +270,7 @@ impl PlayerState {
         let _ = self.replace_priority_action(id, action);
     }
 
+    /// Removes the current priority action and returns its id if there is one.
     #[inline]
     pub fn take_priority_action(&mut self) -> Option<u32> {
         self.reset_to_idle_next_update = true;
@@ -260,6 +280,8 @@ impl PlayerState {
             .then_some(self.priority_action_id)
     }
 
+    /// Replaces the current priority action with `id` and `action` and returns the previous
+    /// action id if there is one.
     #[inline]
     pub fn replace_priority_action(&mut self, id: u32, action: PlayerAction) -> Option<u32> {
         let prev_id = self.priority_action_id;
@@ -305,6 +327,32 @@ impl PlayerState {
         matches!(self.normal_action, Some(PlayerAction::AutoMob(_))) && !self.has_priority_action()
     }
 
+    /// Picks a pathing point in auto mobbing to move to
+    #[inline]
+    pub fn auto_mob_pathing_point(&mut self, minimap: Rect) -> Option<Point> {
+        let point = self
+            .auto_mob_pathing_points
+            .iter()
+            .enumerate()
+            .map(|(i, point)| (i, *point))
+            .choose(&mut rand::rng());
+        if let Some((i, _)) = point {
+            // I don't know guys
+            // Just want variations
+            if rand::random_bool(0.5) {
+                self.auto_mob_pathing_points.remove(i);
+            }
+        }
+        point
+            .map(|(_, point)| Point::new(point.x, minimap.height - point.y))
+            .or_else(|| {
+                self.auto_mob_reachable_y_map
+                    .keys()
+                    .min()
+                    .map(|y| Point::new(minimap.width / 2, minimap.height - y))
+            })
+    }
+
     /// Whether the auto mob reachable y requires "solidifying"
     #[inline]
     fn auto_mob_reachable_y_require_update(&self) -> bool {
@@ -320,7 +368,7 @@ impl PlayerState {
     #[inline]
     fn falling_threshold(&self, is_intermediate: bool) -> i32 {
         if self.has_auto_mob_action_only() || is_intermediate {
-            AUTO_MOB_REACHABLE_Y_THRESHOLD
+            JUMP_THRESHOLD
         } else {
             FALLING_THRESHOLD
         }
@@ -341,6 +389,7 @@ impl PlayerState {
 
     #[inline]
     fn should_disable_grappling(&self) -> bool {
+        // FIXME: ....
         (self.has_auto_mob_action_only()
             && self.config.auto_mob_platforms_pathing
             && self.config.auto_mob_platforms_pathing_up_jump_only)
@@ -359,6 +408,29 @@ enum LastMovement {
     Grappling,
     UpJumping,
     Jumping,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MovingIntermediates {
+    current: usize,
+    inner: Array<(Point, bool), 16>,
+}
+
+impl MovingIntermediates {
+    #[inline]
+    fn has_next(&self) -> bool {
+        self.current < self.inner.len()
+    }
+
+    #[inline]
+    fn next(&mut self) -> Option<(Point, bool)> {
+        if self.current >= self.inner.len() {
+            return None;
+        }
+        let current = self.current;
+        self.current += 1;
+        Some(self.inner[current])
+    }
 }
 
 /// A contextual state that stores moving-related data
@@ -384,7 +456,7 @@ pub struct Moving {
     /// Intermediate points to move to before reaching the destination.
     ///
     /// When [`Some`], the last point is the destination.
-    intermediates: Option<(usize, Array<(Point, bool), 16>)>,
+    intermediates: Option<MovingIntermediates>,
 }
 
 /// Convenient implementations
@@ -394,7 +466,7 @@ impl Moving {
         pos: Point,
         dest: Point,
         exact: bool,
-        intermediates: Option<(usize, Array<(Point, bool), 16>)>,
+        intermediates: Option<MovingIntermediates>,
     ) -> Self {
         Self {
             pos,
@@ -435,7 +507,7 @@ impl Moving {
     #[inline]
     fn last_destination(&self) -> Point {
         if self.is_destination_intermediate() {
-            let points = self.intermediates.unwrap().1;
+            let points = self.intermediates.unwrap().inner;
             points[points.len() - 1].0
         } else {
             self.dest
@@ -445,7 +517,27 @@ impl Moving {
     #[inline]
     fn is_destination_intermediate(&self) -> bool {
         self.intermediates
-            .is_some_and(|(index, points)| index < points.len())
+            .is_some_and(|intermediates| intermediates.has_next())
+    }
+
+    /// Determines whether auto mobbing intermediate destination can be skipped
+    #[inline]
+    fn auto_mob_can_skip_current_destination(&self, state: &PlayerState) -> bool {
+        state.has_auto_mob_action_only()
+            && self.intermediates.is_some_and(|intermediates| {
+                if !intermediates.has_next() {
+                    return false;
+                }
+                let pos = state.last_known_pos.unwrap();
+                let (x_distance, _) = x_distance_direction(self.dest, pos);
+                let (y_distance, y_direction) = y_distance_direction(self.dest, pos);
+                let y_skippable = (matches!(state.last_movement, Some(LastMovement::Falling))
+                    && y_direction >= 0)
+                    || (matches!(state.last_movement, Some(LastMovement::UpJumping))
+                        && y_direction <= 0)
+                    || y_distance.abs() < JUMP_THRESHOLD;
+                x_distance < DOUBLE_JUMP_THRESHOLD && y_skippable
+            })
     }
 }
 
@@ -487,6 +579,10 @@ pub struct UseKey {
 impl UseKey {
     #[inline]
     fn from_action(action: PlayerAction) -> Self {
+        UseKey::from_action_pos(action, None)
+    }
+
+    fn from_action_pos(action: PlayerAction, pos: Option<Point>) -> Self {
         match action {
             PlayerAction::Key(PlayerActionKey {
                 key,
@@ -513,7 +609,14 @@ impl UseKey {
                 link_key: None,
                 count: mob.count,
                 current_count: 0,
-                direction: ActionKeyDirection::Any,
+                direction: match pos {
+                    Some(pos) => match pos.x.cmp(&mob.position.x) {
+                        Ordering::Less => ActionKeyDirection::Right,
+                        Ordering::Equal => ActionKeyDirection::Any,
+                        Ordering::Greater => ActionKeyDirection::Left,
+                    },
+                    None => unreachable!(),
+                },
                 with: ActionKeyWith::Any,
                 wait_before_use_ticks: mob.wait_before_ticks,
                 wait_after_use_ticks: mob.wait_after_ticks,
@@ -553,7 +656,7 @@ pub enum Player {
     Idle,
     UseKey(UseKey),
     /// Movement-related coordinator state
-    Moving(Point, bool, Option<(usize, Array<(Point, bool), 16>)>),
+    Moving(Point, bool, Option<MovingIntermediates>),
     /// Performs walk or small adjustment x-wise action
     Adjusting(Moving),
     /// Performs double jump action
@@ -795,23 +898,39 @@ fn update_positional_context(
 /// This state does not do much on its own except when auto mobbing. It acts as entry
 /// to other state when there is an action and helps clearing keys.
 fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Point) -> Player {
+    fn populate_auto_mob_reachable_y(context: &Context, state: &mut PlayerState) {
+        if state.config.auto_mob_platforms_pathing {
+            match context.minimap {
+                Minimap::Idle(idle) => {
+                    // Believes in user input lets goo...
+                    for platform in idle.platforms {
+                        state
+                            .auto_mob_reachable_y_map
+                            .insert(platform.y(), AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT);
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+        let _ = state.auto_mob_reachable_y_map.try_insert(
+            state.last_known_pos.unwrap().y,
+            AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT - 1,
+        );
+        debug!(target: "player", "auto mob initial reachable y map {:?}", state.auto_mob_reachable_y_map);
+    }
+
     fn ensure_reachable_auto_mob_y(
         context: &Context,
         state: &mut PlayerState,
         player_pos: Point,
         mob_pos: Position,
     ) -> Player {
-        if state.auto_mob_reachable_y_map.is_empty() {
-            if !state.is_stationary {
-                return Player::Idle;
-            }
-            debug!(target: "player", "auto mob initial reachable y {}", state.last_known_pos.unwrap().y);
-            state.auto_mob_reachable_y_map.insert(
-                state.last_known_pos.unwrap().y,
-                AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT - 1,
-            );
+        if !state.is_stationary {
+            return Player::Idle;
         }
-
+        if state.auto_mob_reachable_y_map.is_empty() {
+            populate_auto_mob_reachable_y(context, state);
+        }
         debug_assert!(!state.auto_mob_reachable_y_map.is_empty());
         let y = state
             .auto_mob_reachable_y_map
@@ -837,17 +956,18 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
         debug!(target: "player", "auto mob reachable y {:?} {:?}", y, state.auto_mob_reachable_y_map);
         state.auto_mob_reachable_y = y;
         state.last_destinations = intermediates
-            .map(|array| {
-                array
+            .map(|intermediates| {
+                intermediates
+                    .inner
                     .into_iter()
                     .map(|(point, _)| point)
                     .collect::<Vec<_>>()
             })
             .or(Some(vec![point]));
         intermediates
-            .map(|array| {
-                let (point, exact) = array[0];
-                Player::Moving(point, exact, Some((1, array)))
+            .map(|mut intermediates| {
+                let (point, exact) = intermediates.next().unwrap();
+                Player::Moving(point, exact, Some(intermediates))
             })
             .unwrap_or(Player::Moving(point, mob_pos.allow_adjusting, None))
     }
@@ -928,12 +1048,17 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
                                 true,
                                 state.config.rune_platforms_pathing_up_jump_only,
                             );
-                            if let Some(array) = intermediates {
-                                state.last_destinations =
-                                    Some(array.into_iter().map(|(point, _)| point).collect());
-                                let (point, exact) = array[0];
+                            if let Some(mut intermediates) = intermediates {
+                                state.last_destinations = Some(
+                                    intermediates
+                                        .inner
+                                        .into_iter()
+                                        .map(|(point, _)| point)
+                                        .collect(),
+                                );
+                                let (point, exact) = intermediates.next().unwrap();
                                 return Some((
-                                    Player::Moving(point, exact, Some((1, array))),
+                                    Player::Moving(point, exact, Some(intermediates)),
                                     false,
                                 ));
                             }
@@ -964,6 +1089,35 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
 
 fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: UseKey) -> Player {
     const CHANGE_DIRECTION_TIMEOUT: u32 = 2;
+
+    fn populate_auto_mob_pathing_points(context: &Context, state: &mut PlayerState) {
+        if state.auto_mob_pathing_points.len() >= AUTO_MOB_MAX_PATHING_POINTS
+            || state.auto_mob_reachable_y_require_update()
+        {
+            return;
+        }
+        // The idea is to pick a pathing point with a different y from existing points and with x
+        // within 70% on both sides from the middle of the minimap
+        let minimap_width = match context.minimap {
+            Minimap::Idle(idle) => idle.bbox.width,
+            _ => unreachable!(),
+        };
+        let minimap_mid = minimap_width / 2;
+        let minimap_threshold = (minimap_mid as f32 * 0.7) as i32;
+        let pos = state.last_known_pos.unwrap();
+        let x_offset = (pos.x - minimap_mid).abs();
+        let y = state.auto_mob_reachable_y.unwrap();
+        if x_offset > minimap_threshold
+            || state
+                .auto_mob_pathing_points
+                .iter()
+                .any(|point| point.y == y)
+        {
+            return;
+        }
+        state.auto_mob_pathing_points.push(Point::new(pos.x, y));
+        debug!(target: "player", "auto mob pathing points {:?}", state.auto_mob_pathing_points);
+    }
 
     #[inline]
     fn ensure_direction(state: &PlayerState, direction: ActionKeyDirection) -> bool {
@@ -1181,13 +1335,16 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
         }
     };
 
-    on_action_state(
+    on_action_state_mut(
         state,
         |state, action| match action {
             PlayerAction::AutoMob(_) => {
                 let is_terminal = matches!(next, Player::Idle);
-                if is_terminal && state.auto_mob_reachable_y_require_update() {
-                    return Some((Player::Stalling(Timeout::default(), MOVE_TIMEOUT), false));
+                if is_terminal {
+                    populate_auto_mob_pathing_points(context, state);
+                    if state.auto_mob_reachable_y_require_update() {
+                        return Some((Player::Stalling(Timeout::default(), MOVE_TIMEOUT), false));
+                    }
                 }
                 Some((next, is_terminal))
             }
@@ -1215,15 +1372,17 @@ fn update_moving_context(
     cur_pos: Point,
     dest: Point,
     exact: bool,
-    intermediates: Option<(usize, Array<(Point, bool), 16>)>,
+    intermediates: Option<MovingIntermediates>,
 ) -> Player {
     const HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 20;
     const VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 8;
-    const AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 8;
-    const AUTO_MOB_VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 2;
+    const AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 6;
+    const AUTO_MOB_VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 5;
     const UP_JUMP_THRESHOLD: i32 = 10;
 
     /// Aborts the action when state starts looping.
+    ///
+    /// Note: Initially, this is only intended for auto mobbing until rune pathing is added...
     fn abort_action_on_state_repeat(next: Player, state: &mut PlayerState) -> Player {
         if let Some(last_movement) = state.last_movement {
             let count_map = if state.has_priority_action() {
@@ -1298,15 +1457,16 @@ fn update_moving_context(
             PlayerAction::Key(PlayerActionKey {
                 with: ActionKeyWith::Any | ActionKeyWith::Stationary,
                 ..
-            })
-            | PlayerAction::AutoMob(_) => {
-                Some((Player::UseKey(UseKey::from_action(action)), false))
-            }
+            }) => Some((Player::UseKey(UseKey::from_action(action)), false)),
+            PlayerAction::AutoMob(_) => Some((
+                Player::UseKey(UseKey::from_action_pos(action, Some(moving.pos))),
+                false,
+            )),
             PlayerAction::SolveRune => Some((Player::SolvingRune(SolvingRune::default()), false)),
         }
     }
 
-    debug_assert!(intermediates.is_none() || intermediates.unwrap().0 > 0);
+    debug_assert!(intermediates.is_none() || intermediates.unwrap().current > 0);
     state.use_immediate_control_flow = true;
     state.unstuck_counter += 1;
     if state.unstuck_counter >= UNSTUCK_TRACKER_THRESHOLD {
@@ -1317,31 +1477,34 @@ fn update_moving_context(
     let (x_distance, _) = x_distance_direction(dest, cur_pos);
     let (y_distance, y_direction) = y_distance_direction(dest, cur_pos);
     let moving = Moving::new(cur_pos, dest, exact, intermediates);
+    let skip_destination = moving.auto_mob_can_skip_current_destination(state);
     let is_intermediate = moving.is_destination_intermediate();
 
-    match (x_distance, y_direction, y_distance) {
-        (d, _, _) if d >= state.double_jump_threshold(is_intermediate) => {
+    match (skip_destination, x_distance, y_direction, y_distance) {
+        (false, d, _, _) if d >= state.double_jump_threshold(is_intermediate) => {
             abort_action_on_state_repeat(Player::DoubleJumping(moving, false, false), state)
         }
-        (d, _, _)
+        (false, d, _, _)
             if d >= ADJUSTING_MEDIUM_THRESHOLD || (exact && d >= ADJUSTING_SHORT_THRESHOLD) =>
         {
             abort_action_on_state_repeat(Player::Adjusting(moving), state)
         }
         // y > 0: cur_pos is below dest
         // y < 0: cur_pos is above of dest
-        (_, y, d) if y > 0 && d >= GRAPPLING_THRESHOLD && !state.should_disable_grappling() => {
+        (false, _, y, d)
+            if y > 0 && d >= GRAPPLING_THRESHOLD && !state.should_disable_grappling() =>
+        {
             abort_action_on_state_repeat(Player::Grappling(moving), state)
         }
-        (_, y, d) if y > 0 && d >= UP_JUMP_THRESHOLD => {
+        (false, _, y, d) if y > 0 && d >= UP_JUMP_THRESHOLD => {
             abort_action_on_state_repeat(Player::UpJumping(moving), state)
         }
-        (_, y, d) if y > 0 && d >= JUMP_THRESHOLD => {
+        (false, _, y, d) if y > 0 && d >= JUMP_THRESHOLD => {
             abort_action_on_state_repeat(Player::Jumping(moving), state)
         }
         // this probably won't work if the platforms are far apart,
         // which is weird to begin with and only happen in very rare place (e.g. Haven)
-        (_, y, d) if y < 0 && d >= state.falling_threshold(is_intermediate) => {
+        (false, _, y, d) if y < 0 && d >= state.falling_threshold(is_intermediate) => {
             abort_action_on_state_repeat(Player::Falling(moving, cur_pos), state)
         }
         _ => {
@@ -1351,16 +1514,15 @@ fn update_moving_context(
                 dest, cur_pos
             );
             state.last_movement = None;
-            if let Some((index, points)) = intermediates {
-                if index < points.len() {
+            if let Some(mut intermediates) = intermediates {
+                if let Some((dest, exact)) = intermediates.next() {
                     state.unstuck_counter = 0;
                     if state.has_priority_action() {
                         state.last_movement_priority_map.clear();
                     } else {
                         state.last_movement_normal_map.clear();
                     }
-                    let (dest, exact) = points[index];
-                    return Player::Moving(dest, exact, Some((index + 1, points)));
+                    return Player::Moving(dest, exact, Some(intermediates));
                 }
             }
             state.last_destinations = None;
@@ -1430,7 +1592,7 @@ fn update_adjusting_context(
                 }
             }
             PlayerAction::AutoMob(_) => {
-                on_auto_mob_use_key_action(context, action, x_distance, y_distance)
+                on_auto_mob_use_key_action(context, action, moving.pos, x_distance, y_distance)
             }
             PlayerAction::Key(PlayerActionKey {
                 with: ActionKeyWith::Stationary,
@@ -1568,11 +1730,13 @@ fn update_double_jumping_context(
         match action {
             // ignore proximity check when it is forced to double jumped
             // this indicates the player is already near the destination
+            PlayerAction::AutoMob(_) => {
+                on_auto_mob_use_key_action(context, action, moving.pos, x_distance, y_distance)
+            }
             PlayerAction::Key(PlayerActionKey {
                 with: ActionKeyWith::DoubleJump | ActionKeyWith::Any,
                 ..
-            })
-            | PlayerAction::AutoMob(_) => {
+            }) => {
                 if !moving.completed {
                     return None;
                 }
@@ -1581,8 +1745,6 @@ fn update_double_jumping_context(
                         && x_distance <= USE_KEY_X_THRESHOLD
                         && y_distance <= USE_KEY_Y_THRESHOLD)
                 {
-                    let _ = context.keys.send_up(KeyKind::Right);
-                    let _ = context.keys.send_up(KeyKind::Left);
                     Some((Player::UseKey(UseKey::from_action(action)), false))
                 } else {
                     None
@@ -1848,10 +2010,20 @@ fn update_up_jumping_context(
                 state,
                 |action| match action {
                     PlayerAction::AutoMob(_) => {
+                        if moving.completed
+                            && moving.is_destination_intermediate()
+                            && cur_pos.y >= moving.dest.y
+                        {
+                            let _ = context.keys.send_up(KeyKind::Up);
+                            return Some((
+                                Player::Moving(moving.dest, moving.exact, moving.intermediates),
+                                false,
+                            ));
+                        }
                         let dest = moving.last_destination();
                         let (x_distance, _) = x_distance_direction(dest, cur_pos);
                         let (y_distance, _) = y_distance_direction(dest, cur_pos);
-                        on_auto_mob_use_key_action(context, action, x_distance, y_distance)
+                        on_auto_mob_use_key_action(context, action, cur_pos, x_distance, y_distance)
                     }
                     PlayerAction::Key(_) | PlayerAction::Move(_) | PlayerAction::SolveRune => None,
                 },
@@ -1907,10 +2079,19 @@ fn update_falling_context(
                 state,
                 |action| match action {
                     PlayerAction::AutoMob(_) => {
+                        if moving.timeout.total > STOP_DOWN_KEY_TICK
+                            && moving.is_destination_intermediate()
+                            && y_changed < 0
+                        {
+                            return Some((
+                                Player::Moving(moving.dest, moving.exact, moving.intermediates),
+                                false,
+                            ));
+                        }
                         let dest = moving.last_destination();
                         let (x_distance, _) = x_distance_direction(dest, cur_pos);
                         let (y_distance, _) = y_distance_direction(dest, cur_pos);
-                        on_auto_mob_use_key_action(context, action, x_distance, y_distance)
+                        on_auto_mob_use_key_action(context, action, cur_pos, x_distance, y_distance)
                     }
                     PlayerAction::Key(_) | PlayerAction::Move(_) | PlayerAction::SolveRune => None,
                 },
@@ -2189,6 +2370,7 @@ fn update_solving_rune_context(
 fn on_auto_mob_use_key_action(
     context: &Context,
     action: PlayerAction,
+    cur_pos: Point,
     x_distance: i32,
     y_distance: i32,
 ) -> Option<(Player, bool)> {
@@ -2197,7 +2379,10 @@ fn on_auto_mob_use_key_action(
         let _ = context.keys.send_up(KeyKind::Up);
         let _ = context.keys.send_up(KeyKind::Left);
         let _ = context.keys.send_up(KeyKind::Right);
-        Some((Player::UseKey(UseKey::from_action(action)), false))
+        Some((
+            Player::UseKey(UseKey::from_action_pos(action, Some(cur_pos))),
+            false,
+        ))
     } else {
         None
     }
@@ -2557,7 +2742,7 @@ fn find_points(
     dest: Point,
     exact: bool,
     up_jump_only: bool,
-) -> Option<Array<(Point, bool), 16>> {
+) -> Option<MovingIntermediates> {
     let vertical_threshold = if up_jump_only {
         GRAPPLING_THRESHOLD
     } else {
@@ -2577,7 +2762,10 @@ fn find_points(
             .enumerate()
             .map(|(i, point)| (point, if i == len - 1 { exact } else { false })),
     );
-    Some(array)
+    Some(MovingIntermediates {
+        current: 0,
+        inner: array,
+    })
 }
 
 // TODO: add more tests
@@ -2594,7 +2782,7 @@ mod tests {
         Moving, PlayerState, UseKey, UseKeyStage, update_falling_context, update_use_key_context,
     };
     use crate::{
-        ActionKeyDirection, ActionKeyWith, KeyBinding, Position,
+        ActionKeyDirection, ActionKeyWith, KeyBinding,
         context::{Context, MockKeySender},
         detect::MockDetector,
         player::{Player, Timeout, update_non_positional_context},
