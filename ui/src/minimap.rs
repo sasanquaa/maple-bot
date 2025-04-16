@@ -259,7 +259,11 @@ pub fn Minimap(
         let platforms_bound = platforms_bound();
         if let Some(minimap) = minimap {
             let bound = if let RotationMode::AutoMobbing(mobbing) = minimap.rotation_mode {
-                platforms_bound.or(Some(mobbing.bound))
+                if minimap.auto_mob_platforms_bound {
+                    platforms_bound.or(Some(mobbing.bound))
+                } else {
+                    Some(mobbing.bound)
+                }
             } else {
                 None
             };
