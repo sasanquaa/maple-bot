@@ -6,6 +6,8 @@ use crate::{
 };
 
 /// Represents the fixed key action
+///
+/// Converted from [`ActionKey`] without fields used by [`Rotator`]
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerActionKey {
     pub key: KeyBinding,
@@ -35,7 +37,7 @@ impl From<ActionKey> for PlayerActionKey {
         Self {
             key,
             link_key,
-            count: if count == 0 { 1 } else { count },
+            count: count.max(1),
             position,
             direction,
             with,
@@ -46,6 +48,8 @@ impl From<ActionKey> for PlayerActionKey {
 }
 
 /// Represents the fixed move action
+///
+/// Converted from [`ActionMove`] without fields used by [`Rotator`]
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerActionMove {
     pub position: Position,

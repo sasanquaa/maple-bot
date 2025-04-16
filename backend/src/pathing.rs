@@ -10,6 +10,7 @@ use crate::array::Array;
 
 pub const MAX_PLATFORMS_COUNT: usize = 24;
 
+/// A platform where player can stand on
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Platform {
     xs: Range<i32>,
@@ -22,12 +23,21 @@ impl Platform {
     }
 }
 
+/// Platforms connected togehter into neighbors
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct PlatformWithNeighbors {
     inner: Platform,
     neighbors: Array<Platform, MAX_PLATFORMS_COUNT>,
 }
 
+impl PlatformWithNeighbors {
+    #[inline]
+    pub fn y(&self) -> i32 {
+        self.inner.y
+    }
+}
+
+/// The platform being visited during path finding
 #[derive(PartialEq, Eq)]
 struct VisitingPlatform {
     score: u32,
@@ -46,6 +56,7 @@ impl Ord for VisitingPlatform {
     }
 }
 
+/// Finds a rectangular bound that contains all the provided platforms
 pub fn find_platforms_bound(minimap: Rect, platforms: &[PlatformWithNeighbors]) -> Option<Rect> {
     platforms
         .iter()
@@ -64,6 +75,11 @@ pub fn find_platforms_bound(minimap: Rect, platforms: &[PlatformWithNeighbors]) 
         })
 }
 
+/// Connects platforms into neighbors from the provided `platforms`
+///
+/// One platform is connected to another platform if:
+/// - The two platforms [`Platform::xs`] overlap and one is above the other or can be grappled to
+/// - The two platforms [`Platform::xs`] do not overlap but can double jump from one to another
 pub fn find_neighbors(
     platforms: &[Platform],
     double_jump_threshold: i32,

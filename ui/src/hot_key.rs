@@ -1,8 +1,7 @@
-use backend::{HotKeys as HotKeysData, KeyBindingConfiguration, update_hot_keys, upsert_hot_keys};
+use backend::{HotKeys as HotKeysData, KeyBindingConfiguration};
 use dioxus::prelude::*;
-use tokio::task::spawn_blocking;
 
-use crate::configuration::KeyBindingConfigurationInput;
+use crate::{AppMessage, configuration::KeyBindingConfigurationInput};
 
 const TOGGLE_ACTIONS: &str = "Start/Stop Actions";
 const PLATFORM_START: &str = "Mark Platform Start";
@@ -10,28 +9,15 @@ const PLATFORM_END: &str = "Mark Platform End";
 const PLATFORM_ADD: &str = "Add Platform";
 
 #[component]
-pub fn HotKeys(hot_keys: Resource<HotKeysData>) -> Element {
-    let hot_keys_value = hot_keys.value();
-    let hot_keys_view = use_memo(move || hot_keys_value().unwrap_or_default());
+pub fn HotKeys(
+    app_coroutine: Coroutine<AppMessage>,
+    hot_keys: ReadOnlySignal<Option<HotKeysData>>,
+) -> Element {
+    let hot_keys_view = use_memo(move || hot_keys().unwrap_or_default());
     let active = use_signal(|| None);
-    let on_hot_keys = use_callback(move |mut updated| {
-        spawn(async move {
-            spawn_blocking(move || {
-                upsert_hot_keys(&mut updated).unwrap();
-            })
-            .await
-            .unwrap();
-            hot_keys.restart();
-        });
-    });
-
-    use_effect(move || {
-        if let Some(hot_keys) = hot_keys_value() {
-            spawn(async move {
-                update_hot_keys(hot_keys).await;
-            });
-        }
-    });
+    let on_hot_keys = move |updated| {
+        app_coroutine.send(AppMessage::UpdateHotKeys(updated));
+    };
 
     rsx! {
         div { class: "px-2 pb-2 pt-2 flex flex-col overflow-y-auto scrollbar h-full",

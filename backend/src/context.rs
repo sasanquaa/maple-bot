@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use log::info;
+use log::{debug, info};
 #[cfg(test)]
 use mockall::automock;
 use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
@@ -26,7 +26,7 @@ use crate::{
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
     player::{Player, PlayerState},
-    poll_request,
+    poll_request, query_configs, query_hot_keys,
     rotator::Rotator,
     skill::{Skill, SkillKind, SkillState},
 };
@@ -313,6 +313,9 @@ pub fn init() {
 
 #[inline]
 fn update_loop() {
+    // MapleStoryClass <- GMS
+    // MapleStoryClassSG <- MSEA
+    // MapleStoryClassTW <- TMS
     let handle = Handle::new("MapleStoryClass");
     let keys = DefaultKeySender {
         keys: Keys::new(handle),
@@ -330,7 +333,7 @@ fn update_loop() {
         .collect::<Vec<BuffState>>();
     let mut rotator = Rotator::default();
     let mut actions = Vec::<Action>::new();
-    let mut config = Configuration::default(); // Override by UI
+    let mut config = query_configs().unwrap().into_iter().next().unwrap(); // Override by UI
     let mut buffs = config_buffs(&config);
     let mut context = Context {
         keys: Box::leak(Box::new(keys)),
@@ -340,7 +343,7 @@ fn update_loop() {
         buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
         halting: true,
     };
-    let mut hot_keys = HotKeys::default(); // Override by UI
+    let mut hot_keys = query_hot_keys(); // Override by UI
 
     loop_with_fps(FPS, || {
         let Ok(mat) = capture.grab().map(OwnedMat::new) else {
@@ -385,6 +388,7 @@ fn poll_key(handler: &mut DefaultRequestHandler, receiver: &mut KeyReceiver) {
     let Some(received_key) = receiver.try_recv() else {
         return;
     };
+    debug!(target: "context", "received key {received_key:?}");
     let KeyBindingConfiguration { key, enabled } = handler.hot_keys.toggle_actions_key;
     if enabled && KeyKind::from(key) == received_key {
         handler.on_rotate_actions(!handler.context.halting);

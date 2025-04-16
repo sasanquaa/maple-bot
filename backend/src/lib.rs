@@ -1,5 +1,6 @@
 #![feature(new_range_api)]
 #![feature(slice_pattern)]
+#![feature(map_try_insert)]
 #![feature(variant_count)]
 #![feature(let_chains)]
 #![feature(associated_type_defaults)]

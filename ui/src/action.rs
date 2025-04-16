@@ -1,19 +1,19 @@
 use std::{
     cmp::{Ordering, max, min},
     fmt::Display,
-    ops::DerefMut,
     str::FromStr,
 };
 
 use backend::{
     Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, HotKeys,
-    IntoEnumIterator, LinkKeyBinding, Minimap, ParseError, Position, upsert_map,
+    IntoEnumIterator, LinkKeyBinding, Minimap, ParseError, Position,
 };
 use dioxus::prelude::*;
+use futures_util::StreamExt;
 use rand::distr::{Alphanumeric, SampleString};
-use tokio::task::spawn_blocking;
 
 use crate::{
+    AppMessage,
     icons::{PositionIcon, XIcon},
     input::{
         Checkbox, KeyBindingInput, MillisInput, NumberInputI32, NumberInputU32, use_auto_numeric,
@@ -28,11 +28,17 @@ const DIV_CLASS: &str = "flex h-6 items-center space-x-2";
 const LABEL_CLASS: &str = "flex-1 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400";
 const INPUT_CLASS: &str = "w-22 h-full border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
 
+enum ActionsMessage {
+    UpdateMinimap(Minimap),
+    UpdatePreset(String),
+}
+
 #[component]
 pub fn Actions(
-    minimap: Signal<Option<Minimap>>,
+    app_coroutine: Coroutine<AppMessage>,
+    minimap: ReadOnlySignal<Option<Minimap>>,
     hot_keys: ReadOnlySignal<Option<HotKeys>>,
-    preset: Signal<Option<String>>,
+    preset: ReadOnlySignal<Option<String>>,
     copy_position: ReadOnlySignal<Option<(i32, i32)>>,
 ) -> Element {
     const TAB_PRESET: &str = "Preset";
@@ -42,22 +48,20 @@ pub fn Actions(
     let mut editing_action = use_signal::<Option<(Action, usize)>>(|| None);
     let value_action = use_signal(|| Action::Move(ActionMove::default()));
     let mut active_tab = use_signal(|| TAB_PRESET.to_string());
-
-    let save_minimap = move |mut minimap: Minimap| {
-        spawn(async move {
-            spawn_blocking(move || {
-                upsert_map(&mut minimap).unwrap();
-            })
-            .await
-            .unwrap();
-        });
-    };
-    let on_rotation_mode = use_callback(move |rotation_mode| {
-        if let Some(minimap) = minimap.write().as_mut() {
-            minimap.rotation_mode = rotation_mode;
-            save_minimap(minimap.clone());
-        }
-    });
+    let coroutine = use_coroutine(
+        move |mut rx: UnboundedReceiver<ActionsMessage>| async move {
+            while let Some(msg) = rx.next().await {
+                match msg {
+                    ActionsMessage::UpdateMinimap(minimap) => {
+                        app_coroutine.send(AppMessage::UpdateMinimap(minimap));
+                    }
+                    ActionsMessage::UpdatePreset(preset) => {
+                        app_coroutine.send(AppMessage::UpdatePreset(preset));
+                    }
+                }
+            }
+        },
+    );
 
     use_effect(move || {
         if preset().is_none() {
@@ -90,20 +94,32 @@ pub fn Actions(
                         copy_position,
                         value_action,
                         editing_action,
-                        save_minimap,
+                        update_minimap: move |minimap| {
+                            coroutine.send(ActionsMessage::UpdateMinimap(minimap));
+                        },
+                        update_preset: move |preset| {
+                            coroutine.send(ActionsMessage::UpdatePreset(preset));
+                        },
                     }
                 },
                 TAB_ROTATION_MODE => rsx! {
                     Rotations {
                         disabled: minimap().is_none(),
-                        on_input: on_rotation_mode,
+                        on_input: move |mode| {
+                            if let Some(mut minimap) = minimap.peek().clone() {
+                                minimap.rotation_mode = mode;
+                                coroutine.send(ActionsMessage::UpdateMinimap(minimap));
+                            }
+                        },
                         value: minimap().map(|minimap| minimap.rotation_mode).unwrap_or_default(),
                     }
                 },
                 TAB_PLATFORMS => rsx! {
                     Platforms {
                         minimap,
-                        on_save: save_minimap,
+                        on_save: move |minimap| {
+                            coroutine.send(ActionsMessage::UpdateMinimap(minimap));
+                        },
                         copy_position,
                         hot_keys,
                     }
@@ -116,12 +132,13 @@ pub fn Actions(
 
 #[component]
 fn ActionPresetTab(
-    minimap: Signal<Option<Minimap>>,
-    preset: Signal<Option<String>>,
+    minimap: ReadOnlySignal<Option<Minimap>>,
+    preset: ReadOnlySignal<Option<String>>,
     copy_position: ReadOnlySignal<Option<(i32, i32)>>,
     value_action: Signal<Action>,
     editing_action: Signal<Option<(Action, usize)>>,
-    save_minimap: EventHandler<Minimap>,
+    update_minimap: EventHandler<Minimap>,
+    update_preset: EventHandler<String>,
 ) -> Element {
     fn is_linked_condition_action(action: Action) -> bool {
         match action {
@@ -154,18 +171,18 @@ fn ActionPresetTab(
         value_action.set(action);
     });
     let on_save = use_callback(move |index| {
-        if let Some((minimap, preset)) = minimap.write().as_mut().zip(preset.peek().clone()) {
+        if let Some((mut minimap, preset)) = minimap().zip(preset()) {
             let actions = minimap.actions.get_mut(&preset).unwrap();
             if let Some(index) = index {
                 *actions.get_mut(index).unwrap() = *value_action.peek();
             } else {
                 actions.push(*value_action.peek());
             }
-            save_minimap(minimap.clone());
+            update_minimap(minimap);
         }
     });
     let on_remove = use_callback(move |index| {
-        if let Some((minimap, preset)) = minimap.write().as_mut().zip(preset.peek().clone()) {
+        if let Some((mut minimap, preset)) = minimap().zip(preset()) {
             let actions = minimap.actions.get_mut(&preset).unwrap();
             let is_linked_action =
                 is_linked_action(actions, index) && !is_linked_condition_action(actions[index]);
@@ -197,7 +214,7 @@ fn ActionPresetTab(
                     Ordering::Greater => (),
                 }
             }
-            save_minimap(minimap.clone());
+            update_minimap(minimap);
         }
     });
     let on_change = use_callback(move |(a, b, swapping)| {
@@ -210,7 +227,8 @@ fn ActionPresetTab(
         //         editing_action.set(Some((action, a)));
         //     }
         // }
-        if let Some((minimap, preset)) = minimap.write().as_mut().zip(preset.peek().clone()) {
+        // FIXME: nawww this is way too cooked
+        if let Some((mut minimap, preset)) = minimap().zip(preset()) {
             let actions = minimap.actions.get_mut(&preset).unwrap();
             if swapping {
                 let tmp = a;
@@ -252,7 +270,7 @@ fn ActionPresetTab(
                     actions.insert(b, action);
                 }
             }
-            save_minimap(minimap.clone());
+            update_minimap(minimap);
         }
     });
     let exclude_linked =
@@ -269,20 +287,20 @@ fn ActionPresetTab(
             TextSelect {
                 create_text: "+ Create new preset",
                 on_create: move |created: String| {
-                    if let Some(minimap) = minimap.write().deref_mut() {
+                    if let Some(mut minimap) = minimap.peek().clone() {
                         let actions_inserted = minimap
                             .actions
                             .try_insert(created.clone(), vec![])
                             .is_ok();
                         if actions_inserted {
-                            save_minimap(minimap.clone());
+                            update_minimap(minimap);
                         }
-                        preset.set(Some(created));
+                        update_preset(created);
                     }
                 },
                 disabled: minimap().is_none(),
                 on_select: move |(_, selected)| {
-                    preset.set(Some(selected));
+                    update_preset(selected);
                 },
                 options: presets(),
                 selected: preset(),

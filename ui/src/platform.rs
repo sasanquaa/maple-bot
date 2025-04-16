@@ -1,5 +1,3 @@
-use std::ops::DerefMut;
-
 use backend::{
     HotKeys, KeyBindingConfiguration, MAX_PLATFORMS_COUNT, Minimap, Platform, key_receiver,
 };
@@ -14,7 +12,7 @@ const DIV_CLASS: &str = "flex h-6 items-center space-x-2";
 
 #[component]
 pub fn Platforms(
-    minimap: Signal<Option<Minimap>>,
+    minimap: ReadOnlySignal<Option<Minimap>>,
     hot_keys: ReadOnlySignal<Option<HotKeys>>,
     on_save: EventHandler<Minimap>,
     copy_position: ReadOnlySignal<Option<(i32, i32)>>,
@@ -53,9 +51,9 @@ pub fn Platforms(
 
                 let KeyBindingConfiguration { key, enabled } = hot_keys.platform_add_key;
                 if enabled && key == received_key {
-                    if let Some(minimap) = minimap.write().deref_mut() {
+                    if let Some(mut minimap) = minimap.peek().clone() {
                         minimap.platforms.push(*editing.peek());
-                        on_save(minimap.clone());
+                        on_save(minimap);
                     }
                     continue;
                 }
@@ -69,9 +67,9 @@ pub fn Platforms(
                 label: "Rune Pathing Enabled",
                 disabled: minimap().is_none(),
                 on_input: move |platforms_pathing| {
-                    if let Some(minimap) = minimap.write().deref_mut() {
+                    if let Some(mut minimap) = minimap.peek().clone() {
                         minimap.rune_platforms_pathing = platforms_pathing;
-                        on_save(minimap.clone());
+                        on_save(minimap);
                     }
                 },
                 value: minimap().map(|data| data.rune_platforms_pathing).unwrap_or_default(),
@@ -80,9 +78,9 @@ pub fn Platforms(
                 label: "Rune Pathing Up Jump Only",
                 disabled: minimap().is_none(),
                 on_input: move |up_jump_only| {
-                    if let Some(minimap) = minimap.write().deref_mut() {
+                    if let Some(mut minimap) = minimap.peek().clone() {
                         minimap.rune_platforms_pathing_up_jump_only = up_jump_only;
-                        on_save(minimap.clone());
+                        on_save(minimap);
                     }
                 },
                 value: {
@@ -95,9 +93,9 @@ pub fn Platforms(
                 label: "Auto Mobbing Pathing Enabled",
                 disabled: minimap().is_none(),
                 on_input: move |platforms_pathing| {
-                    if let Some(minimap) = minimap.write().deref_mut() {
+                    if let Some(mut minimap) = minimap.peek().clone() {
                         minimap.auto_mob_platforms_pathing = platforms_pathing;
-                        on_save(minimap.clone());
+                        on_save(minimap);
                     }
                 },
                 value: minimap().map(|data| data.auto_mob_platforms_pathing).unwrap_or_default(),
@@ -106,9 +104,9 @@ pub fn Platforms(
                 label: "Auto Mobbing Pathing Up Jump Only",
                 disabled: minimap().is_none(),
                 on_input: move |up_jump_only| {
-                    if let Some(minimap) = minimap.write().deref_mut() {
+                    if let Some(mut minimap) = minimap.peek().clone() {
                         minimap.auto_mob_platforms_pathing_up_jump_only = up_jump_only;
-                        on_save(minimap.clone());
+                        on_save(minimap);
                     }
                 },
                 value: minimap()
@@ -119,9 +117,9 @@ pub fn Platforms(
                 label: "Auto Mobbing Bound By Platforms",
                 disabled: minimap().is_none(),
                 on_input: move |bound| {
-                    if let Some(minimap) = minimap.write().deref_mut() {
+                    if let Some(mut minimap) = minimap.peek().clone() {
                         minimap.auto_mob_platforms_bound = bound;
-                        on_save(minimap.clone());
+                        on_save(minimap);
                     }
                 },
                 value: minimap().map(|data| data.auto_mob_platforms_bound).unwrap_or_default(),
@@ -140,15 +138,15 @@ pub fn Platforms(
                         delete: true,
                         disabled: minimap().is_none(),
                         on_click: move |_| {
-                            if let Some(minimap) = minimap.write().deref_mut() {
+                            if let Some(mut minimap) = minimap.peek().clone() {
                                 minimap.platforms.remove(i);
-                                on_save(minimap.clone());
+                                on_save(minimap);
                             }
                         },
                         on_input: move |value| {
-                            if let Some(minimap) = minimap.write().deref_mut() {
+                            if let Some(mut minimap) = minimap.peek().clone() {
                                 *minimap.platforms.get_mut(i).unwrap() = value;
-                                on_save(minimap.clone());
+                                on_save(minimap);
                             }
                         },
                         value: platform,
@@ -161,9 +159,9 @@ pub fn Platforms(
                 delete: false,
                 disabled: add_platform_disabled(),
                 on_click: move |_| {
-                    if let Some(minimap) = minimap.write().deref_mut() {
+                    if let Some(mut minimap) = minimap.peek().clone() {
                         minimap.platforms.push(*editing.peek());
-                        on_save(minimap.clone());
+                        on_save(minimap);
                     }
                 },
                 on_input: move |value| {
