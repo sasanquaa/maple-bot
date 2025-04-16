@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+futures-util = "0.3"
 rand = { workspace = true }
 tokio = { workspace = true }
 dioxus = { version = "0.6.3", features = ["desktop"] }

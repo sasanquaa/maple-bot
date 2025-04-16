@@ -2,12 +2,12 @@ use std::{fmt::Display, str::FromStr};
 
 use backend::{
     Class, Configuration as ConfigurationData, IntoEnumIterator, KeyBindingConfiguration,
-    PotionMode, upsert_config,
+    PotionMode,
 };
 use dioxus::prelude::*;
-use tokio::task::spawn_blocking;
 
 use crate::{
+    AppMessage,
     icons::XIcon,
     input::{MillisInput, PercentageInput},
     key::KeyInput,
@@ -33,41 +33,26 @@ const LEGION_LUCK: &str = "Legion's Luck";
 
 #[component]
 pub fn Configuration(
-    configs: Resource<Vec<ConfigurationData>>,
-    config: SyncSignal<Option<ConfigurationData>>,
+    app_coroutine: Coroutine<AppMessage>,
+    configs: ReadOnlySignal<Option<Vec<ConfigurationData>>>,
+    config: ReadOnlySignal<Option<ConfigurationData>>,
 ) -> Element {
     let is_disabled = use_memo(move || config().is_none());
     let active = use_signal(|| None);
-    let configs_value = configs.value();
-    let config_names = use_memo(move || match configs_value() {
-        Some(configs) => configs
-            .into_iter()
-            .map(|config| config.name.clone())
-            .collect(),
-        None => vec![],
+    let config_names = use_memo(move || {
+        configs()
+            .map(|configs| {
+                configs
+                    .into_iter()
+                    .map(|config| config.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
     });
     let config_view = use_memo(move || config().unwrap_or_default());
-    let on_config = use_callback(move |new_config: ConfigurationData| {
-        spawn(async move {
-            spawn_blocking(move || {
-                let mut new_config = new_config;
-                upsert_config(&mut new_config).unwrap();
-                config.set(Some(new_config.clone()));
-            })
-            .await
-            .unwrap();
-            configs.restart();
-        });
-    });
-
-    use_effect(move || {
-        if let Some(configs) = configs_value() {
-            debug_assert!(!configs.is_empty());
-            if config.peek().is_none() {
-                config.set(Some(configs.into_iter().next().unwrap()));
-            }
-        }
-    });
+    let on_config = move |new_config: ConfigurationData| {
+        app_coroutine.send(AppMessage::UpdateConfig(new_config, true));
+    };
 
     rsx! {
         div { class: "flex flex-col",
@@ -81,7 +66,11 @@ pub fn Configuration(
                 },
                 disabled: is_disabled(),
                 on_select: move |(i, _)| {
-                    config.set(configs_value().unwrap().get(i).cloned());
+                    let msg = AppMessage::UpdateConfig(
+                        configs.peek().as_ref().unwrap().get(i).cloned().unwrap(),
+                        false,
+                    );
+                    app_coroutine.send(msg);
                 },
                 options: config_names(),
                 selected: config_view().name,

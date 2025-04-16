@@ -1,4 +1,4 @@
-use std::{fmt::Display, str::FromStr};
+use std::{fmt::Display, str::FromStr, time::Duration};
 
 use backend::KeyBinding;
 use dioxus::{document::EvalError, prelude::*};
@@ -14,71 +14,77 @@ pub fn use_auto_numeric(
     maximum_value: String,
     suffix: String,
 ) {
-    let value = use_memo(use_reactive!(|value| { value }));
+    let has_input = on_value.is_some();
+    let value = use_memo(use_reactive!(|value| value));
     let maximum_value = use_memo(move || maximum_value.clone());
     let suffix = use_memo(move || suffix.clone());
-    let mut initialized = use_signal(|| false);
 
-    use_effect(move || {
-        spawn(async move {
-            let js = format!(
-                r#"
-                const element = document.getElementById("{}");
-                const hasInput = {};
-                const autoNumeric = new AutoNumeric(element, {{
-                    allowDecimalPadding: false,
-                    emptyInputBehavior: "zero",
-                    maximumValue: "{}",
-                    minimumValue: "0",
-                    suffixText: "{}",
-                    defaultValueOverride: "{}"
-                }});
-                if (hasInput) {{
-                    element.addEventListener("autoNumeric:rawValueModified", async (e) => {{
-                        await dioxus.send(e.detail.newRawValue);
-                    }});
-                }}
-                element.addEventListener("autoNumeric:set", (e) => {{
-                    autoNumeric.set(e.detail.value);
-                }});
-                "#,
-                id(),
-                on_value.is_some(),
-                maximum_value(),
-                suffix(),
-                value()
-            );
-            let mut element = document::eval(js.as_str());
-            initialized.set(true);
-            if let Some(on_value) = on_value {
-                loop {
-                    let value = element.recv::<String>().await;
-                    if let Err(EvalError::Finished) = value {
-                        element = document::eval(js.as_str());
-                        continue;
-                    };
-                    on_value(value.unwrap());
-                }
-            }
-        });
-    });
-    use_effect(move || {
-        if !initialized() {
-            return;
-        }
+    // I am had enough, this stuff way too hard
+    use_future(move || async move {
         let js = format!(
             r#"
             const element = document.getElementById("{}");
-            element.dispatchEvent(new CustomEvent("autoNumeric:set", {{
-                detail: {{
-                    value: {}
-                }}
-            }}));
+            const hasInput = {};
+            const autoNumeric = new AutoNumeric(element, {{
+                allowDecimalPadding: false,
+                emptyInputBehavior: "zero",
+                maximumValue: "{}",
+                minimumValue: "0",
+                suffixText: "{}",
+                defaultValueOverride: "{}"
+            }});
+            if (hasInput) {{
+                let ignoreInitial = true;
+                element.addEventListener("autoNumeric:rawValueModified", async (e) => {{
+                    if (ignoreInitial) {{
+                        ignoreInitial = false;
+                        return;
+                    }} 
+                    await dioxus.send(e.detail.newRawValue);
+                }});
+            }}
+            element.addEventListener("autoNumeric:set", (e) => {{
+                autoNumeric.set(e.detail.value);
+            }});
             "#,
             id(),
+            has_input,
+            maximum_value(),
+            suffix(),
             value()
         );
-        document::eval(js.as_str());
+        let mut element = document::eval(js.as_str());
+        let mut task = None::<Task>;
+        use_effect(move || {
+            let js = format!(
+                r#"
+                const element = document.getElementById("{}");
+                element.dispatchEvent(new CustomEvent("autoNumeric:set", {{
+                    detail: {{
+                        value: {}
+                    }}
+                }}));
+                "#,
+                id, value
+            );
+            document::eval(js.as_str());
+        });
+        loop {
+            let value = element.recv::<String>().await;
+            if let Err(EvalError::Finished) = value {
+                element = document::eval(js.as_str());
+                continue;
+            };
+            if let Some(task) = task {
+                task.cancel();
+            }
+            if let Some(on_value) = on_value {
+                task = Some(spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    on_value(value.unwrap());
+                }));
+            }
+        }
     });
 }
 

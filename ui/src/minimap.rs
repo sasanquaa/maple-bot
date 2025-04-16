@@ -1,12 +1,17 @@
+use std::sync::Arc;
+
 use backend::{
-    Action, ActionKey, ActionMove, Configuration, Minimap as MinimapData, PlayerState,
-    RotationMode, create_minimap, delete_map, minimap_frame, minimap_platforms_bound, player_state,
-    query_maps, redetect_minimap, rotate_actions, rotate_actions_halting, update_configuration,
-    update_minimap, upsert_map,
+    Action, ActionKey, ActionMove, Minimap as MinimapData, PlayerState, RotationMode,
+    create_minimap, delete_map, minimap_frame, minimap_platforms_bound, player_state, query_maps,
+    redetect_minimap, rotate_actions, rotate_actions_halting, update_minimap, upsert_map,
 };
 use dioxus::{document::EvalError, prelude::*};
+use futures_util::StreamExt;
 use serde::Serialize;
-use tokio::task::spawn_blocking;
+use tokio::{
+    sync::{Mutex, mpsc::Receiver},
+    task::spawn_blocking,
+};
 
 use crate::select::TextSelect;
 
@@ -126,21 +131,106 @@ struct ActionView {
     condition: String,
 }
 
+#[derive(Clone)]
+pub enum MinimapMessage {
+    ToggleHalting,
+    RedetectMinimap,
+    CreateMinimap(String),
+    UpdateMinimap(MinimapData, bool),
+    UpdateMinimapPreset(String),
+    DeleteMinimap,
+}
+
 #[component]
 pub fn Minimap(
+    minimap_rx: ReadOnlySignal<Arc<Mutex<Receiver<MinimapMessage>>>>,
     minimap: Signal<Option<MinimapData>>,
     preset: Signal<Option<String>>,
     copy_position: Signal<Option<(i32, i32)>>,
-    config: ReadOnlySignal<Option<Configuration>, SyncStorage>,
 ) -> Element {
-    // TODO: State management is really hard... Apply Android MVVM?
     let mut halting = use_signal(|| true);
     let mut state = use_signal::<Option<PlayerState>>(|| None);
     let mut detected_minimap_size = use_signal::<Option<(usize, usize)>>(|| None);
     let mut platforms_bound = use_signal(|| None);
-    let actions = use_memo::<Vec<ActionView>>(move || {
-        minimap()
-            .zip(preset())
+    let mut minimaps = use_resource(move || async move {
+        let minimaps = spawn_blocking(|| query_maps().unwrap_or_default())
+            .await
+            .unwrap();
+        if !minimaps.is_empty() && minimap.peek().is_none() {
+            minimap.set(minimaps.first().cloned());
+            preset.set(
+                minimap
+                    .peek()
+                    .clone()
+                    .unwrap()
+                    .actions
+                    .keys()
+                    .next()
+                    .cloned(),
+            );
+            update_minimap(preset.peek().clone(), minimap.peek().clone().unwrap()).await;
+        }
+        minimaps
+    });
+    let coroutine = use_coroutine(
+        move |mut rx: UnboundedReceiver<MinimapMessage>| async move {
+            while let Some(msg) = rx.next().await {
+                match msg {
+                    MinimapMessage::ToggleHalting => {
+                        rotate_actions(!halting()).await;
+                    }
+                    MinimapMessage::RedetectMinimap => {
+                        redetect_minimap().await;
+                    }
+                    MinimapMessage::CreateMinimap(name) => {
+                        if let Some(mut data) = create_minimap(name).await {
+                            upsert_map(&mut data).unwrap();
+                            minimap.set(Some(data));
+                            minimaps.restart();
+                        }
+                    }
+                    MinimapMessage::UpdateMinimap(mut data, save) => {
+                        preset.set(data.actions.keys().next().cloned());
+                        minimap.set(Some(data.clone()));
+                        update_minimap(preset(), data.clone()).await;
+                        if save {
+                            spawn_blocking(move || {
+                                upsert_map(&mut data).unwrap();
+                            })
+                            .await
+                            .unwrap();
+                            minimaps.restart();
+                        }
+                    }
+                    MinimapMessage::UpdateMinimapPreset(new_preset) => {
+                        if preset().as_ref() != Some(&new_preset) {
+                            preset.set(Some(new_preset));
+                            update_minimap(preset(), minimap().unwrap()).await;
+                        }
+                    }
+                    MinimapMessage::DeleteMinimap => {
+                        let minimap = minimap.replace(None);
+                        if let Some(minimap) = minimap {
+                            spawn_blocking(move || {
+                                delete_map(&minimap).unwrap();
+                            })
+                            .await
+                            .unwrap();
+                            minimaps.restart();
+                        }
+                    }
+                }
+            }
+        },
+    );
+
+    // draw actions, auto mob bound
+    use_effect(move || {
+        let minimap = minimap();
+        let preset = preset();
+        let actions = minimap
+            .clone()
+            .zip(preset)
             .and_then(|(minimap, preset)| minimap.actions.get(&preset).cloned())
             .unwrap_or_default()
             .into_iter()
@@ -165,43 +255,9 @@ pub fn Minimap(
                 }),
                 Action::Key(ActionKey { position: None, .. }) => None,
             })
-            .collect()
-    });
-
-    use_effect(move || {
-        copy_position.set(state().and_then(|state| state.position));
-    });
-    use_effect(move || {
-        if let (Some(minimap), preset) = (minimap(), preset()) {
-            spawn(async move {
-                update_minimap(preset, minimap).await;
-            });
-        }
-        if let Some(config) = config() {
-            spawn(async move {
-                update_configuration(config).await;
-            });
-        }
-    });
-    use_effect(move || {
-        if let Some(minimap) = minimap() {
-            let preset_peek = preset.peek().clone();
-            if preset_peek.is_none() || !minimap.actions.contains_key(preset_peek.as_ref().unwrap())
-            {
-                preset.set(minimap.actions.keys().next().cloned());
-            }
-            spawn(async move {
-                platforms_bound.set(minimap_platforms_bound().await);
-            });
-        } else {
-            preset.set(None);
-        }
-    });
-    // draw actions, auto mob bound
-    use_effect(move || {
-        let actions = actions();
+            .collect::<Vec<ActionView>>();
         let platforms_bound = platforms_bound();
-        if let Some(minimap) = minimap() {
+        if let Some(minimap) = minimap {
             let bound = if let RotationMode::AutoMobbing(mobbing) = minimap.rotation_mode {
                 platforms_bound.or(Some(mobbing.bound))
             } else {
@@ -221,31 +277,40 @@ pub fn Minimap(
             });
         }
     });
+    use_future(move || async move {
+        loop {
+            if let Some(msg) = minimap_rx().lock().await.recv().await {
+                coroutine.send(msg);
+            }
+        }
+    });
     // draw minimap and update states
     use_future(move || async move {
         let mut canvas = document::eval(MINIMAP_JS);
         loop {
+            let player_state = player_state().await;
+            let destinations = player_state.destinations.clone();
             let is_halting = rotate_actions_halting().await;
-            if *halting.peek() != is_halting {
+            let bound = minimap_platforms_bound().await;
+            if halting() != is_halting {
                 halting.set(is_halting);
             }
-            let player = player_state().await;
-            let destinations = player.destinations.clone();
-            state.set(Some(player));
+            if platforms_bound() != bound {
+                platforms_bound.set(bound);
+            }
+            if copy_position() != player_state.position {
+                copy_position.set(player_state.position);
+            }
+            state.set(Some(player_state));
             let minimap_frame = minimap_frame().await;
             let Ok((frame, width, height)) = minimap_frame else {
-                platforms_bound.set(None);
-                detected_minimap_size.set(None);
+                if detected_minimap_size().is_some() {
+                    detected_minimap_size.set(None);
+                }
                 continue;
             };
-            if detected_minimap_size.peek().is_none() {
+            if detected_minimap_size().is_none() {
                 detected_minimap_size.set(Some((width, height)));
-            }
-            if platforms_bound.peek().is_none() {
-                let bound = minimap_platforms_bound().await;
-                if bound.is_some() {
-                    platforms_bound.set(bound);
-                }
             }
             let Err(error) = canvas.send((frame, width, height, destinations)) else {
                 continue;
@@ -260,7 +325,7 @@ pub fn Minimap(
     rsx! {
         div { class: "flex flex-col items-center justify-center space-y-4 mb-8",
             div { class: "flex flex-col items-center justify-center space-y-2 text-gray-700 text-xs",
-                MinimapsSelect { minimap }
+                MinimapsSelect { minimap, minimaps, coroutine }
                 p {
                     {
                         minimap()
@@ -349,7 +414,7 @@ pub fn Minimap(
                     class: "button-tertiary w-24",
                     disabled: minimap().is_none(),
                     onclick: move |_| async move {
-                        rotate_actions(!*halting.peek()).await;
+                        coroutine.send(MinimapMessage::ToggleHalting);
                     },
                     if halting() {
                         "Start actions"
@@ -361,7 +426,7 @@ pub fn Minimap(
                     class: "button-secondary",
                     disabled: minimap().is_none(),
                     onclick: move |_| async move {
-                        redetect_minimap().await;
+                        coroutine.send(MinimapMessage::RedetectMinimap);
                     },
                     "Re-detect map"
                 }
@@ -369,15 +434,7 @@ pub fn Minimap(
                     class: "button-danger",
                     disabled: minimap().is_none(),
                     onclick: move |_| async move {
-                        let data = minimap.peek().clone();
-                        if let Some(data) = data {
-                            spawn_blocking(move || {
-                                    delete_map(&data).unwrap();
-                                })
-                                .await
-                                .unwrap();
-                            minimap.set(None);
-                        }
+                        coroutine.send(MinimapMessage::DeleteMinimap);
                     },
                     "Delete map"
                 }
@@ -387,55 +444,39 @@ pub fn Minimap(
 }
 
 #[component]
-fn MinimapsSelect(minimap: Signal<Option<MinimapData>>) -> Element {
-    let mut is_creating = use_signal(|| false);
-    let mut minimaps = use_resource(|| async {
-        spawn_blocking(|| query_maps().unwrap_or_default())
-            .await
-            .unwrap()
-    });
-    let minimaps_value = minimaps.value();
-    let minimap_names = use_memo(move || match minimaps_value() {
-        Some(minimaps) => minimaps
-            .into_iter()
-            .map(|minimap| minimap.name)
-            .collect::<Vec<_>>(),
-        None => vec![],
-    });
-
-    // why is it so easy to shoot myself in the foot
-    use_effect(move || {
-        minimap();
-        minimaps.restart()
-    });
-    use_effect(move || {
-        if let Some(minimaps) = minimaps_value() {
-            if minimap.peek().is_none() && !minimaps.is_empty() {
-                minimap.set(minimaps.into_iter().next());
-            }
-        }
+fn MinimapsSelect(
+    minimap: ReadOnlySignal<Option<MinimapData>>,
+    minimaps: ReadOnlySignal<Option<Vec<MinimapData>>>,
+    coroutine: Coroutine<MinimapMessage>,
+) -> Element {
+    let minimap_names = use_memo(move || {
+        minimaps()
+            .map(|minimaps| {
+                minimaps
+                    .into_iter()
+                    .map(|minimap| minimap.name)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
     });
 
     rsx! {
         TextSelect {
-            create_text: "+ Create minimap",
+            create_text: "+ Create map",
             on_create: move |name: String| async move {
-                if let Some(mut data) = create_minimap(name).await {
-                    is_creating.set(true);
-                    upsert_map(&mut data).unwrap();
-                    is_creating.set(false);
-                    minimap.set(Some(data.clone()));
-                }
+                coroutine.send(MinimapMessage::CreateMinimap(name));
             },
-            disabled: is_creating(),
+            disabled: false,
             on_select: move |(i, _)| {
-                minimap
-                    .set(
-                        match minimaps_value() {
-                            Some(minimaps) => minimaps.get(i).cloned(),
-                            None => None,
-                        },
-                    )
+                if let Some(minimaps) = minimaps() {
+                    coroutine
+                        .send(
+                            MinimapMessage::UpdateMinimap(
+                                minimaps.get(i).cloned().unwrap(),
+                                false,
+                            ),
+                        );
+                }
             },
             options: minimap_names(),
             selected: minimap().map(|minimap| minimap.name),

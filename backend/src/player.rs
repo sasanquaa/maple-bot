@@ -346,6 +346,7 @@ impl PlayerState {
         point
             .map(|(_, point)| Point::new(point.x, minimap.height - point.y))
             .or_else(|| {
+                // Last resort
                 self.auto_mob_reachable_y_map
                     .keys()
                     .min()
@@ -2072,17 +2073,19 @@ fn update_falling_context(
             if moving.timeout.total == STOP_DOWN_KEY_TICK {
                 let _ = context.keys.send_up(KeyKind::Down);
             }
-            if x_distance >= ADJUSTING_MEDIUM_THRESHOLD && y_changed < 0 {
+            if !moving.completed {
+                if y_changed < 0 {
+                    moving = moving.completed(true);
+                }
+            } else if x_distance >= ADJUSTING_MEDIUM_THRESHOLD {
                 moving = moving.timeout_current(TIMEOUT);
             }
             on_action(
                 state,
                 |action| match action {
                     PlayerAction::AutoMob(_) => {
-                        if moving.timeout.total > STOP_DOWN_KEY_TICK
-                            && moving.is_destination_intermediate()
-                            && y_changed < 0
-                        {
+                        if moving.completed && moving.is_destination_intermediate() {
+                            let _ = context.keys.send_up(KeyKind::Down);
                             return Some((
                                 Player::Moving(moving.dest, moving.exact, moving.intermediates),
                                 false,
