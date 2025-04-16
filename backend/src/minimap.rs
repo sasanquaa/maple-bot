@@ -161,7 +161,6 @@ fn update_idle_context(
     let tl_match = tl_pixel == anchors.tl.1;
     let br_match = br_pixel == anchors.br.1;
     if !tl_match && !br_match {
-        state.data = None;
         debug!(
             target: "minimap",
             "anchor pixels mismatch: {:?} != {:?}",
