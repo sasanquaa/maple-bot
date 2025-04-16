@@ -75,7 +75,7 @@ impl Handle {
 fn is_class_matched(handle: HWND, class: &'static str) -> bool {
     let mut buf = [0u16; 256];
     let count = unsafe { GetClassNameW(handle, &mut buf) as usize };
-    if count == 0 || count != class.len() {
+    if count == 0 {
         return false;
     }
     OsString::from_wide(&buf[..count])

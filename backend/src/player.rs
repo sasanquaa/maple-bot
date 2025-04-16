@@ -2897,7 +2897,8 @@ mod tests {
             update_falling_context(&context, &mut state, pos, moving, anchor),
             Player::Falling(
                 Moving {
-                    timeout: Timeout { current: 10, .. },
+                    completed: true,
+                    timeout: Timeout { current: 1, .. },
                     ..
                 },
                 _
