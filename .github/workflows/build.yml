@@ -1,6 +1,7 @@
 name: Build windows-x64-static-release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*.*.*"
