@@ -11,10 +11,11 @@ on:
       - "v*.*.*"
 
 permissions:
-  contents: write
+  contents: write-all
 
 env:
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VCPKG_INSTALL_OPTIONS: "--debug"
   VCPKG_ENABLE_METRICS: 0
   VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg/installed
   VCPKG_DEFAULT_TRIPLET: x64-windows-static-release
