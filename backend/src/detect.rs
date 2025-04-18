@@ -309,7 +309,7 @@ fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Result
     let portals = points
         .into_iter()
         .map(|point| {
-            let size = 4;
+            let size = 5;
             let x = (point.x - size).max(0);
             let xd = point.x - x;
             let y = (point.y - size).max(0);
@@ -337,7 +337,7 @@ fn detect_cash_shop(mat: &impl ToInputArray) -> bool {
         imgcodecs::imdecode(include_bytes!(env!("CASH_SHOP_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    detect_template(mat, &*CASH_SHOP, Point::default(), 0.9, None).is_ok()
+    detect_template(mat, &*CASH_SHOP, Point::default(), 0.7, Some("cash shop")).is_ok()
 }
 
 fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
@@ -349,9 +349,9 @@ fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
         imgcodecs::imdecode(include_bytes!(env!("HP_END_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    let hp_start = detect_template(mat, &*HP_START, Point::default(), 0.9, None)?;
+    let hp_start = detect_template(mat, &*HP_START, Point::default(), 0.8, None)?;
     let hp_start_to_edge_x = hp_start.x + hp_start.width;
-    let hp_end = detect_template(mat, &*HP_END, Point::default(), 0.9, None)?;
+    let hp_end = detect_template(mat, &*HP_END, Point::default(), 0.8, None)?;
     Ok(Rect::new(
         hp_start_to_edge_x,
         hp_start.y,
@@ -366,9 +366,16 @@ fn detect_player_health_bars(
     hp_bar: Rect,
 ) -> Result<(Rect, Rect)> {
     /// TODO: Support default ratio
-    static HP_SEPARATOR: LazyLock<Mat> = LazyLock::new(|| {
+    static HP_SEPARATOR_1: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
-            include_bytes!(env!("HP_SEPARATOR_TEMPLATE")),
+            include_bytes!(env!("HP_SEPARATOR_1_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static HP_SEPARATOR_2: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("HP_SEPARATOR_2_TEMPLATE")),
             IMREAD_GRAYSCALE,
         )
         .unwrap()
@@ -376,19 +383,29 @@ fn detect_player_health_bars(
     static HP_SHIELD: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("HP_SHIELD_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
+    static HP_SEPARATOR_TYPE_1: AtomicBool = AtomicBool::new(true);
 
+    let hp_separator_type_1 = HP_SEPARATOR_TYPE_1.load(Ordering::Relaxed);
+    let hp_separator_template = if hp_separator_type_1 {
+        &*HP_SEPARATOR_1
+    } else {
+        &*HP_SEPARATOR_2
+    };
     let hp_separator = detect_template(
         &grayscale.roi(hp_bar).unwrap(),
-        &*HP_SEPARATOR,
+        hp_separator_template,
         hp_bar.tl(),
         0.7,
         None,
-    )?;
+    )
+    .inspect_err(|_| {
+        HP_SEPARATOR_TYPE_1.store(!hp_separator_type_1, Ordering::Release);
+    })?;
     let hp_shield = detect_template(
         &grayscale.roi(hp_bar).unwrap(),
         &*HP_SHIELD,
         hp_bar.tl(),
-        0.9,
+        0.8,
         None,
     )
     .ok();

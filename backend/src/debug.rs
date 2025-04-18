@@ -52,7 +52,7 @@ pub fn debug_pathing_points(mat: &impl MatTraitConst, minimap: Rect, points: &[P
         )
         .unwrap();
     }
-    debug_mat("Pathing", &mat, 1, &[], &[""; 0]);
+    debug_mat("Pathing", &mat, 1, &[] as &[(_, &str); 0]);
 }
 
 #[allow(unused)]
@@ -60,11 +60,10 @@ pub fn debug_mat<T: AsRef<str>>(
     name: &str,
     mat: &impl MatTraitConst,
     wait: i32,
-    bboxes: &[Rect],
-    text: &[T],
+    bboxes: &[(Rect, T)],
 ) -> i32 {
     let mut mat = mat.try_clone().unwrap();
-    for (bbox, text) in bboxes.iter().zip(text) {
+    for (bbox, text) in bboxes {
         let _ = rectangle(
             &mut mat,
             *bbox,
@@ -93,7 +92,7 @@ pub fn save_image_for_training(mat: &impl MatTraitConst) {
     // let mat = mat.clone();
     let image = LazyLock::force(&DATASET_DIR).join(format!("{name}.png"));
 
-    debug_mat("Image", &mat, 0, &[], &[""; 0]);
+    debug_mat("Image", &mat, 0, &[] as &[(_, &str); 0]);
 
     imwrite_def(image.to_str().unwrap(), &mat).unwrap();
 }
@@ -115,7 +114,12 @@ pub fn debug_rune(mat: &Mat, preds: &Vec<&[f32]>, w_ratio: f32, h_ratio: f32) {
             _ => unreachable!(),
         })
         .collect::<Vec<_>>();
-    debug_mat("Rune", mat, 1, &bboxes, &texts);
+    debug_mat(
+        "Rune",
+        mat,
+        1,
+        &bboxes.into_iter().zip(texts).collect::<Vec<_>>(),
+    );
 }
 
 #[allow(unused)]
@@ -142,7 +146,12 @@ pub fn save_rune_for_training(
             _ => unreachable!(),
         })
         .collect::<Vec<_>>();
-    debug_mat("Training", mat, 0, &bboxes, &texts);
+    debug_mat(
+        "Training",
+        mat,
+        0,
+        &bboxes.clone().into_iter().zip(texts).collect::<Vec<_>>(),
+    );
 
     let labels = bboxes
         .iter()
@@ -183,8 +192,11 @@ pub fn save_mobs_for_training(mat: &Mat, mobs: &[Rect]) {
         "Training",
         mat,
         0,
-        mobs,
-        vec!["Mobs"; mobs.len()].as_slice(),
+        &mobs
+            .iter()
+            .copied()
+            .map(|bbox| (bbox, "Mobs"))
+            .collect::<Vec<_>>(),
     );
     if key == 97 {
         imwrite_def(image.to_str().unwrap(), mat).unwrap();
@@ -199,7 +211,12 @@ fn save_minimap_for_training(mat: &Mat, minimap: &Rect) {
     let label = dataset.join(format!("{name}.txt"));
     let image = dataset.join(format!("{name}.png"));
 
-    debug_mat("Training", &mat.roi(*minimap).unwrap(), 0, &[], &[""; 0]);
+    debug_mat(
+        "Training",
+        &mat.roi(*minimap).unwrap(),
+        0,
+        &[] as &[(_, &str); 0],
+    );
 
     imwrite_def(image.to_str().unwrap(), mat).unwrap();
     fs::write(label, to_yolo_format(0, mat.size().unwrap(), *minimap)).unwrap();

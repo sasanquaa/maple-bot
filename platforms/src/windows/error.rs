@@ -8,6 +8,8 @@ pub enum Error {
     NotSent,
     #[error("window matching provided class and title cannot be found")]
     WindowNotFound,
+    #[error("capture frame is not available")]
+    FrameNotAvailable,
     #[error("key not found")]
     KeyNotFound,
     #[error("win32 API error {0}: {1}")]
