@@ -309,7 +309,7 @@ fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Result
     let portals = points
         .into_iter()
         .map(|point| {
-            let size = 4;
+            let size = 5;
             let x = (point.x - size).max(0);
             let xd = point.x - x;
             let y = (point.y - size).max(0);

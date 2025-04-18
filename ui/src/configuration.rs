@@ -1,8 +1,8 @@
 use std::{fmt::Display, str::FromStr};
 
 use backend::{
-    Class, Configuration as ConfigurationData, IntoEnumIterator, KeyBindingConfiguration,
-    PotionMode,
+    CaptureMode, Class, Configuration as ConfigurationData, IntoEnumIterator,
+    KeyBindingConfiguration, PotionMode,
 };
 use dioxus::prelude::*;
 
@@ -326,6 +326,17 @@ pub fn Configuration(
                 },
                 disabled: is_disabled(),
                 selected: config_view().class,
+            }
+            ConfigEnumSelect::<CaptureMode> {
+                label: "Capture Mode",
+                on_select: move |capture_mode| {
+                    on_config(ConfigurationData {
+                        capture_mode,
+                        ..config_view.peek().clone()
+                    });
+                },
+                disabled: is_disabled(),
+                selected: config_view().capture_mode,
             }
         }
     }

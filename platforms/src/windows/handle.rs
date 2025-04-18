@@ -43,7 +43,8 @@ impl Handle {
         Self { class }
     }
 
-    fn query_handle(&self) -> Option<HWND> {
+    // TODO
+    pub fn query_handle(&self) -> Option<HWND> {
         #[repr(C)]
         #[derive(Clone, Copy)]
         struct Params {

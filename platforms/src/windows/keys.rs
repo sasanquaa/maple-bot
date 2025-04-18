@@ -3,7 +3,6 @@ use std::{
     mem::{self},
     ptr,
     sync::LazyLock,
-    thread,
 };
 
 use bit_vec::BitVec;
@@ -27,10 +26,9 @@ use windows::{
                 VK_Z,
             },
             WindowsAndMessaging::{
-                CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW,
-                GetSystemMetrics, GetWindowRect, GetWindowThreadProcessId, HC_ACTION,
-                KBDLLHOOKSTRUCT, MSG, SM_CXSCREEN, SM_CYSCREEN, SetForegroundWindow,
-                SetWindowsHookExW, TranslateMessage, WH_KEYBOARD_LL, WM_KEYUP,
+                CallNextHookEx, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
+                GetWindowThreadProcessId, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, SM_CXSCREEN,
+                SM_CYSCREEN, SetForegroundWindow, SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYUP,
             },
         },
     },
@@ -42,7 +40,7 @@ use super::{HandleCell, error::Error, handle::Handle};
 static KEY_CHANNEL: LazyLock<Sender<KeyKind>> = LazyLock::new(|| broadcast::channel(1).0);
 static PROCESS_ID: LazyLock<u32> = LazyLock::new(|| unsafe { GetCurrentProcessId() });
 
-pub(crate) fn init() {
+pub(crate) fn init() -> Owned<HHOOK> {
     unsafe extern "system" fn keyboard_ll(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         if code as u32 == HC_ACTION && wparam.0 as u32 == WM_KEYUP {
             let key = unsafe { ptr::read(lparam.0 as *const KBDLLHOOKSTRUCT) };
@@ -54,20 +52,7 @@ pub(crate) fn init() {
         }
         unsafe { CallNextHookEx(None, code, wparam, lparam) }
     }
-
-    thread::spawn(|| {
-        let _hook = unsafe {
-            Owned::new(SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_ll), None, 0).unwrap())
-        };
-
-        let mut msg = MSG::default();
-        while unsafe { GetMessageW(&raw mut msg, None, 0, 0) }.as_bool() {
-            unsafe {
-                let _ = TranslateMessage(&raw const msg);
-                let _ = DispatchMessageW(&raw const msg);
-            }
-        }
-    });
+    unsafe { Owned::new(SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_ll), None, 0).unwrap()) }
 }
 
 #[derive(Debug)]

@@ -112,11 +112,23 @@ fn platform_add_key_default() -> KeyBindingConfiguration {
     }
 }
 
+#[derive(
+    Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumIter, Display, EnumString,
+)]
+pub enum CaptureMode {
+    #[default]
+    BitBlt,
+    #[strum(to_string = "Windows 10 (1903 and up)")] // Thanks OBS
+    WindowsGraphicsCapture,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Configuration {
     #[serde(skip_serializing, default)]
     pub id: Option<i64>,
     pub name: String,
+    #[serde(default)]
+    pub capture_mode: CaptureMode,
     pub ropelift_key: KeyBindingConfiguration,
     pub teleport_key: Option<KeyBindingConfiguration>,
     pub up_jump_key: Option<KeyBindingConfiguration>,
@@ -142,6 +154,7 @@ impl Default for Configuration {
         Self {
             id: None,
             name: String::new(),
+            capture_mode: CaptureMode::default(),
             ropelift_key: KeyBindingConfiguration::default(),
             teleport_key: None,
             up_jump_key: None,

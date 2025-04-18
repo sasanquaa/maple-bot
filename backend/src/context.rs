@@ -13,7 +13,9 @@ use log::{debug, info};
 #[cfg(test)]
 use mockall::automock;
 use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
-use platforms::windows::{self, Capture, Error, Handle, KeyKind, KeyReceiver, Keys};
+use platforms::windows::{
+    self, BitBltCapture, Error, Handle, KeyKind, KeyReceiver, Keys, WgcCapture,
+};
 use strum::IntoEnumIterator;
 use tokio::sync::broadcast;
 
@@ -21,7 +23,7 @@ use crate::{
     Action, ActionCondition, ActionKey, Bound, HotKeys, KeyBindingConfiguration, RequestHandler,
     RotatorMode,
     buff::{Buff, BuffKind, BuffState},
-    database::{Configuration, KeyBinding, PotionMode},
+    database::{CaptureMode, Configuration, KeyBinding, PotionMode},
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
@@ -296,8 +298,8 @@ pub fn init() {
             file.write_all(include_bytes!(env!("ONNX_RUNTIME")))
                 .unwrap();
         }
-        windows::init();
         ort::init_from(dll.to_str().unwrap()).commit().unwrap();
+        windows::init();
         thread::spawn(|| {
             let tokio_rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_time()
@@ -322,7 +324,8 @@ fn update_loop() {
     };
     let key_sender = broadcast::channel::<KeyBinding>(1).0; // Callback to UI
     let mut key_receiver = KeyReceiver::new(handle);
-    let mut capture = Capture::new(handle);
+    let mut bitblt_capture = BitBltCapture::new(handle);
+    let mut wgc_capture = WgcCapture::new(handle);
     let mut player_state = PlayerState::default();
     let mut minimap_state = MinimapState::default();
     let mut skill_states = SkillKind::iter()
@@ -346,7 +349,15 @@ fn update_loop() {
     let mut hot_keys = query_hot_keys(); // Override by UI
 
     loop_with_fps(FPS, || {
-        let Ok(mat) = capture.grab().map(OwnedMat::new) else {
+        let mat = match config.capture_mode {
+            CaptureMode::BitBlt => bitblt_capture.grab().ok().map(OwnedMat::new),
+            CaptureMode::WindowsGraphicsCapture => wgc_capture
+                .as_mut()
+                .ok()
+                .and_then(|capture| capture.grab().ok())
+                .map(OwnedMat::new),
+        };
+        let Some(mat) = mat else {
             return;
         };
         // I know what you are thinking...

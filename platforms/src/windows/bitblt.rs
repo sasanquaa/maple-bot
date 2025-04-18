@@ -14,27 +14,22 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 use windows::core::Owned;
 
+use super::Frame;
 use super::HandleCell;
 use super::error::Error;
 use super::handle::Handle;
-
-#[derive(Clone, Debug)]
-pub struct Frame {
-    pub width: i32,
-    pub height: i32,
-    pub data: Vec<u8>,
-}
 
 #[derive(Debug)]
 struct DeviceContext {
     inner: HDC,
     handle: Option<HWND>,
+    release: bool,
 }
 
 impl Drop for DeviceContext {
     fn drop(&mut self) {
         unsafe {
-            if self.handle.is_some() {
+            if self.release {
                 let _ = ReleaseDC(self.handle, self.inner);
             } else {
                 let _ = DeleteDC(self.inner);
@@ -46,7 +41,7 @@ impl Drop for DeviceContext {
 #[derive(Debug)]
 struct Bitmap {
     inner: Owned<HBITMAP>,
-    device_context: DeviceContext,
+    dc: DeviceContext,
     width: i32,
     height: i32,
     size: usize,
@@ -54,12 +49,12 @@ struct Bitmap {
 }
 
 #[derive(Debug)]
-pub struct Capture {
+pub struct BitBltCapture {
     handle: HandleCell,
     bitmap: Option<Bitmap>,
 }
 
-impl Capture {
+impl BitBltCapture {
     pub fn new(handle: Handle) -> Self {
         Self {
             handle: HandleCell::new(handle),
@@ -78,36 +73,39 @@ impl Capture {
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
         if width == 0 || height == 0 {
-            return Err(Error::WindowNotFound);
+            return Err(Error::InvalidWindowSize);
         }
+
+        let handle_dc = get_device_context(handle)?;
         if self.bitmap.is_none() {
-            self.bitmap = Some(create_bitmap(width, height)?);
+            self.bitmap = Some(create_bitmap(handle_dc.inner, width, height)?);
         }
+
         let bitmap = self.bitmap.as_ref().unwrap();
         if width != bitmap.width || height != bitmap.height {
             self.bitmap = None;
             return Err(Error::InvalidWindowSize);
         }
-        let bitmap_device_context = &bitmap.device_context;
-        let handle_device_context = get_device_context(handle)?;
-        let object = unsafe { SelectObject(bitmap_device_context.inner, (*bitmap.inner).into()) };
+
+        let bitmap_dc = &bitmap.dc;
+        let object = unsafe { SelectObject(bitmap_dc.inner, (*bitmap.inner).into()) };
         if object.is_invalid() {
             return Err(Error::from_last_win_error());
         }
         let result = unsafe {
             BitBlt(
-                bitmap_device_context.inner,
+                bitmap_dc.inner,
                 0,
                 0,
                 bitmap.width,
                 bitmap.height,
-                Some(handle_device_context.inner),
-                0,
-                0,
+                Some(handle_dc.inner),
+                rect.top,
+                rect.left,
                 SRCCOPY,
             )
         };
-        let _ = unsafe { SelectObject(bitmap_device_context.inner, object) };
+        let _ = unsafe { SelectObject(bitmap_dc.inner, object) };
         if let Err(error) = result {
             return Err(Error::from(error));
         }
@@ -131,22 +129,24 @@ fn get_rect(handle: HWND) -> Result<RECT, Error> {
 
 #[inline]
 fn get_device_context(handle: HWND) -> Result<DeviceContext, Error> {
-    let device_context = unsafe { GetDC(handle.into()) };
-    if device_context.is_invalid() {
+    let dc = unsafe { GetDC(handle.into()) };
+    if dc.is_invalid() {
         return Err(Error::from_last_win_error());
     }
     Ok(DeviceContext {
-        inner: device_context,
+        inner: dc,
         handle: Some(handle),
+        release: true,
     })
 }
 
 #[inline]
-fn create_bitmap(width: i32, height: i32) -> Result<Bitmap, Error> {
-    let device_context = unsafe { CreateCompatibleDC(None) };
-    if device_context.is_invalid() {
+fn create_bitmap(dc: HDC, width: i32, height: i32) -> Result<Bitmap, Error> {
+    let dc = unsafe { CreateCompatibleDC(Some(dc)) };
+    if dc.is_invalid() {
         return Err(Error::from_last_win_error());
     }
+
     let size = width as usize * height as usize * 4;
     let buffer = ptr::null_mut::<c_void>();
     let info = BITMAPV4HEADER {
@@ -163,7 +163,7 @@ fn create_bitmap(width: i32, height: i32) -> Result<Bitmap, Error> {
     };
     let dib = unsafe {
         CreateDIBSection(
-            Some(device_context),
+            Some(dc),
             (&raw const info).cast(),
             DIB_RGB_COLORS,
             (&raw const buffer).cast_mut(),
@@ -173,9 +173,10 @@ fn create_bitmap(width: i32, height: i32) -> Result<Bitmap, Error> {
     };
     Ok(Bitmap {
         inner: unsafe { Owned::new(dib) },
-        device_context: DeviceContext {
-            inner: device_context,
+        dc: DeviceContext {
+            inner: dc,
             handle: None,
+            release: false,
         },
         width,
         height,
