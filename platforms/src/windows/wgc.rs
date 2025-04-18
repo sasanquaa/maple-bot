@@ -79,7 +79,7 @@ impl WgcCaptureInner {
                 // Even if there is one, I tried and it still doesn't work.
                 // When the game changes resolution or going to cash shop, none of the re-creation
                 // stuff below works. It doesn't even get called back. The item closed callback
-                // sometimes works an sometimes doesn't. This feels like a hack but it works.
+                // sometimes works and sometimes doesn't. This feels like a hack but it works.
                 // I referenced other people code for error handling but this shit still
                 // doesn't work.
                 if self.consecutive_failure >= MAX_FRAME_FAILURE {
