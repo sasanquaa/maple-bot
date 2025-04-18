@@ -1,7 +1,10 @@
-use backend::{HotKeys as HotKeysData, KeyBindingConfiguration};
+use backend::{CaptureMode, KeyBindingConfiguration, Settings as SettingsData};
 use dioxus::prelude::*;
 
-use crate::{AppMessage, configuration::KeyBindingConfigurationInput};
+use crate::{
+    AppMessage,
+    configuration::{ConfigEnumSelect, KeyBindingConfigurationInput},
+};
 
 const TOGGLE_ACTIONS: &str = "Start/Stop Actions";
 const PLATFORM_START: &str = "Mark Platform Start";
@@ -9,20 +12,31 @@ const PLATFORM_END: &str = "Mark Platform End";
 const PLATFORM_ADD: &str = "Add Platform";
 
 #[component]
-pub fn HotKeys(
+pub fn Settings(
     app_coroutine: Coroutine<AppMessage>,
-    hot_keys: ReadOnlySignal<Option<HotKeysData>>,
+    settings: ReadOnlySignal<Option<SettingsData>>,
 ) -> Element {
-    let hot_keys_view = use_memo(move || hot_keys().unwrap_or_default());
+    let settings_view = use_memo(move || settings().unwrap_or_default());
     let active = use_signal(|| None);
-    let on_hot_keys = move |updated| {
-        app_coroutine.send(AppMessage::UpdateHotKeys(updated));
+    let on_settings = move |updated| {
+        app_coroutine.send(AppMessage::UpdateSettings(updated));
     };
 
     rsx! {
         div { class: "px-2 pb-2 pt-2 flex flex-col overflow-y-auto scrollbar h-full",
-            p { class: "font-normal italic text-xs text-gray-400 mb-1",
+            p { class: "font-normal italic text-xs text-gray-400 mb-3",
                 "Platform keys must have a Map created and Platforms tab opened"
+            }
+            ConfigEnumSelect::<CaptureMode> {
+                label: "Capture Mode",
+                on_select: move |capture_mode| {
+                    on_settings(SettingsData {
+                        capture_mode,
+                        ..settings_view.peek().clone()
+                    });
+                },
+                disabled: false,
+                selected: settings_view().capture_mode,
             }
             KeyBindingConfigurationInput {
                 label: TOGGLE_ACTIONS,
@@ -30,12 +44,12 @@ pub fn HotKeys(
                 is_toggleable: true,
                 is_disabled: false,
                 on_input: move |key: Option<KeyBindingConfiguration>| {
-                    on_hot_keys(HotKeysData {
+                    on_settings(SettingsData {
                         toggle_actions_key: key.unwrap(),
-                        ..hot_keys_view.peek().clone()
+                        ..settings_view.peek().clone()
                     });
                 },
-                value: Some(hot_keys_view().toggle_actions_key),
+                value: Some(settings_view().toggle_actions_key),
             }
             KeyBindingConfigurationInput {
                 label: PLATFORM_START,
@@ -43,12 +57,12 @@ pub fn HotKeys(
                 is_toggleable: true,
                 is_disabled: false,
                 on_input: move |key: Option<KeyBindingConfiguration>| {
-                    on_hot_keys(HotKeysData {
+                    on_settings(SettingsData {
                         platform_start_key: key.unwrap(),
-                        ..hot_keys_view.peek().clone()
+                        ..settings_view.peek().clone()
                     });
                 },
-                value: Some(hot_keys_view().platform_start_key),
+                value: Some(settings_view().platform_start_key),
             }
             KeyBindingConfigurationInput {
                 label: PLATFORM_END,
@@ -56,12 +70,12 @@ pub fn HotKeys(
                 is_toggleable: true,
                 is_disabled: false,
                 on_input: move |key: Option<KeyBindingConfiguration>| {
-                    on_hot_keys(HotKeysData {
+                    on_settings(SettingsData {
                         platform_end_key: key.unwrap(),
-                        ..hot_keys_view.peek().clone()
+                        ..settings_view.peek().clone()
                     });
                 },
-                value: Some(hot_keys_view().platform_end_key),
+                value: Some(settings_view().platform_end_key),
             }
             KeyBindingConfigurationInput {
                 label: PLATFORM_ADD,
@@ -69,12 +83,12 @@ pub fn HotKeys(
                 is_toggleable: true,
                 is_disabled: false,
                 on_input: move |key: Option<KeyBindingConfiguration>| {
-                    on_hot_keys(HotKeysData {
+                    on_settings(SettingsData {
                         platform_add_key: key.unwrap(),
-                        ..hot_keys_view.peek().clone()
+                        ..settings_view.peek().clone()
                     });
                 },
-                value: Some(hot_keys_view().platform_add_key),
+                value: Some(settings_view().platform_add_key),
             }
         }
     }

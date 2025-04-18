@@ -34,10 +34,10 @@ pub use {
     context::init,
     database::{
         Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
-        AutoMobbing, Bound, CaptureMode, Class, Configuration, HotKeys, KeyBinding,
-        KeyBindingConfiguration, LinkKeyBinding, Minimap, Platform, Position, PotionMode,
-        RotationMode, delete_map, query_configs, query_hot_keys, query_maps, upsert_config,
-        upsert_hot_keys, upsert_map,
+        AutoMobbing, Bound, CaptureMode, Class, Configuration, KeyBinding, KeyBindingConfiguration,
+        LinkKeyBinding, Minimap, Platform, Position, PotionMode, RotationMode, Settings,
+        delete_map, query_configs, query_maps, query_settings, upsert_config, upsert_map,
+        upsert_settings,
     },
     pathing::MAX_PLATFORMS_COUNT,
     rotator::RotatorMode,
@@ -80,7 +80,7 @@ enum Request {
     CreateMinimap(String),
     UpdateMinimap(Option<String>, Minimap),
     UpdateConfiguration(Configuration),
-    UpdateHotKeys(HotKeys),
+    UpdateSettings(Settings),
     RedetectMinimap,
     PlayerState,
     MinimapFrame,
@@ -99,7 +99,7 @@ enum Response {
     CreateMinimap(Option<Minimap>),
     UpdateMinimap,
     UpdateConfiguration,
-    UpdateHotKeys,
+    UpdateSettings,
     RedetectMinimap,
     PlayerState(PlayerState),
     MinimapFrame(Option<(Vec<u8>, usize, usize)>),
@@ -118,7 +118,7 @@ pub(crate) trait RequestHandler {
 
     fn on_update_configuration(&mut self, config: Configuration);
 
-    fn on_update_hot_keys(&mut self, hot_keys: HotKeys);
+    fn on_update_settings(&mut self, settings: Settings);
 
     fn on_redetect_minimap(&mut self);
 
@@ -177,10 +177,10 @@ pub async fn update_configuration(config: Configuration) {
     )
 }
 
-pub async fn update_hot_keys(hot_keys: HotKeys) {
+pub async fn update_settings(settings: Settings) {
     expect_unit_variant!(
-        request(Request::UpdateHotKeys(hot_keys)).await,
-        Response::UpdateHotKeys
+        request(Request::UpdateSettings(settings)).await,
+        Response::UpdateSettings
     )
 }
 
@@ -232,9 +232,9 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
                 handler.on_update_configuration(config);
                 Response::UpdateConfiguration
             }
-            Request::UpdateHotKeys(hot_keys) => {
-                handler.on_update_hot_keys(hot_keys);
-                Response::UpdateHotKeys
+            Request::UpdateSettings(settings) => {
+                handler.on_update_settings(settings);
+                Response::UpdateSettings
             }
             Request::RedetectMinimap => {
                 handler.on_redetect_minimap();

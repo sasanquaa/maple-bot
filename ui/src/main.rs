@@ -5,9 +5,9 @@ use std::{string::ToString, sync::Arc};
 
 use action::Actions;
 use backend::{
-    Configuration as ConfigurationData, HotKeys as HotKeysData, Minimap as MinimapData,
-    query_configs, query_hot_keys, update_configuration, update_hot_keys, upsert_config,
-    upsert_hot_keys,
+    Configuration as ConfigurationData, Minimap as MinimapData, Settings as SettingsData,
+    query_configs, query_settings, update_configuration, update_settings, upsert_config,
+    upsert_settings,
 };
 use configuration::Configuration;
 use dioxus::{
@@ -19,8 +19,8 @@ use dioxus::{
     prelude::*,
 };
 use futures_util::StreamExt;
-use hot_key::HotKeys;
 use minimap::{Minimap, MinimapMessage};
+use settings::Settings;
 use tab::Tab;
 use tokio::{
     sync::{
@@ -33,7 +33,6 @@ use tracing_log::LogTracer;
 
 mod action;
 mod configuration;
-mod hot_key;
 mod icons;
 mod input;
 mod key;
@@ -41,6 +40,7 @@ mod minimap;
 mod platform;
 mod rotation;
 mod select;
+mod settings;
 mod tab;
 
 const TAILWIND_CSS: Asset = asset!("public/tailwind.css");
@@ -71,14 +71,14 @@ pub enum AppMessage {
     UpdateConfig(ConfigurationData, bool),
     UpdateMinimap(MinimapData),
     UpdatePreset(String),
-    UpdateHotKeys(HotKeysData),
+    UpdateSettings(SettingsData),
 }
 
 #[component]
 fn App() -> Element {
     const TAB_CONFIGURATION: &str = "Configuration";
     const TAB_ACTIONS: &str = "Actions";
-    const TAB_HOT_KEYS: &str = "Hot Keys";
+    const TAB_SETTINGS: &str = "Settings";
 
     // TODO: Move to AppMessage?
     let (minimap_tx, minimap_rx) = mpsc::channel::<MinimapMessage>(1);
@@ -94,7 +94,7 @@ fn App() -> Element {
         }
         configs
     });
-    let mut hot_keys = use_resource(|| async { spawn_blocking(query_hot_keys).await.unwrap() });
+    let mut settings = use_resource(|| async { spawn_blocking(query_settings).await.unwrap() });
     let copy_position = use_signal::<Option<(i32, i32)>>(|| None);
     let coroutine = use_coroutine(move |mut rx: UnboundedReceiver<AppMessage>| {
         let minimap_tx = minimap_tx.clone();
@@ -123,14 +123,14 @@ fn App() -> Element {
                             .send(MinimapMessage::UpdateMinimapPreset(preset))
                             .await;
                     }
-                    AppMessage::UpdateHotKeys(mut new_hot_keys) => {
-                        update_hot_keys(new_hot_keys.clone()).await;
+                    AppMessage::UpdateSettings(mut new_settings) => {
+                        update_settings(new_settings.clone()).await;
                         spawn_blocking(move || {
-                            upsert_hot_keys(&mut new_hot_keys).unwrap();
+                            upsert_settings(&mut new_settings).unwrap();
                         })
                         .await
                         .unwrap();
-                        hot_keys.restart();
+                        settings.restart();
                     }
                 }
             }
@@ -171,7 +171,7 @@ fn App() -> Element {
                     tabs: vec![
                         TAB_CONFIGURATION.to_string(),
                         TAB_ACTIONS.to_string(),
-                        TAB_HOT_KEYS.to_string(),
+                        TAB_SETTINGS.to_string(),
                     ],
                     class: "py-2 px-4 font-medium text-sm focus:outline-none",
                     selected_class: "bg-white text-gray-800",
@@ -191,13 +191,13 @@ fn App() -> Element {
                         Actions {
                             app_coroutine: coroutine,
                             minimap,
-                            hot_keys,
+                            settings,
                             preset,
                             copy_position,
                         }
                     },
-                    TAB_HOT_KEYS => rsx! {
-                        HotKeys { app_coroutine: coroutine, hot_keys }
+                    TAB_SETTINGS => rsx! {
+                        Settings { app_coroutine: coroutine, settings }
                     },
                     _ => unreachable!(),
                 }

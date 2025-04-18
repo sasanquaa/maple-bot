@@ -1,5 +1,5 @@
 use backend::{
-    HotKeys, KeyBindingConfiguration, MAX_PLATFORMS_COUNT, Minimap, Platform, key_receiver,
+    KeyBindingConfiguration, MAX_PLATFORMS_COUNT, Minimap, Platform, Settings, key_receiver,
 };
 use dioxus::prelude::*;
 
@@ -13,7 +13,7 @@ const DIV_CLASS: &str = "flex h-6 items-center space-x-2";
 #[component]
 pub fn Platforms(
     minimap: ReadOnlySignal<Option<Minimap>>,
-    hot_keys: ReadOnlySignal<Option<HotKeys>>,
+    settings: ReadOnlySignal<Option<Settings>>,
     on_save: EventHandler<Minimap>,
     copy_position: ReadOnlySignal<Option<(i32, i32)>>,
 ) -> Element {
@@ -30,8 +30,8 @@ pub fn Platforms(
             if minimap.peek().is_none() {
                 continue;
             }
-            if let Some((hot_keys, pos)) = hot_keys.peek().clone().zip(*copy_position.peek()) {
-                let KeyBindingConfiguration { key, enabled } = hot_keys.platform_start_key;
+            if let Some((settings, pos)) = settings.peek().clone().zip(*copy_position.peek()) {
+                let KeyBindingConfiguration { key, enabled } = settings.platform_start_key;
                 if enabled && key == received_key {
                     editing.with_mut(|platform| {
                         platform.x_start = pos.0;
@@ -40,7 +40,7 @@ pub fn Platforms(
                     continue;
                 }
 
-                let KeyBindingConfiguration { key, enabled } = hot_keys.platform_end_key;
+                let KeyBindingConfiguration { key, enabled } = settings.platform_end_key;
                 if enabled && key == received_key {
                     editing.with_mut(|platform| {
                         platform.x_end = pos.0;
@@ -49,7 +49,7 @@ pub fn Platforms(
                     continue;
                 }
 
-                let KeyBindingConfiguration { key, enabled } = hot_keys.platform_add_key;
+                let KeyBindingConfiguration { key, enabled } = settings.platform_add_key;
                 if enabled && key == received_key {
                     if let Some(mut minimap) = minimap.peek().clone() {
                         minimap.platforms.push(*editing.peek());

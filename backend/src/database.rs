@@ -32,7 +32,7 @@ static CONNECTION: LazyLock<Mutex<Connection>> = LazyLock::new(|| {
             id INTEGER PRIMARY KEY,
             data TEXT NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS hot_keys (
+        CREATE TABLE IF NOT EXISTS settings (
             id INTEGER PRIMARY KEY,
             data TEXT NOT NULL
         );
@@ -49,9 +49,11 @@ trait Identifiable {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct HotKeys {
+pub struct Settings {
     #[serde(skip_serializing, default)]
     pub id: Option<i64>,
+    #[serde(default)]
+    pub capture_mode: CaptureMode,
     #[serde(default = "toggle_actions_key_default")]
     pub toggle_actions_key: KeyBindingConfiguration,
     #[serde(default = "platform_start_key_default")]
@@ -62,10 +64,11 @@ pub struct HotKeys {
     pub platform_add_key: KeyBindingConfiguration,
 }
 
-impl Default for HotKeys {
+impl Default for Settings {
     fn default() -> Self {
         Self {
             id: None,
+            capture_mode: CaptureMode::default(),
             toggle_actions_key: toggle_actions_key_default(),
             platform_start_key: platform_start_key_default(),
             platform_end_key: platform_end_key_default(),
@@ -74,7 +77,7 @@ impl Default for HotKeys {
     }
 }
 
-impl Identifiable for HotKeys {
+impl Identifiable for Settings {
     fn id(&self) -> Option<i64> {
         self.id
     }
@@ -127,8 +130,6 @@ pub struct Configuration {
     #[serde(skip_serializing, default)]
     pub id: Option<i64>,
     pub name: String,
-    #[serde(default)]
-    pub capture_mode: CaptureMode,
     pub ropelift_key: KeyBindingConfiguration,
     pub teleport_key: Option<KeyBindingConfiguration>,
     pub up_jump_key: Option<KeyBindingConfiguration>,
@@ -154,7 +155,6 @@ impl Default for Configuration {
         Self {
             id: None,
             name: String::new(),
-            capture_mode: CaptureMode::default(),
             ropelift_key: KeyBindingConfiguration::default(),
             teleport_key: None,
             up_jump_key: None,
@@ -643,17 +643,17 @@ impl From<KeyKind> for KeyBinding {
     }
 }
 
-pub fn query_hot_keys() -> HotKeys {
-    let mut hot_keys = query_from_table("hot_keys").unwrap().into_iter().next();
-    if hot_keys.is_none() {
-        hot_keys = Some(HotKeys::default());
-        upsert_hot_keys(hot_keys.as_mut().unwrap()).unwrap();
+pub fn query_settings() -> Settings {
+    let mut settings = query_from_table("settings").unwrap().into_iter().next();
+    if settings.is_none() {
+        settings = Some(Settings::default());
+        upsert_settings(settings.as_mut().unwrap()).unwrap();
     }
-    hot_keys.unwrap()
+    settings.unwrap()
 }
 
-pub fn upsert_hot_keys(hot_keys: &mut HotKeys) -> Result<()> {
-    upsert_to_table("hot_keys", hot_keys)
+pub fn upsert_settings(settings: &mut Settings) -> Result<()> {
+    upsert_to_table("settings", settings)
 }
 
 pub fn query_configs() -> Result<Vec<Configuration>> {

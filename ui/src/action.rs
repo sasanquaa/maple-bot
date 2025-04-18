@@ -5,8 +5,8 @@ use std::{
 };
 
 use backend::{
-    Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, HotKeys,
-    IntoEnumIterator, LinkKeyBinding, Minimap, ParseError, Position,
+    Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
+    IntoEnumIterator, LinkKeyBinding, Minimap, ParseError, Position, Settings,
 };
 use dioxus::prelude::*;
 use futures_util::StreamExt;
@@ -37,7 +37,7 @@ enum ActionsMessage {
 pub fn Actions(
     app_coroutine: Coroutine<AppMessage>,
     minimap: ReadOnlySignal<Option<Minimap>>,
-    hot_keys: ReadOnlySignal<Option<HotKeys>>,
+    settings: ReadOnlySignal<Option<Settings>>,
     preset: ReadOnlySignal<Option<String>>,
     copy_position: ReadOnlySignal<Option<(i32, i32)>>,
 ) -> Element {
@@ -121,7 +121,7 @@ pub fn Actions(
                             coroutine.send(ActionsMessage::UpdateMinimap(minimap));
                         },
                         copy_position,
-                        hot_keys,
+                        settings,
                     }
                 },
                 _ => unreachable!(),

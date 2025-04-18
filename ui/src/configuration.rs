@@ -1,8 +1,8 @@
 use std::{fmt::Display, str::FromStr};
 
 use backend::{
-    CaptureMode, Class, Configuration as ConfigurationData, IntoEnumIterator,
-    KeyBindingConfiguration, PotionMode,
+    Class, Configuration as ConfigurationData, IntoEnumIterator, KeyBindingConfiguration,
+    PotionMode,
 };
 use dioxus::prelude::*;
 
@@ -328,17 +328,6 @@ pub fn Configuration(
                     disabled: is_disabled(),
                     selected: config_view().class,
                 }
-                ConfigEnumSelect::<CaptureMode> {
-                    label: "Capture Mode",
-                    on_select: move |capture_mode| {
-                        on_config(ConfigurationData {
-                            capture_mode,
-                            ..config_view.peek().clone()
-                        });
-                    },
-                    disabled: is_disabled(),
-                    selected: config_view().capture_mode,
-                }
             }
         }
     }
@@ -379,8 +368,9 @@ fn ConfigHeader(
     }
 }
 
+// FIXME: remove pub, used by settings.rs
 #[component]
-fn ConfigEnumSelect<
+pub fn ConfigEnumSelect<
     T: 'static + Clone + Copy + PartialEq + Display + FromStr + IntoEnumIterator,
 >(
     label: String,
@@ -403,7 +393,7 @@ fn ConfigEnumSelect<
     }
 }
 
-// FIXME: pub for hot_keys
+// FIXME: remove pub, used by settings.rs
 #[component]
 pub fn KeyBindingConfigurationInput(
     label: &'static str,

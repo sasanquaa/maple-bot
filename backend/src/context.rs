@@ -20,15 +20,15 @@ use strum::IntoEnumIterator;
 use tokio::sync::broadcast;
 
 use crate::{
-    Action, ActionCondition, ActionKey, Bound, HotKeys, KeyBindingConfiguration, RequestHandler,
-    RotatorMode,
+    Action, ActionCondition, ActionKey, Bound, KeyBindingConfiguration, RequestHandler,
+    RotatorMode, Settings,
     buff::{Buff, BuffKind, BuffState},
     database::{CaptureMode, Configuration, KeyBinding, PotionMode},
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
     player::{Player, PlayerState},
-    poll_request, query_configs, query_hot_keys,
+    poll_request, query_configs, query_settings,
     rotator::Rotator,
     skill::{Skill, SkillKind, SkillState},
 };
@@ -138,7 +138,7 @@ impl Default for Context {
 struct DefaultRequestHandler<'a> {
     context: &'a mut Context,
     config: &'a mut Configuration,
-    hot_keys: &'a mut HotKeys,
+    settings: &'a mut Settings,
     buffs: &'a mut Vec<(usize, KeyBinding)>,
     actions: &'a mut Vec<Action>,
     rotator: &'a mut Rotator,
@@ -211,11 +211,6 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_update_configuration(&mut self, config: Configuration) {
-        if let Some(ref mut wgc_capture) = self.wgc_capture {
-            if self.config.capture_mode != config.capture_mode {
-                wgc_capture.stop_capture();
-            }
-        }
         *self.config = config;
         *self.buffs = config_buffs(self.config);
         self.player.reset();
@@ -241,8 +236,13 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         );
     }
 
-    fn on_update_hot_keys(&mut self, hot_keys: HotKeys) {
-        *self.hot_keys = hot_keys;
+    fn on_update_settings(&mut self, settings: Settings) {
+        if let Some(ref mut wgc_capture) = self.wgc_capture {
+            if self.settings.capture_mode != settings.capture_mode {
+                wgc_capture.stop_capture();
+            }
+        }
+        *self.settings = settings;
     }
 
     fn on_redetect_minimap(&mut self) {
@@ -352,10 +352,10 @@ fn update_loop() {
         buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
         halting: true,
     };
-    let mut hot_keys = query_hot_keys(); // Override by UI
+    let mut settings = query_settings(); // Override by UI
 
     loop_with_fps(FPS, || {
-        let mat = match config.capture_mode {
+        let mat = match settings.capture_mode {
             CaptureMode::BitBlt => bitblt_capture.grab().ok().map(OwnedMat::new),
             CaptureMode::WindowsGraphicsCapture => wgc_capture
                 .as_mut()
@@ -386,7 +386,7 @@ fn update_loop() {
         let mut handler = DefaultRequestHandler {
             context: &mut context,
             config: &mut config,
-            hot_keys: &mut hot_keys,
+            settings: &mut settings,
             buffs: &mut buffs,
             actions: &mut actions,
             rotator: &mut rotator,
@@ -407,7 +407,7 @@ fn poll_key(handler: &mut DefaultRequestHandler, receiver: &mut KeyReceiver) {
         return;
     };
     debug!(target: "context", "received key {received_key:?}");
-    let KeyBindingConfiguration { key, enabled } = handler.hot_keys.toggle_actions_key;
+    let KeyBindingConfiguration { key, enabled } = handler.settings.toggle_actions_key;
     if enabled && KeyKind::from(key) == received_key {
         handler.on_rotate_actions(!handler.context.halting);
     }
