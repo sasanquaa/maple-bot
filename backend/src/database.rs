@@ -132,6 +132,8 @@ pub struct Configuration {
     pub name: String,
     pub ropelift_key: KeyBindingConfiguration,
     pub teleport_key: Option<KeyBindingConfiguration>,
+    #[serde(default = "jump_key_default")]
+    pub jump_key: KeyBindingConfiguration,
     pub up_jump_key: Option<KeyBindingConfiguration>,
     pub interact_key: KeyBindingConfiguration,
     pub cash_shop_key: KeyBindingConfiguration,
@@ -150,6 +152,13 @@ pub struct Configuration {
     pub class: Class,
 }
 
+fn jump_key_default() -> KeyBindingConfiguration {
+    KeyBindingConfiguration {
+        key: KeyBinding::Space,
+        enabled: true,
+    }
+}
+
 impl Default for Configuration {
     fn default() -> Self {
         Self {
@@ -157,6 +166,7 @@ impl Default for Configuration {
             name: String::new(),
             ropelift_key: KeyBindingConfiguration::default(),
             teleport_key: None,
+            jump_key: jump_key_default(),
             up_jump_key: None,
             interact_key: KeyBindingConfiguration::default(),
             cash_shop_key: KeyBindingConfiguration::default(),

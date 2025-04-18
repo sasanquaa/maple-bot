@@ -96,6 +96,10 @@ pub struct PlayerConfiguration {
     pub grappling_key: KeyKind,
     /// The teleport key with [`None`] indicating double jump
     pub teleport_key: Option<KeyKind>,
+    /// The jump key
+    ///
+    /// Replaces the previously default [`KeyKind::Space`] key
+    pub jump_key: KeyKind,
     /// The up jump key with [`None`] indicating composite jump (Up arrow + Double Space)
     pub upjump_key: Option<KeyKind>,
     /// The cash shop key
@@ -875,7 +879,7 @@ fn update_positional_context(
                 cur_pos,
                 MOVE_TIMEOUT,
                 |moving| {
-                    let _ = context.keys.send(KeyKind::Space);
+                    let _ = context.keys.send(state.config.jump_key);
                     Player::Jumping(moving)
                 },
                 None::<fn()>,
@@ -1145,6 +1149,7 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
     fn update_link_key(
         context: &Context,
         class: Class,
+        jump_key: KeyKind,
         use_key: UseKey,
         timeout: Timeout,
         completed: bool,
@@ -1172,8 +1177,8 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
             || {
                 if let LinkKeyBinding::After(key) = link_key {
                     let _ = context.keys.send(key.into());
-                    if matches!(class, Class::Blaster) && !matches!(key, KeyBinding::Space) {
-                        let _ = context.keys.send(KeyKind::Space);
+                    if matches!(class, Class::Blaster) && KeyKind::from(key) != jump_key {
+                        let _ = context.keys.send(jump_key);
                     }
                 }
                 Player::UseKey(UseKey {
@@ -1287,6 +1292,7 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
                         return update_link_key(
                             context,
                             state.config.class,
+                            state.config.jump_key,
                             use_key,
                             timeout,
                             completed,
@@ -1302,6 +1308,7 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
                         return update_link_key(
                             context,
                             state.config.class,
+                            state.config.jump_key,
                             use_key,
                             timeout,
                             completed,
@@ -1829,7 +1836,7 @@ fn update_double_jumping_context(
                 {
                     let _ = context
                         .keys
-                        .send(state.config.teleport_key.unwrap_or(KeyKind::Space));
+                        .send(state.config.teleport_key.unwrap_or(state.config.jump_key));
                 } else {
                     let _ = context.keys.send_up(KeyKind::Right);
                     let _ = context.keys.send_up(KeyKind::Left);
@@ -1961,15 +1968,17 @@ fn update_up_jumping_context(
 
     let y_changed = (cur_pos.y - moving.pos.y).abs();
     let (x_distance, _) = x_distance_direction(moving.dest, cur_pos);
-    let key = state.config.upjump_key;
+    let up_jump_key = state.config.upjump_key;
+    let jump_key = state.config.jump_key;
+    let has_teleport_key = state.config.teleport_key.is_some();
     update_moving_axis_context(
         moving,
         cur_pos,
         TIMEOUT,
         |moving| {
             let _ = context.keys.send_down(KeyKind::Up);
-            if key.is_none() {
-                let _ = context.keys.send(KeyKind::Space);
+            if up_jump_key.is_none() || (up_jump_key.is_some() && has_teleport_key) {
+                let _ = context.keys.send(jump_key);
             }
             Player::UpJumping(moving)
         },
@@ -1977,7 +1986,7 @@ fn update_up_jumping_context(
             let _ = context.keys.send_up(KeyKind::Up);
         }),
         |mut moving| {
-            match (moving.completed, key) {
+            match (moving.completed, up_jump_key) {
                 (false, Some(key)) => {
                     let _ = context.keys.send(key);
                     moving = moving.completed(true);
@@ -1988,16 +1997,16 @@ fn update_up_jumping_context(
                         // above a threshold as sending space twice
                         // doesn't work
                         if moving.timeout.total >= SPAM_DELAY {
-                            let _ = context.keys.send(KeyKind::Space);
+                            let _ = context.keys.send(jump_key);
                         }
                     } else {
                         moving = moving.completed(true);
                     }
                 }
                 (true, _) => {
-                    // this is when up jump like blaster still requires up key
+                    // this is when up jump like blaster or mage still requires up key
                     // cancel early to avoid stucking to a rope
-                    if key.is_some() && moving.timeout.total == STOP_UP_KEY_TICK {
+                    if up_jump_key.is_some() && moving.timeout.total == STOP_UP_KEY_TICK {
                         let _ = context.keys.send_up(KeyKind::Up);
                     }
                     if x_distance >= ADJUSTING_MEDIUM_THRESHOLD
@@ -2045,12 +2054,13 @@ fn update_falling_context(
     moving: Moving,
     anchor: Point,
 ) -> Player {
-    const STOP_DOWN_KEY_TICK: u32 = 2;
+    const STOP_DOWN_KEY_TICK: u32 = 3;
     const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
 
     let y_changed = cur_pos.y - anchor.y;
     let (x_distance, _) = x_distance_direction(moving.dest, cur_pos);
     let is_stationary = state.is_stationary;
+    let jump_key = state.config.jump_key;
     if !moving.timeout.started {
         state.last_movement = Some(LastMovement::Falling);
     }
@@ -2062,7 +2072,7 @@ fn update_falling_context(
         |moving| {
             if is_stationary {
                 let _ = context.keys.send_down(KeyKind::Down);
-                let _ = context.keys.send(KeyKind::Space);
+                let _ = context.keys.send(jump_key);
             }
             Player::Falling(moving, anchor)
         },
@@ -2193,7 +2203,7 @@ fn update_unstucking_context(
                 _ => false,
             };
             if send_space {
-                let _ = context.keys.send(KeyKind::Space);
+                let _ = context.keys.send(state.config.jump_key);
             }
             Player::Unstucking(timeout, has_settings)
         },
@@ -2782,7 +2792,8 @@ mod tests {
     use platforms::windows::KeyKind;
 
     use super::{
-        Moving, PlayerState, UseKey, UseKeyStage, update_falling_context, update_use_key_context,
+        Moving, PlayerState, UseKey, UseKeyStage, update_falling_context,
+        update_up_jumping_context, update_use_key_context,
     };
     use crate::{
         ActionKeyDirection, ActionKeyWith, KeyBinding,
@@ -2824,12 +2835,38 @@ mod tests {
     }
 
     #[test]
-    fn up_jumping() {
-        // TODO
+    fn up_jumping_start() {
+        let mut state = PlayerState::default();
+        state.config.jump_key = KeyKind::Space;
+        let mut keys = MockKeySender::new();
+        keys.expect_send_down()
+            .withf(|key| matches!(key, KeyKind::Up))
+            .returning(|_| Ok(()));
+        keys.expect_send()
+            .withf(|key| matches!(key, KeyKind::Space))
+            .returning(|_| Ok(()));
+        let context = Context {
+            keys: Box::leak(Box::new(keys)),
+            ..Default::default()
+        };
+        let pos = Point::new(5, 5);
+        let moving = Moving {
+            pos,
+            dest: pos,
+            ..Default::default()
+        };
+
+        // Space (jump key) only up jump without
+        // up jump key and teleport key
+        update_up_jumping_context(&context, &mut state, pos, moving);
+
+        // TODO more tests
     }
 
     #[test]
     fn falling_start() {
+        let mut state = PlayerState::default();
+        state.config.jump_key = KeyKind::Space;
         let mut keys = MockKeySender::new();
         keys.expect_send_down()
             .withf(|key| matches!(key, KeyKind::Down))
@@ -2842,7 +2879,6 @@ mod tests {
             ..Default::default()
         };
         let pos = Point::new(5, 5);
-        let mut state = PlayerState::default();
         let moving = Moving {
             pos,
             dest: pos,
@@ -2851,6 +2887,7 @@ mod tests {
         // Send keys if stationary
         state.is_stationary = true;
         update_falling_context(&context, &mut state, pos, moving, Point::default());
+        let _ = context.keys;
 
         // Don't send keys if not stationary
         let mut keys = MockKeySender::new();
@@ -2868,6 +2905,7 @@ mod tests {
     fn falling_update() {
         let mut keys = MockKeySender::new();
         keys.expect_send_up()
+            .times(1)
             .withf(|key| matches!(key, KeyKind::Down))
             .returning(|_| Ok(()));
         let context = Context {
@@ -2898,7 +2936,11 @@ mod tests {
             Player::Falling(
                 Moving {
                     completed: true,
-                    timeout: Timeout { current: 1, .. },
+                    timeout: Timeout {
+                        current: 1,
+                        total: 3,
+                        ..
+                    },
                     ..
                 },
                 _

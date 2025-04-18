@@ -19,6 +19,7 @@ const LABEL_CLASS: &str = "flex-1";
 const INPUT_CLASS: &str = "w-44 rounded border border-gray-300 px-1 text-gray-700 h-6 outline-none";
 const ROPE_LIFT: &str = "Rope Lift";
 const TELEPORT: &str = "Teleport";
+const JUMP: &str = "Jump";
 const UP_JUMP: &str = "Up Jump";
 const INTERACT: &str = "Interact";
 const CASH_SHOP: &str = "Cash Shop";
@@ -105,6 +106,18 @@ pub fn Configuration(
                         });
                     },
                     value: config_view().teleport_key,
+                }
+                KeyBindingConfigurationInput {
+                    label: JUMP,
+                    label_active: active,
+                    is_disabled: is_disabled(),
+                    on_input: move |key: Option<KeyBindingConfiguration>| {
+                        on_config(ConfigurationData {
+                            jump_key: key.unwrap(),
+                            ..config_view.peek().clone()
+                        });
+                    },
+                    value: config_view().jump_key,
                 }
                 KeyBindingConfigurationInput {
                     label: UP_JUMP,
