@@ -10,8 +10,7 @@ on:
       - "master"
       - "v*.*.*"
 
-permissions:
-  contents: write-all
+permissions: write-all
 
 env:
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
