@@ -146,6 +146,7 @@ struct DefaultRequestHandler<'a> {
     player: &'a mut PlayerState,
     minimap: &'a mut MinimapState,
     key_sender: &'a broadcast::Sender<KeyBinding>,
+    wgc_capture: Option<&'a mut WgcCapture>,
 }
 
 impl DefaultRequestHandler<'_> {
@@ -210,6 +211,11 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_update_configuration(&mut self, config: Configuration) {
+        if let Some(ref mut wgc_capture) = self.wgc_capture {
+            if self.config.capture_mode != config.capture_mode {
+                wgc_capture.stop_capture();
+            }
+        }
         *self.config = config;
         *self.buffs = config_buffs(self.config);
         self.player.reset();
@@ -325,7 +331,7 @@ fn update_loop() {
     let key_sender = broadcast::channel::<KeyBinding>(1).0; // Callback to UI
     let mut key_receiver = KeyReceiver::new(handle);
     let mut bitblt_capture = BitBltCapture::new(handle);
-    let mut wgc_capture = WgcCapture::new(handle);
+    let mut wgc_capture = WgcCapture::new(handle, MS_PER_TICK);
     let mut player_state = PlayerState::default();
     let mut minimap_state = MinimapState::default();
     let mut skill_states = SkillKind::iter()
@@ -341,7 +347,7 @@ fn update_loop() {
     let mut context = Context {
         keys: Box::leak(Box::new(keys)),
         minimap: Minimap::Detecting,
-        player: Player::Detecting,
+        player: Player::Idle,
         skills: [Skill::Detecting],
         buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
         halting: true,
@@ -388,6 +394,7 @@ fn update_loop() {
             player: &mut player_state,
             minimap: &mut minimap_state,
             key_sender: &key_sender,
+            wgc_capture: wgc_capture.as_mut().ok(),
         };
         poll_request(&mut handler);
         poll_key(&mut handler, &mut key_receiver);

@@ -46,6 +46,8 @@ use windows::{
 
 use super::{Error, Frame, Handle, HandleCell};
 
+const MAX_FRAME_FAILURE: u32 = 3;
+
 #[derive(Debug)]
 struct WgcCaptureInner {
     handle: HWND,
@@ -60,15 +62,32 @@ struct WgcCaptureInner {
     frame_pool: Direct3D11CaptureFramePool,
     frame_last_content_size: SizeInt32,
     frame_arrived_token: i64,
+    frame_timeout: u64,
     frame_rx: mpsc::Receiver<Message>,
+    consecutive_failure: u32,
 }
 
 impl WgcCaptureInner {
     fn grab_with_timeout(&mut self) -> Result<Frame, Error> {
         let message = self
             .frame_rx
-            .recv_timeout(Duration::from_millis(33))
-            .map_err(|_| Error::FrameNotAvailable)?;
+            .recv_timeout(Duration::from_millis(self.frame_timeout))
+            .map_err(|_| {
+                self.consecutive_failure += 1;
+                // I don't know man maybe I am just missing something from the docs.
+                // I can't find how to handle device loss without a swap chain.
+                // Even if there is one, I tried and it still doesn't work.
+                // When the game changes resolution or going to cash shop, none of the re-creation
+                // stuff below works. It doesn't even get called back. The item closed callback
+                // sometimes works an sometimes doesn't. This feels like a hack but it works.
+                // I referenced other people code for error handling but this shit still
+                // doesn't work.
+                if self.consecutive_failure >= MAX_FRAME_FAILURE {
+                    Error::WindowNotFound
+                } else {
+                    Error::FrameNotAvailable
+                }
+            })?;
 
         let frame = match message {
             Message::FrameArrived(frame) => frame,
@@ -98,6 +117,7 @@ impl WgcCaptureInner {
                 surface_desc.Format,
             )?);
         }
+        self.consecutive_failure = 0;
 
         let texture = self.d3d11_texture.as_ref().unwrap();
         let mut resource = D3D11_MAPPED_SUBRESOURCE::default();
@@ -183,11 +203,12 @@ pub struct WgcCapture {
     d3d11_device: ID3D11Device,
     d3d11_context: ID3D11DeviceContext,
     d3d_device: IDirect3DDevice,
+    frame_timeout: u64,
     inner: Option<WgcCaptureInner>,
 }
 
 impl WgcCapture {
-    pub fn new(handle: Handle) -> Result<Self, Error> {
+    pub fn new(handle: Handle, frame_timeout: u64) -> Result<Self, Error> {
         let (d3d11_device, d3d11_context) = create_d3d11_device()?;
         let d3d_device = create_d3d_device(&d3d11_device)?;
         Ok(Self {
@@ -195,6 +216,7 @@ impl WgcCapture {
             d3d11_device,
             d3d11_context,
             d3d_device,
+            frame_timeout,
             inner: None,
         })
     }
@@ -202,7 +224,7 @@ impl WgcCapture {
     pub fn grab(&mut self) -> Result<Frame, Error> {
         if self.inner.is_none() {
             if let Some(handle) = self.handle.as_inner() {
-                self.start_capture(handle).unwrap();
+                self.start_capture(handle)?;
             }
         }
 
@@ -222,6 +244,7 @@ impl WgcCapture {
 
     fn start_capture(&mut self, handle: HWND) -> Result<(), Error> {
         let (tx, rx) = mpsc::channel::<Message>();
+        let frame_format = DirectXPixelFormat::B8G8R8A8UIntNormalized;
 
         let item = create_graphics_capture_item(handle)?;
         let item_closed_tx = tx.clone();
@@ -230,7 +253,6 @@ impl WgcCapture {
             Ok(())
         }))?;
 
-        let frame_format = DirectXPixelFormat::B8G8R8A8UIntNormalized;
         let frame_last_content_size = item.Size()?;
         let (session, frame_pool) = create_capture_session(&self.d3d_device, &item, frame_format)?;
         let frame_arrived_token =
@@ -259,7 +281,9 @@ impl WgcCapture {
             frame_pool,
             frame_last_content_size,
             frame_arrived_token,
+            frame_timeout: self.frame_timeout,
             frame_rx: rx,
+            consecutive_failure: 0,
         });
         Ok(())
     }

@@ -24,7 +24,8 @@ fn main() {
     let legion_luck_buff = dir.join("legion_luck_buff_ideal_ratio.png");
     let cash_shop = dir.join("cash_shop.png");
     let hp_start = dir.join("hp_start_ideal_ratio.png");
-    let hp_separator = dir.join("hp_separator_ideal_ratio.png");
+    let hp_separator_1 = dir.join("hp_separator_ideal_ratio_1.png");
+    let hp_separator_2 = dir.join("hp_separator_ideal_ratio_2.png");
     let hp_shield = dir.join("hp_shield_ideal_ratio.png");
     let hp_end = dir.join("hp_end_ideal_ratio.png");
 
@@ -121,8 +122,12 @@ fn main() {
         hp_start.to_str().unwrap()
     );
     println!(
-        "cargo:rustc-env=HP_SEPARATOR_TEMPLATE={}",
-        hp_separator.to_str().unwrap()
+        "cargo:rustc-env=HP_SEPARATOR_1_TEMPLATE={}",
+        hp_separator_1.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=HP_SEPARATOR_2_TEMPLATE={}",
+        hp_separator_2.to_str().unwrap()
     );
     println!(
         "cargo:rustc-env=HP_SHIELD_TEMPLATE={}",

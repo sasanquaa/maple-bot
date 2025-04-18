@@ -313,30 +313,32 @@ pub fn Configuration(
                 }
             }
             ConfigHeader { text: "Others", disabled: is_disabled(), class: "mt-2" }
-            p { class: "font-normal italic text-xs text-gray-400 mb-1",
-                "Class affects only link key timing except Blaster"
-            }
-            ConfigEnumSelect::<Class> {
-                label: "Class",
-                on_select: move |class| {
-                    on_config(ConfigurationData {
-                        class,
-                        ..config_view.peek().clone()
-                    });
-                },
-                disabled: is_disabled(),
-                selected: config_view().class,
-            }
-            ConfigEnumSelect::<CaptureMode> {
-                label: "Capture Mode",
-                on_select: move |capture_mode| {
-                    on_config(ConfigurationData {
-                        capture_mode,
-                        ..config_view.peek().clone()
-                    });
-                },
-                disabled: is_disabled(),
-                selected: config_view().capture_mode,
+            div { class: "space-y-2",
+                p { class: "font-normal italic text-xs text-gray-400 mb-1",
+                    "Class affects only link key timing except Blaster"
+                }
+                ConfigEnumSelect::<Class> {
+                    label: "Class",
+                    on_select: move |class| {
+                        on_config(ConfigurationData {
+                            class,
+                            ..config_view.peek().clone()
+                        });
+                    },
+                    disabled: is_disabled(),
+                    selected: config_view().class,
+                }
+                ConfigEnumSelect::<CaptureMode> {
+                    label: "Capture Mode",
+                    on_select: move |capture_mode| {
+                        on_config(ConfigurationData {
+                            capture_mode,
+                            ..config_view.peek().clone()
+                        });
+                    },
+                    disabled: is_disabled(),
+                    selected: config_view().capture_mode,
+                }
             }
         }
     }
