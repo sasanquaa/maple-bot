@@ -123,6 +123,7 @@ pub enum CaptureMode {
     BitBlt,
     #[strum(to_string = "Windows 10 (1903 and up)")] // Thanks OBS
     WindowsGraphicsCapture,
+    BitBltArea,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

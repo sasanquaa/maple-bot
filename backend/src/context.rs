@@ -15,7 +15,7 @@ use log::{debug, info};
 use mockall::automock;
 use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
 use platforms::windows::{
-    self, BitBltCapture, Error, Handle, KeyKind, KeyReceiver, Keys, WgcCapture,
+    self, BitBltCapture, Error, Handle, KeyKind, KeyReceiver, Keys, WgcCapture, WindowBox,
 };
 use strum::IntoEnumIterator;
 use tokio::sync::broadcast;
@@ -148,6 +148,7 @@ struct DefaultRequestHandler<'a> {
     minimap: &'a mut MinimapState,
     key_sender: &'a broadcast::Sender<KeyBinding>,
     wgc_capture: Option<&'a mut WgcCapture>,
+    window_box: &'a WindowBox,
 }
 
 impl DefaultRequestHandler<'_> {
@@ -239,10 +240,15 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_update_settings(&mut self, settings: Settings) {
-        if let Some(ref mut wgc_capture) = self.wgc_capture {
-            if self.settings.capture_mode != settings.capture_mode {
+        if !matches!(settings.capture_mode, CaptureMode::WindowsGraphicsCapture) {
+            if let Some(ref mut wgc_capture) = self.wgc_capture {
                 wgc_capture.stop_capture();
             }
+        }
+        if !matches!(settings.capture_mode, CaptureMode::BitBltArea) {
+            self.window_box.hide();
+        } else {
+            self.window_box.show();
         }
         *self.settings = settings;
     }
@@ -355,6 +361,8 @@ fn update_loop() {
         halting: true,
     };
     let mut settings = query_settings(); // Override by UI
+    let mut window_box = WindowBox::default();
+    window_box.hide();
 
     loop_with_fps(FPS, || {
         let mat = match settings.capture_mode {
@@ -364,6 +372,7 @@ fn update_loop() {
                 .ok()
                 .and_then(|capture| capture.grab().ok())
                 .map(OwnedMat::new),
+            CaptureMode::BitBltArea => window_box.grab().ok().map(OwnedMat::new),
         };
         let Some(mat) = mat else {
             return;
@@ -397,6 +406,7 @@ fn update_loop() {
             minimap: &mut minimap_state,
             key_sender: &key_sender,
             wgc_capture: wgc_capture.as_mut().ok(),
+            window_box: &window_box,
         };
         poll_request(&mut handler);
         poll_key(&mut handler, &mut key_receiver);

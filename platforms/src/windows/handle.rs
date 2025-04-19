@@ -6,30 +6,51 @@ use windows::Win32::{
 };
 
 #[derive(Clone, Debug)]
+enum HandleCellKind {
+    Dynamic {
+        handle: Handle,
+        inner: Cell<Option<HWND>>,
+    },
+    Fixed(HWND),
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct HandleCell {
-    handle: Handle,
-    inner: Cell<Option<HWND>>,
+    kind: HandleCellKind,
 }
 
 impl HandleCell {
     pub fn new(handle: Handle) -> Self {
         Self {
-            handle,
-            inner: Cell::new(None),
+            kind: HandleCellKind::Dynamic {
+                handle,
+                inner: Cell::new(None),
+            },
+        }
+    }
+
+    pub fn new_fixed(handle: HWND) -> Self {
+        Self {
+            kind: HandleCellKind::Fixed(handle),
         }
     }
 
     #[inline]
     pub fn as_inner(&self) -> Option<HWND> {
-        if self.inner.get().is_none() {
-            self.inner.set(self.handle.query_handle());
+        match &self.kind {
+            HandleCellKind::Dynamic { handle, inner } => {
+                if inner.get().is_none() {
+                    inner.set(handle.query_handle());
+                }
+                let handle_inner = inner.get()?;
+                if is_class_matched(handle_inner, handle.class) {
+                    return Some(handle_inner);
+                }
+                inner.set(None);
+                None
+            }
+            HandleCellKind::Fixed(hwnd) => Some(*hwnd),
         }
-        let inner = self.inner.get()?;
-        if is_class_matched(inner, self.handle.class) {
-            return Some(inner);
-        }
-        self.inner.set(None);
-        None
     }
 }
 
