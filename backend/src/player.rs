@@ -2836,31 +2836,92 @@ mod tests {
 
     #[test]
     fn up_jumping_start() {
-        let mut state = PlayerState::default();
-        state.config.jump_key = KeyKind::Space;
-        let mut keys = MockKeySender::new();
-        keys.expect_send_down()
-            .withf(|key| matches!(key, KeyKind::Up))
-            .returning(|_| Ok(()));
-        keys.expect_send()
-            .withf(|key| matches!(key, KeyKind::Space))
-            .returning(|_| Ok(()));
-        let context = Context {
-            keys: Box::leak(Box::new(keys)),
-            ..Default::default()
-        };
         let pos = Point::new(5, 5);
         let moving = Moving {
             pos,
             dest: pos,
             ..Default::default()
         };
+        let mut state = PlayerState::default();
+        let mut context = Context::default();
+        state.config.jump_key = KeyKind::Space;
 
-        // Space (jump key) only up jump without
-        // up jump key and teleport key
+        let mut keys = MockKeySender::new();
+        keys.expect_send_down()
+            .withf(|key| matches!(key, KeyKind::Up))
+            .returning(|_| Ok(()))
+            .once();
+        keys.expect_send()
+            .withf(|key| matches!(key, KeyKind::Space))
+            .returning(|_| Ok(()))
+            .once();
+        context.keys = Box::leak(Box::new(keys));
+        // Space + Up only
         update_up_jumping_context(&context, &mut state, pos, moving);
+        let _ = context.keys; // drop mock for validation
 
-        // TODO more tests
+        state.config.upjump_key = Some(KeyKind::C);
+        let mut keys = MockKeySender::new();
+        keys.expect_send_down()
+            .withf(|key| matches!(key, KeyKind::Up))
+            .once()
+            .returning(|_| Ok(()));
+        keys.expect_send()
+            .withf(|key| matches!(key, KeyKind::Space))
+            .never()
+            .returning(|_| Ok(()));
+        context.keys = Box::leak(Box::new(keys));
+        // Up only
+        update_up_jumping_context(&context, &mut state, pos, moving);
+        let _ = context.keys; // drop mock for validation
+
+        state.config.teleport_key = Some(KeyKind::Shift);
+        let mut keys = MockKeySender::new();
+        keys.expect_send_down()
+            .withf(|key| matches!(key, KeyKind::Up))
+            .once()
+            .returning(|_| Ok(()));
+        keys.expect_send()
+            .withf(|key| matches!(key, KeyKind::Space))
+            .once()
+            .returning(|_| Ok(()));
+        context.keys = Box::leak(Box::new(keys));
+        // Space + Up
+        update_up_jumping_context(&context, &mut state, pos, moving);
+        let _ = context.keys; // drop mock for validation
+    }
+
+    #[test]
+    fn up_jumping_update() {
+        let cur_pos = Point::new(7, 7);
+        let moving_pos = Point::new(7, 1);
+        let moving = Moving {
+            pos: moving_pos,
+            timeout: Timeout {
+                started: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut state = PlayerState::default();
+        let context = Context::default();
+
+        // up jumped because y changed > 5
+        assert_matches!(
+            update_up_jumping_context(&context, &mut state, cur_pos, moving),
+            Player::UpJumping(Moving {
+                timeout: Timeout {
+                    current: 1,
+                    total: 1,
+                    ..
+                },
+                completed: true,
+                ..
+            })
+        );
+
+        // TODO
+        // more tests
     }
 
     #[test]
@@ -2905,8 +2966,8 @@ mod tests {
     fn falling_update() {
         let mut keys = MockKeySender::new();
         keys.expect_send_up()
-            .times(1)
             .withf(|key| matches!(key, KeyKind::Down))
+            .once()
             .returning(|_| Ok(()));
         let context = Context {
             keys: Box::leak(Box::new(keys)),

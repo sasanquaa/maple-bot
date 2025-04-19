@@ -1,4 +1,5 @@
 use std::{
+    any::Any,
     env,
     fmt::Debug,
     fs::File,
@@ -77,7 +78,7 @@ pub trait Contextual {
 
 /// Represents an object that can send keys
 #[cfg_attr(test, automock)]
-pub trait KeySender: Debug {
+pub trait KeySender: Debug + Any {
     fn send(&self, kind: KeyKind) -> Result<(), Error>;
 
     fn send_click_to_focus(&self) -> Result<(), Error>;
