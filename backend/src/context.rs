@@ -362,7 +362,9 @@ fn update_loop() {
     };
     let mut settings = query_settings(); // Override by UI
     let mut window_box = WindowBox::default();
-    window_box.hide();
+    if !matches!(settings.capture_mode, CaptureMode::BitBltArea) {
+        window_box.hide();
+    }
 
     loop_with_fps(FPS, || {
         let mat = match settings.capture_mode {
