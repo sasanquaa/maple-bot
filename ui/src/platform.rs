@@ -26,7 +26,9 @@ pub fn Platforms(
     use_future(move || async move {
         let mut key_receiver = key_receiver().await;
         loop {
-            let received_key = key_receiver.recv().await.unwrap();
+            let Ok(received_key) = key_receiver.recv().await else {
+                continue;
+            };
             if minimap.peek().is_none() {
                 continue;
             }
