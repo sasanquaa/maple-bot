@@ -11,15 +11,40 @@ pub fn use_auto_numeric(
     id: Memo<String>,
     value: String,
     on_value: Option<EventHandler<String>>,
+    minimum_value: String,
     maximum_value: String,
     suffix: String,
 ) {
     let has_input = on_value.is_some();
     let value = use_memo(use_reactive!(|value| value));
+    let minimum_value = use_memo(move || minimum_value.clone());
     let maximum_value = use_memo(move || maximum_value.clone());
     let suffix = use_memo(move || suffix.clone());
+    let mut task = use_signal::<Option<Task>>(|| None);
 
     // I am had enough, this stuff way too hard
+    use_effect(move || {
+        if let Some(task) = task.take() {
+            task.cancel();
+        }
+        let id = id();
+        let value = value();
+        task.set(Some(spawn(async move {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            let js = format!(
+                r#"
+                const element = document.getElementById("{}");
+                element.dispatchEvent(new CustomEvent("autoNumeric:set", {{
+                    detail: {{
+                        value: {}
+                    }}
+                }}));
+                "#,
+                id, value
+            );
+            document::eval(js.as_str());
+        })));
+    });
     use_future(move || async move {
         let js = format!(
             r#"
@@ -27,9 +52,9 @@ pub fn use_auto_numeric(
             const hasInput = {};
             const autoNumeric = new AutoNumeric(element, {{
                 allowDecimalPadding: false,
-                emptyInputBehavior: "zero",
+                emptyInputBehavior: "{}",
                 maximumValue: "{}",
-                minimumValue: "0",
+                minimumValue: "{}",
                 suffixText: "{}",
                 defaultValueOverride: "{}"
             }});
@@ -49,40 +74,21 @@ pub fn use_auto_numeric(
             "#,
             id(),
             has_input,
+            minimum_value(),
             maximum_value(),
+            minimum_value(),
             suffix(),
             value()
         );
         let mut element = document::eval(js.as_str());
-        let mut task = None::<Task>;
-        use_effect(move || {
-            let js = format!(
-                r#"
-                const element = document.getElementById("{}");
-                element.dispatchEvent(new CustomEvent("autoNumeric:set", {{
-                    detail: {{
-                        value: {}
-                    }}
-                }}));
-                "#,
-                id, value
-            );
-            document::eval(js.as_str());
-        });
         loop {
             let value = element.recv::<String>().await;
             if let Err(EvalError::Finished) = value {
                 element = document::eval(js.as_str());
                 continue;
             };
-            if let Some(task) = task {
-                task.cancel();
-            }
             if let Some(on_value) = on_value {
-                task = Some(spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    on_value(value.unwrap());
-                }));
+                on_value(value.unwrap());
             }
         }
     });
@@ -240,6 +246,7 @@ pub fn PercentageInput(
             }
         })),
         "100".to_string(),
+        "0".to_string(),
         "%".to_string(),
     );
 
@@ -254,17 +261,17 @@ pub fn PercentageInput(
     }
 }
 
+// Please https://github.com/DioxusLabs/dioxus/issues/3938
 #[component]
 pub fn NumberInputU32(
-    GenericInputProps {
-        label,
-        label_class,
-        div_class,
-        input_class,
-        disabled,
-        on_input,
-        value,
-    }: GenericInputProps<u32>,
+    label: String,
+    #[props(default = String::default())] label_class: String,
+    #[props(default = String::default())] div_class: String,
+    #[props(default = String::default())] input_class: String,
+    #[props(default = false)] disabled: bool,
+    minimum_value: u32,
+    on_input: EventHandler<u32>,
+    value: u32,
 ) -> Element {
     rsx! {
         PrimIntInput {
@@ -272,6 +279,7 @@ pub fn NumberInputU32(
             label_class,
             div_class,
             input_class,
+            minimum_value,
             disabled,
             on_input,
             value,
@@ -311,6 +319,7 @@ fn PrimIntInput<T: 'static + IntoAttributeValue + PrimInt + FromStr + Display>(
     #[props(default = String::default())] div_class: String,
     #[props(default = String::default())] input_class: String,
     #[props(default = None)] maximum_value: Option<T>,
+    #[props(default = T::min_value())] minimum_value: T,
     #[props(default = String::default())] suffix: String,
     #[props(default = false)] disabled: bool,
     on_input: EventHandler<T>,
@@ -325,6 +334,7 @@ fn PrimIntInput<T: 'static + IntoAttributeValue + PrimInt + FromStr + Display>(
                 on_input(value)
             }
         })),
+        minimum_value.to_string(),
         maximum_value.unwrap_or(T::max_value()).to_string(),
         suffix,
     );

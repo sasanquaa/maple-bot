@@ -485,6 +485,7 @@ fn ActionItem(
             wait_after_millis_id,
             wait_after_move_millis.to_string(),
             None,
+            "0".to_string(),
             u64::MAX.to_string(),
             "ms".to_string(),
         );
@@ -531,6 +532,7 @@ fn ActionItem(
             wait_before_use_millis_id,
             wait_before_use_millis.to_string(),
             None,
+            "0".to_string(),
             u64::MAX.to_string(),
             "ms".to_string(),
         );
@@ -538,6 +540,7 @@ fn ActionItem(
             wait_after_use_millis_id,
             wait_after_use_millis.to_string(),
             None,
+            "0".to_string(),
             u64::MAX.to_string(),
             "ms".to_string(),
         );
@@ -893,6 +896,7 @@ fn ActionKeyInput(
                 div_class: DIV_CLASS,
                 input_class: "{INPUT_CLASS} p-1",
                 disabled,
+                minimum_value: 1,
                 on_input: move |count| {
                     on_input(Action::Key(ActionKey { count, ..value }));
                 },

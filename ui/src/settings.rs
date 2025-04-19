@@ -1,10 +1,7 @@
 use backend::{CaptureMode, KeyBindingConfiguration, Settings as SettingsData};
 use dioxus::prelude::*;
 
-use crate::{
-    AppMessage,
-    configuration::{ConfigEnumSelect, KeyBindingConfigurationInput},
-};
+use crate::{AppMessage, configuration::ConfigEnumSelect, key::KeyBindingConfigurationInput};
 
 const TOGGLE_ACTIONS: &str = "Start/Stop Actions";
 const PLATFORM_START: &str = "Mark Platform Start";

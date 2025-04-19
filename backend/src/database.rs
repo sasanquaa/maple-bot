@@ -323,7 +323,7 @@ pub struct ActionMove {
     pub wait_after_move_millis: u64,
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 pub struct ActionKey {
     pub key: KeyBinding,
     #[serde(default)]
@@ -337,6 +337,23 @@ pub struct ActionKey {
     pub wait_before_use_millis: u64,
     pub wait_after_use_millis: u64,
     pub queue_to_front: Option<bool>,
+}
+
+impl Default for ActionKey {
+    fn default() -> Self {
+        Self {
+            key: KeyBinding::default(),
+            link_key: None,
+            count: count_default(),
+            position: None,
+            condition: ActionCondition::default(),
+            direction: ActionKeyDirection::default(),
+            with: ActionKeyWith::default(),
+            wait_before_use_millis: 0,
+            wait_after_use_millis: 0,
+            queue_to_front: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Display, EnumString, EnumIter, PartialEq, Debug, Serialize, Deserialize)]

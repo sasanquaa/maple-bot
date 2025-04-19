@@ -1,5 +1,98 @@
-use backend::KeyBinding;
+use backend::{KeyBinding, KeyBindingConfiguration};
 use dioxus::prelude::*;
+
+use crate::icons::XIcon;
+
+#[component]
+pub fn KeyBindingConfigurationInput(
+    label: &'static str,
+    label_active: Signal<Option<&'static str>>,
+    is_disabled: bool,
+    #[props(default = false)] is_optional: bool,
+    #[props(default = false)] is_toggleable: bool,
+    on_input: EventHandler<Option<KeyBindingConfiguration>>,
+    value: Option<KeyBindingConfiguration>,
+    children: Element,
+) -> Element {
+    debug_assert!(is_optional || value.is_some());
+
+    let is_active = use_memo(move || label_active() == Some(label));
+    let is_enabled = value.map(|key| key.enabled).unwrap_or(true);
+    let input_width = if is_toggleable { "w-24" } else { "w-44" };
+
+    rsx! {
+        div { class: "flex flex-col space-y-4 py-3 border-b border-gray-100",
+            div { class: "flex items-center space-x-4",
+                div { class: "flex-1",
+                    span {
+                        class: "text-xs text-gray-700 data-[disabled]:text-gray-400",
+                        "data-disabled": is_disabled.then_some(true),
+                        {label}
+                        if is_optional {
+                            span { class: "text-xs text-gray-400 ml-1", "(Optional)" }
+                        }
+                    }
+                }
+                div { class: "flex items-center space-x-2",
+                    div { class: "relative",
+                        KeyInput {
+                            class: "border rounded border-gray-300 h-7 {input_width} disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400",
+                            disabled: is_disabled,
+                            is_active: is_active(),
+                            on_active: move |is_active: bool| {
+                                label_active.set(is_active.then_some(label));
+                            },
+                            on_input: move |key| {
+                                (on_input)(
+                                    Some(KeyBindingConfiguration {
+                                        key,
+                                        ..value.unwrap_or_default()
+                                    }),
+                                );
+                            },
+                            value: value.map(|key| key.key),
+                        }
+                        if is_optional && !is_active() && value.is_some() {
+                            button {
+                                class: "absolute right-0 top-0 flex items-center h-full w-4",
+                                onclick: move |_| {
+                                    (on_input)(None);
+                                },
+                                XIcon { class: "w-2 h-2 text-red-400 fill-current" }
+                            }
+                        }
+                    }
+                    if is_toggleable {
+                        button {
+                            r#type: "button",
+                            disabled: is_disabled || value.is_none(),
+                            class: {
+                                let color = if is_enabled { "button-primary" } else { "button-danger" };
+                                format!("w-18 h-7 {color}")
+                            },
+                            onclick: move |_| {
+                                if let Some(config) = value {
+                                    (on_input)(
+                                        Some(KeyBindingConfiguration {
+                                            enabled: !config.enabled,
+                                            ..config
+                                        }),
+                                    );
+                                }
+                            },
+                            if is_enabled {
+                                "Enabled"
+                            } else {
+                                "Disabled"
+                            }
+                        }
+                    }
+                }
+            }
+            {children}
+        }
+    }
+}
 
 #[derive(PartialEq, Props, Clone)]
 pub struct KeyInputProps {

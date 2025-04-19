@@ -86,6 +86,7 @@ fn AutoMobbingInput(
             label_class: LABEL_CLASS,
             input_class: INPUT_CLASS,
             disabled,
+            minimum_value: 1,
             on_input: move |key_count| {
                 on_input(AutoMobbing { key_count, ..value });
             },
