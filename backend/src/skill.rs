@@ -1,3 +1,8 @@
+use std::{
+    mem,
+    ops::{Index, IndexMut},
+};
+
 use anyhow::Result;
 use log::debug;
 use opencv::core::{MatTraitConst, Point, Rect, Vec4b};
@@ -32,6 +37,25 @@ pub enum Skill {
 #[derive(Clone, Copy, Debug, EnumIter)]
 pub enum SkillKind {
     ErdaShower,
+    // TODO: Sol Janus?
+}
+
+impl SkillKind {
+    pub const COUNT: usize = mem::variant_count::<SkillKind>();
+}
+
+impl Index<SkillKind> for [Skill; SkillKind::COUNT] {
+    type Output = Skill;
+
+    fn index(&self, index: SkillKind) -> &Self::Output {
+        self.get(index as usize).unwrap()
+    }
+}
+
+impl IndexMut<SkillKind> for [Skill; SkillKind::COUNT] {
+    fn index_mut(&mut self, index: SkillKind) -> &mut Self::Output {
+        self.get_mut(index as usize).unwrap()
+    }
 }
 
 impl Contextual for Skill {

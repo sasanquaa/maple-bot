@@ -4,7 +4,6 @@ use std::{
     fmt::Debug,
     fs::File,
     io::Write,
-    mem,
     sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant},
@@ -15,7 +14,7 @@ use log::{debug, info};
 use mockall::automock;
 use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
 use platforms::windows::{
-    self, BitBltCapture, Error, Handle, KeyKind, KeyReceiver, Keys, WgcCapture, WindowBox,
+    self, BitBltCapture, Error, Handle, KeyKind, KeyReceiver, Keys, WgcCapture, WindowBoxCapture,
 };
 use strum::IntoEnumIterator;
 use tokio::sync::broadcast;
@@ -34,17 +33,8 @@ use crate::{
     skill::{Skill, SkillKind, SkillState},
 };
 
-// TODO: fix this later...
-pub const ERDA_SHOWER_SKILL_POSITION: usize = 0;
-pub const RUNE_BUFF_POSITION: usize = 0;
 const FPS: u32 = 30;
 pub const MS_PER_TICK: u64 = 1000 / FPS as u64;
-const SAYRAM_ELIXIR_BUFF_POSITION: usize = 1;
-const AURELIA_ELIXIR_BUFF_POSITION: usize = 2;
-const EXP_X3_BUFF_POSITION: usize = 3;
-const BONUS_EXP_BUFF_POSITION: usize = 4;
-const LEGION_WEALTH_BUFF_POSITION: usize = 5;
-const LEGION_LUCK_BUFF_POSITION: usize = 6;
 
 /// Represents a control flow after a context update
 pub enum ControlFlow<T> {
@@ -117,8 +107,8 @@ pub struct Context {
     pub keys: &'static dyn KeySender,
     pub minimap: Minimap,
     pub player: Player,
-    pub skills: [Skill; mem::variant_count::<SkillKind>()],
-    pub buffs: [Buff; mem::variant_count::<BuffKind>()],
+    pub skills: [Skill; SkillKind::COUNT],
+    pub buffs: [Buff; BuffKind::COUNT],
     pub halting: bool,
 }
 
@@ -129,8 +119,8 @@ impl Default for Context {
             keys: Box::leak(Box::new(MockKeySender::new())),
             minimap: Minimap::Detecting,
             player: Player::Detecting,
-            skills: [Skill::Detecting; mem::variant_count::<SkillKind>()],
-            buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
+            skills: [Skill::Detecting; SkillKind::COUNT],
+            buffs: [Buff::NoBuff; BuffKind::COUNT],
             halting: false,
         }
     }
@@ -140,15 +130,15 @@ struct DefaultRequestHandler<'a> {
     context: &'a mut Context,
     config: &'a mut Configuration,
     settings: &'a mut Settings,
-    buffs: &'a mut Vec<(usize, KeyBinding)>,
+    buffs: &'a mut Vec<(BuffKind, KeyBinding)>,
     actions: &'a mut Vec<Action>,
     rotator: &'a mut Rotator,
-    detector: &'a CachedDetector,
+    mat: Option<&'a OwnedMat>,
     player: &'a mut PlayerState,
     minimap: &'a mut MinimapState,
     key_sender: &'a broadcast::Sender<KeyBinding>,
     wgc_capture: Option<&'a mut WgcCapture>,
-    window_box: &'a WindowBox,
+    window_box_capture: &'a WindowBoxCapture,
 }
 
 impl DefaultRequestHandler<'_> {
@@ -246,9 +236,9 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             }
         }
         if !matches!(settings.capture_mode, CaptureMode::BitBltArea) {
-            self.window_box.hide();
+            self.window_box_capture.hide();
         } else {
-            self.window_box.show();
+            self.window_box_capture.show();
         }
         *self.settings = settings;
     }
@@ -264,7 +254,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             state: self.context.player.to_string(),
             normal_action: self.player.normal_action_name(),
             priority_action: self.player.priority_action_name(),
-            erda_shower_state: self.context.skills[ERDA_SHOWER_SKILL_POSITION].to_string(),
+            erda_shower_state: self.context.skills[SkillKind::ErdaShower].to_string(),
             destinations: self
                 .player
                 .last_destinations
@@ -280,7 +270,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_minimap_frame(&self) -> Option<(Vec<u8>, usize, usize)> {
-        extract_minimap(self.context, self.detector.mat())
+        self.mat.and_then(|mat| extract_minimap(self.context, mat))
     }
 
     fn on_minimap_platforms_bound(&self) -> Option<Bound> {
@@ -338,16 +328,7 @@ fn update_loop() {
     };
     let key_sender = broadcast::channel::<KeyBinding>(1).0; // Callback to UI
     let mut key_receiver = KeyReceiver::new(handle);
-    let mut bitblt_capture = BitBltCapture::new(handle);
-    let mut wgc_capture = WgcCapture::new(handle, MS_PER_TICK);
-    let mut player_state = PlayerState::default();
-    let mut minimap_state = MinimapState::default();
-    let mut skill_states = SkillKind::iter()
-        .map(SkillState::new)
-        .collect::<Vec<SkillState>>();
-    let mut buff_states = BuffKind::iter()
-        .map(BuffState::new)
-        .collect::<Vec<BuffState>>();
+
     let mut rotator = Rotator::default();
     let mut actions = Vec::<Action>::new();
     let mut config = query_configs().unwrap().into_iter().next().unwrap(); // Override by UI
@@ -357,14 +338,26 @@ fn update_loop() {
         minimap: Minimap::Detecting,
         player: Player::Idle,
         skills: [Skill::Detecting],
-        buffs: [Buff::NoBuff; mem::variant_count::<BuffKind>()],
+        buffs: [Buff::NoBuff; BuffKind::COUNT],
         halting: true,
     };
     let mut settings = query_settings(); // Override by UI
-    let mut window_box = WindowBox::default();
+
+    let mut bitblt_capture = BitBltCapture::new(handle);
+    let mut wgc_capture = WgcCapture::new(handle, MS_PER_TICK);
+    let mut window_box_capture = WindowBoxCapture::default();
     if !matches!(settings.capture_mode, CaptureMode::BitBltArea) {
-        window_box.hide();
+        window_box_capture.hide();
     }
+
+    let mut player_state = PlayerState::default();
+    let mut minimap_state = MinimapState::default();
+    let mut skill_states = SkillKind::iter()
+        .map(SkillState::new)
+        .collect::<Vec<SkillState>>();
+    let mut buff_states = BuffKind::iter()
+        .map(BuffState::new)
+        .collect::<Vec<BuffState>>();
 
     loop_with_fps(FPS, || {
         let mat = match settings.capture_mode {
@@ -374,27 +367,25 @@ fn update_loop() {
                 .ok()
                 .and_then(|capture| capture.grab().ok())
                 .map(OwnedMat::new),
-            CaptureMode::BitBltArea => window_box.grab().ok().map(OwnedMat::new),
+            CaptureMode::BitBltArea => window_box_capture.grab().ok().map(OwnedMat::new),
         };
-        let Some(mat) = mat else {
-            return;
-        };
-        // I know what you are thinking...
-        let detector = CachedDetector::new(mat);
-        context.minimap = fold_context(&context, &detector, context.minimap, &mut minimap_state);
-        context.player = fold_context(&context, &detector, context.player, &mut player_state);
-        for (i, state) in skill_states
-            .iter_mut()
-            .enumerate()
-            .take(context.skills.len())
-        {
-            context.skills[i] = fold_context(&context, &detector, context.skills[i], state);
+        let detector = mat.map(CachedDetector::new);
+        if let Some(ref detector) = detector {
+            context.minimap = fold_context(&context, detector, context.minimap, &mut minimap_state);
+            context.player = fold_context(&context, detector, context.player, &mut player_state);
+            for (i, state) in skill_states
+                .iter_mut()
+                .enumerate()
+                .take(context.skills.len())
+            {
+                context.skills[i] = fold_context(&context, detector, context.skills[i], state);
+            }
+            for (i, state) in buff_states.iter_mut().enumerate().take(context.buffs.len()) {
+                context.buffs[i] = fold_context(&context, detector, context.buffs[i], state);
+            }
+            // Rotating action must always be done last
+            rotator.rotate_action(&context, detector, &mut player_state);
         }
-        for (i, state) in buff_states.iter_mut().enumerate().take(context.buffs.len()) {
-            context.buffs[i] = fold_context(&context, &detector, context.buffs[i], state);
-        }
-        // rotating action must always be done last
-        rotator.rotate_action(&context, &detector, &mut player_state);
         // I know what you are thinking...
         let mut handler = DefaultRequestHandler {
             context: &mut context,
@@ -403,12 +394,12 @@ fn update_loop() {
             buffs: &mut buffs,
             actions: &mut actions,
             rotator: &mut rotator,
-            detector: &detector,
+            mat: detector.as_ref().map(|detector| detector.mat()),
             player: &mut player_state,
             minimap: &mut minimap_state,
             key_sender: &key_sender,
             wgc_capture: wgc_capture.as_mut().ok(),
-            window_box: &window_box,
+            window_box_capture: &window_box_capture,
         };
         poll_request(&mut handler);
         poll_key(&mut handler, &mut key_receiver);
@@ -485,31 +476,31 @@ fn loop_with_fps(fps: u32, mut on_tick: impl FnMut()) {
     }
 }
 
-fn config_buffs(config: &Configuration) -> Vec<(usize, KeyBinding)> {
-    let mut buffs = Vec::<(usize, KeyBinding)>::new();
+fn config_buffs(config: &Configuration) -> Vec<(BuffKind, KeyBinding)> {
+    let mut buffs = Vec::new();
     let KeyBindingConfiguration { key, enabled, .. } = config.sayram_elixir_key;
     if enabled {
-        buffs.push((SAYRAM_ELIXIR_BUFF_POSITION, key));
+        buffs.push((BuffKind::SayramElixir, key));
     }
     let KeyBindingConfiguration { key, enabled, .. } = config.aurelia_elixir_key;
     if enabled {
-        buffs.push((AURELIA_ELIXIR_BUFF_POSITION, key));
+        buffs.push((BuffKind::AureliaElixir, key));
     }
     let KeyBindingConfiguration { key, enabled, .. } = config.exp_x3_key;
     if enabled {
-        buffs.push((EXP_X3_BUFF_POSITION, key));
+        buffs.push((BuffKind::ExpCouponX3, key));
     }
     let KeyBindingConfiguration { key, enabled, .. } = config.bonus_exp_key;
     if enabled {
-        buffs.push((BONUS_EXP_BUFF_POSITION, key));
+        buffs.push((BuffKind::BonusExpCoupon, key));
     }
     let KeyBindingConfiguration { key, enabled, .. } = config.legion_luck_key;
     if enabled {
-        buffs.push((LEGION_LUCK_BUFF_POSITION, key));
+        buffs.push((BuffKind::LegionLuck, key));
     }
     let KeyBindingConfiguration { key, enabled, .. } = config.legion_wealth_key;
     if enabled {
-        buffs.push((LEGION_WEALTH_BUFF_POSITION, key));
+        buffs.push((BuffKind::LegionWealth, key));
     }
     buffs
 }

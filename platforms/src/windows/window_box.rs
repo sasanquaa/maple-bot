@@ -28,13 +28,13 @@ enum Message {
 }
 
 #[derive(Debug)]
-pub struct WindowBox {
+pub struct WindowBoxCapture {
     position: Arc<Mutex<Option<PhysicalPosition<i32>>>>,
     msg_tx: Sender<Message>,
     capture: BitBltCapture,
 }
 
-impl Default for WindowBox {
+impl Default for WindowBoxCapture {
     fn default() -> Self {
         let handle = Arc::new(Mutex::new(None));
         let handle_clone = handle.clone();
@@ -142,7 +142,7 @@ impl Default for WindowBox {
     }
 }
 
-impl WindowBox {
+impl WindowBoxCapture {
     pub fn grab(&mut self) -> Result<Frame, Error> {
         self.capture.grab_inner_offset(self.position())
     }

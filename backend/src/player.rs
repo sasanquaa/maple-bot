@@ -10,8 +10,8 @@ use strum::Display;
 use crate::{
     Class, Position,
     array::Array,
-    buff::Buff,
-    context::{Context, Contextual, ControlFlow, RUNE_BUFF_POSITION},
+    buff::{Buff, BuffKind},
+    context::{Context, Contextual, ControlFlow},
     database::{ActionKeyDirection, ActionKeyWith, KeyBinding, LinkKeyBinding},
     detect::Detector,
     minimap::Minimap,
@@ -2643,7 +2643,7 @@ fn update_rune_validating_state(context: &Context, state: &mut PlayerState) {
             VALIDATE_TIMEOUT,
             Some,
             || {
-                if matches!(context.buffs[RUNE_BUFF_POSITION], Buff::NoBuff) {
+                if matches!(context.buffs[BuffKind::Rune], Buff::NoBuff) {
                     update_rune_fail_count_state(state);
                 } else {
                     state.rune_failed_count = 0;

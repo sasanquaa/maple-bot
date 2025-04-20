@@ -1,7 +1,6 @@
 use std::{
     cell::RefCell,
     mem::{self},
-    ptr,
     sync::LazyLock,
 };
 
@@ -27,8 +26,9 @@ use windows::{
             },
             WindowsAndMessaging::{
                 CallNextHookEx, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
-                GetWindowThreadProcessId, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, SM_CXSCREEN,
-                SM_CYSCREEN, SetForegroundWindow, SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYUP,
+                GetWindowThreadProcessId, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED,
+                LLKHF_LOWER_IL_INJECTED, SM_CXSCREEN, SM_CYSCREEN, SetForegroundWindow,
+                SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
             },
         },
     },
@@ -42,12 +42,22 @@ static PROCESS_ID: LazyLock<u32> = LazyLock::new(|| unsafe { GetCurrentProcessId
 
 pub(crate) fn init() -> Owned<HHOOK> {
     unsafe extern "system" fn keyboard_ll(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        if code as u32 == HC_ACTION && wparam.0 as u32 == WM_KEYUP {
-            let key = unsafe { ptr::read(lparam.0 as *const KBDLLHOOKSTRUCT) };
+        let msg = wparam.0 as u32;
+        if code as u32 == HC_ACTION && (msg == WM_KEYUP || msg == WM_KEYDOWN) {
+            let lparam_ptr = lparam.0 as *mut KBDLLHOOKSTRUCT;
+            let mut key = unsafe { lparam_ptr.read() };
             let vkey = unsafe { mem::transmute::<u16, VIRTUAL_KEY>(key.vkCode as u16) };
+            let key_kind = KeyKind::try_from(vkey);
             let ignore = key.dwExtraInfo == *PROCESS_ID as usize;
-            if !ignore && let Ok(key) = vkey.try_into() {
+            if !ignore && let Ok(key) = key_kind {
                 let _ = KEY_CHANNEL.send(key);
+            } else if ignore {
+                // Won't work if the hook is not on the top of the chain
+                key.flags &= !LLKHF_INJECTED;
+                key.flags &= !LLKHF_LOWER_IL_INJECTED;
+                unsafe {
+                    lparam_ptr.write(key);
+                }
             }
         }
         unsafe { CallNextHookEx(None, code, wparam, lparam) }
