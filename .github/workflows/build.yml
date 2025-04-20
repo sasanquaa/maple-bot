@@ -14,11 +14,9 @@ permissions: write-all
 
 env:
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-  VCPKG_INSTALL_OPTIONS: "--debug"
   VCPKG_ENABLE_METRICS: 0
   VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg/installed
   VCPKG_DEFAULT_TRIPLET: x64-windows-static-release
-  VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static-release
   VCPKGRS_TRIPLET: x64-windows-static-release
   CARGO_TERM_COLOR: always
   OPENCV_MSVC_CRT: static
@@ -59,6 +57,7 @@ jobs:
       - uses: lukka/run-vcpkg@v11
         with:
           doNotCache: false
+          runVcpkgFormatString: '[`install`, `--recurse`, `--clean-after-build`, `--debug`, `--x-install-root`, `$[env.VCPKG_INSTALLED_DIR]`, `--triplet`, `$[env.VCPKG_DEFAULT_TRIPLET]`]'
           runVcpkgInstall: true
 
       - uses: Swatinem/rust-cache@v2
