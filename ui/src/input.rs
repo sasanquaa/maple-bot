@@ -245,8 +245,8 @@ pub fn PercentageInput(
                 on_input(value)
             }
         })),
-        "100".to_string(),
         "0".to_string(),
+        "100".to_string(),
         "%".to_string(),
     );
 
