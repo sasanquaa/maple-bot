@@ -147,6 +147,7 @@ struct DefaultRequestHandler<'a> {
     player: &'a mut PlayerState,
     minimap: &'a mut MinimapState,
     key_sender: &'a broadcast::Sender<KeyBinding>,
+    key_receiver: &'a mut KeyReceiver,
     wgc_capture: Option<&'a mut WgcCapture>,
     window_box_capture: &'a WindowBoxCapture,
 }
@@ -252,6 +253,8 @@ impl RequestHandler for DefaultRequestHandler<'_> {
                 .set_input_kind(self.context.handle, KeyInputKind::Fixed);
         } else {
             self.window_box_capture.show();
+            *self.key_receiver =
+                KeyReceiver::new(self.window_box_capture.handle(), KeyInputKind::Foreground);
             self.context
                 .keys
                 .set_input_kind(self.window_box_capture.handle(), KeyInputKind::Foreground);
@@ -343,7 +346,7 @@ fn update_loop() {
         keys: Keys::new(handle),
     };
     let key_sender = broadcast::channel::<KeyBinding>(1).0; // Callback to UI
-    let mut key_receiver = KeyReceiver::new(handle);
+    let mut key_receiver = KeyReceiver::new(handle, KeyInputKind::Fixed);
 
     let mut rotator = Rotator::default();
     let mut actions = Vec::<Action>::new();
@@ -366,6 +369,7 @@ fn update_loop() {
     if !matches!(settings.capture_mode, CaptureMode::BitBltArea) {
         window_box_capture.hide();
     } else {
+        key_receiver = KeyReceiver::new(window_box_capture.handle(), KeyInputKind::Foreground);
         context
             .keys
             .set_input_kind(window_box_capture.handle(), KeyInputKind::Foreground);
@@ -419,17 +423,18 @@ fn update_loop() {
             player: &mut player_state,
             minimap: &mut minimap_state,
             key_sender: &key_sender,
+            key_receiver: &mut key_receiver,
             wgc_capture: wgc_capture.as_mut().ok(),
             window_box_capture: &window_box_capture,
         };
         poll_request(&mut handler);
-        poll_key(&mut handler, &mut key_receiver);
+        poll_key(&mut handler);
     });
 }
 
 #[inline]
-fn poll_key(handler: &mut DefaultRequestHandler, receiver: &mut KeyReceiver) {
-    let Some(received_key) = receiver.try_recv() else {
+fn poll_key(handler: &mut DefaultRequestHandler) {
+    let Some(received_key) = handler.key_receiver.try_recv() else {
         return;
     };
     debug!(target: "context", "received key {received_key:?}");

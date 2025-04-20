@@ -72,23 +72,17 @@ pub(crate) fn init() -> Owned<HHOOK> {
 #[derive(Debug)]
 pub struct KeyReceiver {
     handle: HandleCell,
+    key_input_kind: KeyInputKind,
     rx: Receiver<KeyKind>,
 }
 
 impl KeyReceiver {
-    pub fn new(handle: Handle) -> Self {
+    pub fn new(handle: Handle, key_input_kind: KeyInputKind) -> Self {
         Self {
             handle: HandleCell::new(handle),
+            key_input_kind,
             rx: KEY_CHANNEL.subscribe(),
         }
-    }
-
-    pub async fn recv(&mut self) -> Option<KeyKind> {
-        self.rx
-            .recv()
-            .await
-            .ok()
-            .and_then(|key| self.can_process_key().then_some(key))
     }
 
     pub fn try_recv(&mut self) -> Option<KeyKind> {
@@ -100,13 +94,16 @@ impl KeyReceiver {
 
     // TODO: Is this good?
     fn can_process_key(&self) -> bool {
-        let Some(handle) = self.handle.as_inner() else {
-            return false;
-        };
         let fg = unsafe { GetForegroundWindow() };
         let mut fg_pid = 0;
         unsafe { GetWindowThreadProcessId(fg, Some(&raw mut fg_pid)) };
-        fg_pid == *PROCESS_ID || fg == handle
+        if fg_pid == *PROCESS_ID {
+            return true;
+        }
+        self.handle
+            .as_inner()
+            .map(|handle| is_foreground(handle, self.key_input_kind))
+            .unwrap_or_default()
     }
 }
 
@@ -232,7 +229,7 @@ impl Keys {
         match self.key_input_kind {
             KeyInputKind::Fixed => unsafe { SetForegroundWindow(handle).ok()? },
             KeyInputKind::Foreground => {
-                if !is_foreground(handle, self.key_input_kind) {
+                if !is_foreground(handle, KeyInputKind::Foreground) {
                     return Err(Error::WindowNotFound);
                 }
                 handle = unsafe { GetForegroundWindow() };
