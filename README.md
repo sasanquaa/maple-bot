@@ -9,10 +9,14 @@
   - [Linked Key & Linked Action](#linked-key--linked-action)
   - [Rotation Modes](#rotation-modes)
   - [Platforms Pathing](#platforms-pathing)
+  - [Capture Modes](#capture-modes)
 - [Troubleshooting](#troubleshooting)
   - [Wrong map detection](#wrong-map-detection)
   - [Actions contention](#actions-contention-)
   - [Default Ratio game resolution](#default-ratio-game-resolution)
+  - [Preventing double jump(s)](#preventing-double-jumps)
+  - [Mage up jump](#mage-up-jump)
+- [Contact](#contact)
 - [Showcase](#showcase)
   - [Rotation](#rotation)
   - [Auto Mobbing & Platforms Pathing](#auto-mobbing-%26-platforms-pathing)
@@ -173,6 +177,28 @@ Hot keys can be used to add platforms more quickly.
 
 ![Platforms](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/platforms.png?raw=true)
 
+#### Capture Modes
+There are three capture modes, the first two are similar to what you see in OBS:
+- `BitBlt` - The default capture mode that works for GMS
+- `Windows Graphics Capture` - The alternative capture mode for Windows 10 that works for TMS/MSEA
+- `BitBltArea` - Captures a fixed area on the screen
+  - This capture mode is useful if you are running the game inside something else or want to use fixed capture area (e.g. a VM or capture card?)
+  - The capture area can stay behind the game but it cannot be minimized
+  - **This mode relies on high-quality game images so the images should be clear and not blurry**
+  - **Even when the game resizes (e.g. going to cash shop), the capture area must still contain the game**
+  - **When using this capture mode, key inputs will also be affected:**
+    - **Make sure the window on top of the capture area is focused by clicking it for key inputs to work**
+    - For example, if you have Notepad on top of the game and focused, it will send input to the Notepad instead of the game
+
+<details>
+<summary>Technical note</summary>
+
+There is currently no way to customize key inputs sending method. And I will probably add one in the future. But you can use
+ `BitBltArea` as a workaround that will require some effort. The capture mode will use `SendInput` and send it to the top-most window of the capture area. So `SetWindowsHookExW ` with `WH_KEYBOARD_LL` can be used to listen to the bot input and proxy it elsewhere or with a different method. `dwExtraInfo` is currently set to the bot PID.
+
+</details>
+
+
 ## Troubleshooting
 #### Wrong map detection (Update for v0.3.0)
 Since v0.3.0, most of the times, there wouldn't be any problem because automatic map's name is no longer detected
@@ -209,6 +235,14 @@ when play in `1920x1080` or above, making the UI blurry.
 #### Preventing double jump(s)
 **This is subject to change** but if you want to the bot to only walk between points then the two
 points `x` distance should be less than `25`.
+
+#### Mage Up Jump
+If your mage class does not have an up jump through jump key but only through teleport, you need to set 
+the up jump key the same as the teleport key.
+
+## Contact
+- You can reach me by creating an issue on Github or by joining the [Discord](https://discord.gg/ReTp6MHgF6)
+- The Discord is just a simple messaging channel if you have quick questions related to the bot
 
 ## Showcase
 #### Rotation
