@@ -20,7 +20,7 @@ use tao::{
 };
 use windows::Win32::Foundation::HWND;
 
-use super::{BitBltCapture, Error, Frame, HandleCell};
+use super::{BitBltCapture, Error, Frame, Handle};
 
 enum Message {
     Show,
@@ -29,6 +29,7 @@ enum Message {
 
 #[derive(Debug)]
 pub struct WindowBoxCapture {
+    handle: Handle,
     position: Arc<Mutex<Option<PhysicalPosition<i32>>>>,
     msg_tx: Sender<Message>,
     capture: BitBltCapture,
@@ -131,10 +132,11 @@ impl Default for WindowBoxCapture {
         });
         barrier.wait();
         let handle = HWND(handle.lock().unwrap().unwrap().get() as *mut c_void);
-        let handle_cell = HandleCell::new_fixed(handle);
-        let capture = BitBltCapture::new_from_cell(handle_cell, true);
+        let handle = Handle::new_fixed(handle);
+        let capture = BitBltCapture::new(handle, true);
 
         Self {
+            handle,
             position,
             msg_tx,
             capture,
@@ -143,6 +145,10 @@ impl Default for WindowBoxCapture {
 }
 
 impl WindowBoxCapture {
+    pub fn handle(&self) -> Handle {
+        self.handle
+    }
+
     pub fn grab(&mut self) -> Result<Frame, Error> {
         self.capture.grab_inner_offset(self.position())
     }

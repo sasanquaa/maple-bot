@@ -9,6 +9,7 @@ use tokio::sync::broadcast::{self, Receiver, Sender};
 use windows::{
     Win32::{
         Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
+        Graphics::Gdi::{MONITOR_DEFAULTTONULL, MonitorFromWindow},
         System::Threading::GetCurrentProcessId,
         UI::{
             Input::KeyboardAndMouse::{
@@ -109,9 +110,20 @@ impl KeyReceiver {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
+pub enum KeyInputKind {
+    /// Sends input only if [`Keys::handle`] is in the foreground and focused
+    Fixed,
+    ///
+    /// Sends input only if the foreground window is not [`HandleCell`], on top of
+    /// [`Keys::handle`] window and is focused
+    Foreground,
+}
+
+#[derive(Debug, Clone)]
 pub struct Keys {
     handle: HandleCell,
+    key_input_kind: KeyInputKind,
     key_down: RefCell<BitVec>,
 }
 
@@ -194,8 +206,14 @@ impl Keys {
     pub fn new(handle: Handle) -> Self {
         Self {
             handle: HandleCell::new(handle),
+            key_input_kind: KeyInputKind::Fixed,
             key_down: RefCell::new(BitVec::from_elem(256, false)),
         }
+    }
+
+    pub fn set_input_kind(&mut self, handle: Handle, kind: KeyInputKind) {
+        self.handle = HandleCell::new(handle);
+        self.key_input_kind = kind;
     }
 
     pub fn send(&self, kind: KeyKind) -> Result<(), Error> {
@@ -210,8 +228,16 @@ impl Keys {
 
     // FIXME: hack for now
     pub fn send_click_to_focus_inner(&self) -> Result<(), Error> {
-        let handle = self.get_handle()?;
-        unsafe { SetForegroundWindow(handle).ok()? };
+        let mut handle = self.get_handle()?;
+        match self.key_input_kind {
+            KeyInputKind::Fixed => unsafe { SetForegroundWindow(handle).ok()? },
+            KeyInputKind::Foreground => {
+                if !is_foreground(handle, self.key_input_kind) {
+                    return Err(Error::WindowNotFound);
+                }
+                handle = unsafe { GetForegroundWindow() };
+            }
+        }
         let x_metric = unsafe { GetSystemMetrics(SM_CXSCREEN) };
         let y_metric = unsafe { GetSystemMetrics(SM_CYSCREEN) };
         let mut rect = RECT::default();
@@ -248,7 +274,7 @@ impl Keys {
     #[inline]
     fn send_input(&self, kind: KeyKind, is_up: bool) -> Result<(), Error> {
         let handle = self.get_handle()?;
-        if !is_foreground(handle) {
+        if !is_foreground(handle, self.key_input_kind) {
             return Err(Error::NotSent);
         }
         let key = kind.into();
@@ -432,9 +458,39 @@ impl From<KeyKind> for VIRTUAL_KEY {
 
 // TODO: Is this good?
 #[inline]
-fn is_foreground(handle: HWND) -> bool {
+fn is_foreground(handle: HWND, kind: KeyInputKind) -> bool {
     let handle_fg = unsafe { GetForegroundWindow() };
-    !handle_fg.is_invalid() && handle_fg == handle
+    if handle_fg.is_invalid() {
+        return false;
+    }
+    match kind {
+        KeyInputKind::Fixed => handle_fg == handle,
+        KeyInputKind::Foreground => {
+            if handle_fg == handle {
+                return false;
+            }
+            // Null != Null?
+            if unsafe {
+                MonitorFromWindow(handle_fg, MONITOR_DEFAULTTONULL)
+                    != MonitorFromWindow(handle, MONITOR_DEFAULTTONULL)
+            } {
+                return false;
+            }
+            let mut rect_fg = RECT::default();
+            let mut rect_handle = RECT::default();
+            unsafe {
+                if GetWindowRect(handle_fg, &mut rect_fg).is_err()
+                    || GetWindowRect(handle, &mut rect_handle).is_err()
+                {
+                    return false;
+                }
+            }
+            rect_fg.left >= rect_handle.left
+                && rect_fg.top >= rect_handle.top
+                && rect_fg.right <= rect_handle.right
+                && rect_fg.bottom <= rect_handle.bottom
+        }
+    }
 }
 
 #[inline]

@@ -60,20 +60,20 @@ struct Bitmap {
 pub struct BitBltCapture {
     handle: HandleCell,
     bitmap: Option<Bitmap>,
-    overlay: bool,
+    overlap: bool,
 }
 
 impl BitBltCapture {
-    pub fn new(handle: Handle) -> Self {
-        BitBltCapture::new_from_cell(HandleCell::new(handle), false)
-    }
-
-    // FIXME: add `overlay` for `new`
-    pub(crate) fn new_from_cell(handle: HandleCell, overlay: bool) -> Self {
+    /// Creates a new `BitBlt` capture
+    ///
+    /// When `overlap` is true, the capture uses the monitor where `handle` is in as the source and
+    /// rectangle of `handle` as the area of the capture. So if another window is on top of
+    /// `handle`, its content will also be visible.
+    pub fn new(handle: Handle, overlap: bool) -> Self {
         Self {
-            handle,
+            handle: HandleCell::new(handle),
             bitmap: None,
-            overlay,
+            overlap,
         }
     }
 
@@ -95,7 +95,7 @@ impl BitBltCapture {
             return Err(Error::InvalidWindowSize);
         }
 
-        let handle_dc = if self.overlay {
+        let handle_dc = if self.overlap {
             get_device_context_from_monitor(handle)?
         } else {
             get_device_context(handle)?

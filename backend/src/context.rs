@@ -14,7 +14,8 @@ use log::{debug, info};
 use mockall::automock;
 use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
 use platforms::windows::{
-    self, BitBltCapture, Error, Handle, KeyKind, KeyReceiver, Keys, WgcCapture, WindowBoxCapture,
+    self, BitBltCapture, Error, Handle, KeyInputKind, KeyKind, KeyReceiver, Keys, WgcCapture,
+    WindowBoxCapture,
 };
 use strum::IntoEnumIterator;
 use tokio::sync::broadcast;
@@ -69,6 +70,8 @@ pub trait Contextual {
 /// Represents an object that can send keys
 #[cfg_attr(test, automock)]
 pub trait KeySender: Debug + Any {
+    fn set_input_kind(&mut self, handle: Handle, kind: KeyInputKind);
+
     fn send(&self, kind: KeyKind) -> Result<(), Error>;
 
     fn send_click_to_focus(&self) -> Result<(), Error>;
@@ -84,6 +87,10 @@ struct DefaultKeySender {
 }
 
 impl KeySender for DefaultKeySender {
+    fn set_input_kind(&mut self, handle: Handle, kind: KeyInputKind) {
+        self.keys.set_input_kind(handle, kind);
+    }
+
     fn send(&self, kind: KeyKind) -> Result<(), Error> {
         self.keys.send(kind)
     }
@@ -104,7 +111,9 @@ impl KeySender for DefaultKeySender {
 /// An object that stores the game information.
 #[derive(Debug)]
 pub struct Context {
-    pub keys: &'static dyn KeySender,
+    /// The `MapleStory` class game handle
+    handle: Handle,
+    pub keys: &'static mut dyn KeySender,
     pub minimap: Minimap,
     pub player: Player,
     pub skills: [Skill; SkillKind::COUNT],
@@ -116,6 +125,7 @@ pub struct Context {
 impl Default for Context {
     fn default() -> Self {
         Self {
+            handle: Handle::new(""),
             keys: Box::leak(Box::new(MockKeySender::new())),
             minimap: Minimap::Detecting,
             player: Player::Detecting,
@@ -237,8 +247,14 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         }
         if !matches!(settings.capture_mode, CaptureMode::BitBltArea) {
             self.window_box_capture.hide();
+            self.context
+                .keys
+                .set_input_kind(self.context.handle, KeyInputKind::Fixed);
         } else {
             self.window_box_capture.show();
+            self.context
+                .keys
+                .set_input_kind(self.window_box_capture.handle(), KeyInputKind::Foreground);
         }
         *self.settings = settings;
     }
@@ -334,6 +350,7 @@ fn update_loop() {
     let mut config = query_configs().unwrap().into_iter().next().unwrap(); // Override by UI
     let mut buffs = config_buffs(&config);
     let mut context = Context {
+        handle,
         keys: Box::leak(Box::new(keys)),
         minimap: Minimap::Detecting,
         player: Player::Idle,
@@ -343,11 +360,15 @@ fn update_loop() {
     };
     let mut settings = query_settings(); // Override by UI
 
-    let mut bitblt_capture = BitBltCapture::new(handle);
+    let mut bitblt_capture = BitBltCapture::new(handle, false);
     let mut wgc_capture = WgcCapture::new(handle, MS_PER_TICK);
     let mut window_box_capture = WindowBoxCapture::default();
     if !matches!(settings.capture_mode, CaptureMode::BitBltArea) {
         window_box_capture.hide();
+    } else {
+        context
+            .keys
+            .set_input_kind(window_box_capture.handle(), KeyInputKind::Foreground);
     }
 
     let mut player_state = PlayerState::default();
