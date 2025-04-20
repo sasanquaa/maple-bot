@@ -49,7 +49,10 @@ pub(crate) fn init() -> Owned<HHOOK> {
             let vkey = unsafe { mem::transmute::<u16, VIRTUAL_KEY>(key.vkCode as u16) };
             let key_kind = KeyKind::try_from(vkey);
             let ignore = key.dwExtraInfo == *PROCESS_ID as usize;
-            if !ignore && let Ok(key) = key_kind {
+            if !ignore
+                && msg == WM_KEYUP
+                && let Ok(key) = key_kind
+            {
                 let _ = KEY_CHANNEL.send(key);
             } else if ignore {
                 // Won't work if the hook is not on the top of the chain
