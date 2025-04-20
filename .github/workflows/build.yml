@@ -52,6 +52,15 @@ jobs:
         # Need to add dx fmt
         run: cargo fmt --check
 
+      - uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: 3.31.6
+
+      - uses: lukka/run-vcpkg@v11
+        with:
+          doNotCache: false
+          runVcpkgInstall: true
+
       - uses: Swatinem/rust-cache@v2
 
       - uses: actions/setup-node@v4
@@ -70,14 +79,6 @@ jobs:
           # can't install LLVM 19
           # possibly related https://github.com/KyleMayes/install-llvm-action/issues/86
           version: "18.1.8"
-
-      - uses: lukka/get-cmake@latest
-        with:
-          cmakeVersion: 3.31.6
-
-      - uses: lukka/run-vcpkg@v11
-        with:
-          runVcpkgInstall: true
 
       - name: Lint
         run: cargo clippy -- -D warnings
