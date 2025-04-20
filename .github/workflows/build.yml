@@ -10,12 +10,11 @@ on:
       - "master"
       - "v*.*.*"
 
-permissions: write-all
-
 env:
   VCPKG_ENABLE_METRICS: 0
   VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg/installed
   VCPKG_DEFAULT_TRIPLET: x64-windows-static-release
+  VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static-release
   VCPKGRS_TRIPLET: x64-windows-static-release
   CARGO_TERM_COLOR: always
   OPENCV_MSVC_CRT: static
