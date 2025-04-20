@@ -10,6 +10,8 @@ on:
       - "master"
       - "v*.*.*"
 
+permissions: write-all
+
 env:
   VCPKG_ENABLE_METRICS: 0
   VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg/installed
