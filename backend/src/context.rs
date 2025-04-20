@@ -112,7 +112,7 @@ impl KeySender for DefaultKeySender {
 #[derive(Debug)]
 pub struct Context {
     /// The `MapleStory` class game handle
-    handle: Handle,
+    pub handle: Handle, // FIXME: This shoulnd't be pub, it is pub for tests
     pub keys: &'static mut dyn KeySender,
     pub minimap: Minimap,
     pub player: Player,
