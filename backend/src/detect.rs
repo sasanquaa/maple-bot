@@ -206,17 +206,17 @@ impl Detector for CachedDetector {
     }
 
     fn detect_minimap_portals(&self, minimap: Rect) -> Result<Vec<Rect>> {
-        let minimap_color = to_bgr(&self.mat.roi(minimap).unwrap());
+        let minimap_color = to_bgr(&self.mat.roi(minimap)?);
         detect_minimap_portals(minimap_color)
     }
 
     fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect> {
-        let minimap_grayscale = self.grayscale.roi(minimap).unwrap();
+        let minimap_grayscale = self.grayscale.roi(minimap)?;
         detect_minimap_rune(&minimap_grayscale)
     }
 
     fn detect_player(&self, minimap: Rect) -> Result<Rect> {
-        let minimap_grayscale = self.grayscale.roi(minimap).unwrap();
+        let minimap_grayscale = self.grayscale.roi(minimap)?;
         detect_player(&minimap_grayscale)
     }
 

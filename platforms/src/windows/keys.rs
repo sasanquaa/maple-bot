@@ -1,7 +1,6 @@
 use std::{
     cell::RefCell,
     mem::{self},
-    ptr,
     sync::LazyLock,
 };
 
@@ -10,6 +9,7 @@ use tokio::sync::broadcast::{self, Receiver, Sender};
 use windows::{
     Win32::{
         Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
+        Graphics::Gdi::{MONITOR_DEFAULTTONULL, MonitorFromWindow},
         System::Threading::GetCurrentProcessId,
         UI::{
             Input::KeyboardAndMouse::{
@@ -27,8 +27,9 @@ use windows::{
             },
             WindowsAndMessaging::{
                 CallNextHookEx, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
-                GetWindowThreadProcessId, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, SM_CXSCREEN,
-                SM_CYSCREEN, SetForegroundWindow, SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYUP,
+                GetWindowThreadProcessId, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED,
+                LLKHF_LOWER_IL_INJECTED, SM_CXSCREEN, SM_CYSCREEN, SetForegroundWindow,
+                SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
             },
         },
     },
@@ -42,12 +43,25 @@ static PROCESS_ID: LazyLock<u32> = LazyLock::new(|| unsafe { GetCurrentProcessId
 
 pub(crate) fn init() -> Owned<HHOOK> {
     unsafe extern "system" fn keyboard_ll(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        if code as u32 == HC_ACTION && wparam.0 as u32 == WM_KEYUP {
-            let key = unsafe { ptr::read(lparam.0 as *const KBDLLHOOKSTRUCT) };
+        let msg = wparam.0 as u32;
+        if code as u32 == HC_ACTION && (msg == WM_KEYUP || msg == WM_KEYDOWN) {
+            let lparam_ptr = lparam.0 as *mut KBDLLHOOKSTRUCT;
+            let mut key = unsafe { lparam_ptr.read() };
             let vkey = unsafe { mem::transmute::<u16, VIRTUAL_KEY>(key.vkCode as u16) };
+            let key_kind = KeyKind::try_from(vkey);
             let ignore = key.dwExtraInfo == *PROCESS_ID as usize;
-            if !ignore && let Ok(key) = vkey.try_into() {
+            if !ignore
+                && msg == WM_KEYUP
+                && let Ok(key) = key_kind
+            {
                 let _ = KEY_CHANNEL.send(key);
+            } else if ignore {
+                // Won't work if the hook is not on the top of the chain
+                key.flags &= !LLKHF_INJECTED;
+                key.flags &= !LLKHF_LOWER_IL_INJECTED;
+                unsafe {
+                    lparam_ptr.write(key);
+                }
             }
         }
         unsafe { CallNextHookEx(None, code, wparam, lparam) }
@@ -58,23 +72,17 @@ pub(crate) fn init() -> Owned<HHOOK> {
 #[derive(Debug)]
 pub struct KeyReceiver {
     handle: HandleCell,
+    key_input_kind: KeyInputKind,
     rx: Receiver<KeyKind>,
 }
 
 impl KeyReceiver {
-    pub fn new(handle: Handle) -> Self {
+    pub fn new(handle: Handle, key_input_kind: KeyInputKind) -> Self {
         Self {
             handle: HandleCell::new(handle),
+            key_input_kind,
             rx: KEY_CHANNEL.subscribe(),
         }
-    }
-
-    pub async fn recv(&mut self) -> Option<KeyKind> {
-        self.rx
-            .recv()
-            .await
-            .ok()
-            .and_then(|key| self.can_process_key().then_some(key))
     }
 
     pub fn try_recv(&mut self) -> Option<KeyKind> {
@@ -86,19 +94,33 @@ impl KeyReceiver {
 
     // TODO: Is this good?
     fn can_process_key(&self) -> bool {
-        let Some(handle) = self.handle.as_inner() else {
-            return false;
-        };
         let fg = unsafe { GetForegroundWindow() };
         let mut fg_pid = 0;
         unsafe { GetWindowThreadProcessId(fg, Some(&raw mut fg_pid)) };
-        fg_pid == *PROCESS_ID || fg == handle
+        if fg_pid == *PROCESS_ID {
+            return true;
+        }
+        self.handle
+            .as_inner()
+            .map(|handle| is_foreground(handle, self.key_input_kind))
+            .unwrap_or_default()
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
+pub enum KeyInputKind {
+    /// Sends input only if [`Keys::handle`] is in the foreground and focused
+    Fixed,
+    ///
+    /// Sends input only if the foreground window is not [`HandleCell`], on top of
+    /// [`Keys::handle`] window and is focused
+    Foreground,
+}
+
+#[derive(Debug, Clone)]
 pub struct Keys {
     handle: HandleCell,
+    key_input_kind: KeyInputKind,
     key_down: RefCell<BitVec>,
 }
 
@@ -181,8 +203,14 @@ impl Keys {
     pub fn new(handle: Handle) -> Self {
         Self {
             handle: HandleCell::new(handle),
+            key_input_kind: KeyInputKind::Fixed,
             key_down: RefCell::new(BitVec::from_elem(256, false)),
         }
+    }
+
+    pub fn set_input_kind(&mut self, handle: Handle, kind: KeyInputKind) {
+        self.handle = HandleCell::new(handle);
+        self.key_input_kind = kind;
     }
 
     pub fn send(&self, kind: KeyKind) -> Result<(), Error> {
@@ -197,8 +225,16 @@ impl Keys {
 
     // FIXME: hack for now
     pub fn send_click_to_focus_inner(&self) -> Result<(), Error> {
-        let handle = self.get_handle()?;
-        unsafe { SetForegroundWindow(handle).ok()? };
+        let mut handle = self.get_handle()?;
+        match self.key_input_kind {
+            KeyInputKind::Fixed => unsafe { SetForegroundWindow(handle).ok()? },
+            KeyInputKind::Foreground => {
+                if !is_foreground(handle, KeyInputKind::Foreground) {
+                    return Err(Error::WindowNotFound);
+                }
+                handle = unsafe { GetForegroundWindow() };
+            }
+        }
         let x_metric = unsafe { GetSystemMetrics(SM_CXSCREEN) };
         let y_metric = unsafe { GetSystemMetrics(SM_CYSCREEN) };
         let mut rect = RECT::default();
@@ -235,7 +271,7 @@ impl Keys {
     #[inline]
     fn send_input(&self, kind: KeyKind, is_up: bool) -> Result<(), Error> {
         let handle = self.get_handle()?;
-        if !is_foreground(handle) {
+        if !is_foreground(handle, self.key_input_kind) {
             return Err(Error::NotSent);
         }
         let key = kind.into();
@@ -419,9 +455,39 @@ impl From<KeyKind> for VIRTUAL_KEY {
 
 // TODO: Is this good?
 #[inline]
-fn is_foreground(handle: HWND) -> bool {
+fn is_foreground(handle: HWND, kind: KeyInputKind) -> bool {
     let handle_fg = unsafe { GetForegroundWindow() };
-    !handle_fg.is_invalid() && handle_fg == handle
+    if handle_fg.is_invalid() {
+        return false;
+    }
+    match kind {
+        KeyInputKind::Fixed => handle_fg == handle,
+        KeyInputKind::Foreground => {
+            if handle_fg == handle {
+                return false;
+            }
+            // Null != Null?
+            if unsafe {
+                MonitorFromWindow(handle_fg, MONITOR_DEFAULTTONULL)
+                    != MonitorFromWindow(handle, MONITOR_DEFAULTTONULL)
+            } {
+                return false;
+            }
+            let mut rect_fg = RECT::default();
+            let mut rect_handle = RECT::default();
+            unsafe {
+                if GetWindowRect(handle_fg, &mut rect_fg).is_err()
+                    || GetWindowRect(handle, &mut rect_handle).is_err()
+                {
+                    return false;
+                }
+            }
+            rect_fg.left >= rect_handle.left
+                && rect_fg.top >= rect_handle.top
+                && rect_fg.right <= rect_handle.right
+                && rect_fg.bottom <= rect_handle.bottom
+        }
+    }
 }
 
 #[inline]

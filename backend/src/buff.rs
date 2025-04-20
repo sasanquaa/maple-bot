@@ -1,3 +1,8 @@
+use std::{
+    mem,
+    ops::{Index, IndexMut},
+};
+
 use anyhow::Result;
 use strum::EnumIter;
 
@@ -43,6 +48,7 @@ pub enum Buff {
 }
 
 #[derive(Clone, Copy, Debug, EnumIter)]
+#[repr(usize)]
 pub enum BuffKind {
     /// NOTE: Upon failing to solving rune, there is a cooldown
     /// that looks exactly like the normal rune buff
@@ -53,6 +59,24 @@ pub enum BuffKind {
     BonusExpCoupon,
     LegionWealth,
     LegionLuck,
+}
+
+impl BuffKind {
+    pub const COUNT: usize = mem::variant_count::<BuffKind>();
+}
+
+impl Index<BuffKind> for [Buff; BuffKind::COUNT] {
+    type Output = Buff;
+
+    fn index(&self, index: BuffKind) -> &Self::Output {
+        self.get(index as usize).unwrap()
+    }
+}
+
+impl IndexMut<BuffKind> for [Buff; BuffKind::COUNT] {
+    fn index_mut(&mut self, index: BuffKind) -> &mut Self::Output {
+        self.get_mut(index as usize).unwrap()
+    }
 }
 
 impl Contextual for Buff {

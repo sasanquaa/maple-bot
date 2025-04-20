@@ -13,14 +13,14 @@ use rand::seq::IteratorRandom;
 
 use crate::{
     ActionKeyDirection, ActionKeyWith, AutoMobbing, KeyBinding, Position, RotationMode,
-    buff::Buff,
-    context::{Context, ERDA_SHOWER_SKILL_POSITION, MS_PER_TICK, RUNE_BUFF_POSITION},
+    buff::{Buff, BuffKind},
+    context::{Context, MS_PER_TICK},
     database::{Action, ActionCondition, ActionKey, ActionMove},
     detect::Detector,
     minimap::Minimap,
     player::{GRAPPLING_THRESHOLD, Player, PlayerState},
     player_actions::{PlayerAction, PlayerActionAutoMob, PlayerActionKey},
-    skill::Skill,
+    skill::{Skill, SkillKind},
     task::{Task, Update, update_task_repeatable},
 };
 
@@ -134,7 +134,7 @@ impl Rotator {
     pub fn build_actions(
         &mut self,
         actions: &[Action],
-        buffs: &[(usize, KeyBinding)],
+        buffs: &[(BuffKind, KeyBinding)],
         potion_key: KeyBinding,
         mode: RotatorMode,
     ) {
@@ -673,7 +673,7 @@ fn solve_rune_priority_action() -> PriorityAction {
             }
             if let Minimap::Idle(idle) = context.minimap {
                 return idle.rune.is_some()
-                    && matches!(context.buffs[RUNE_BUFF_POSITION], Buff::NoBuff);
+                    && matches!(context.buffs[BuffKind::Rune], Buff::NoBuff);
             }
             false
         })),
@@ -686,7 +686,7 @@ fn solve_rune_priority_action() -> PriorityAction {
 }
 
 #[inline]
-fn buff_priority_action(buff_index: usize, key: KeyBinding) -> PriorityAction {
+fn buff_priority_action(buff: BuffKind, key: KeyBinding) -> PriorityAction {
     PriorityAction {
         condition: Condition(Box::new(move |context, _, last_queued_time| {
             if !at_least_millis_passed_since(last_queued_time, COOLDOWN_BETWEEN_QUEUE_MILLIS) {
@@ -695,7 +695,7 @@ fn buff_priority_action(buff_index: usize, key: KeyBinding) -> PriorityAction {
             if !matches!(context.minimap, Minimap::Idle(_)) {
                 return false;
             }
-            matches!(context.buffs[buff_index], Buff::NoBuff)
+            matches!(context.buffs[buff], Buff::NoBuff)
         })),
         condition_kind: None,
         inner: RotatorAction::Single(PlayerAction::Key(PlayerActionKey {
@@ -744,10 +744,7 @@ fn should_queue_fixed_action(
         return false;
     }
     if matches!(condition, ActionCondition::ErdaShowerOffCooldown)
-        && !matches!(
-            context.skills[ERDA_SHOWER_SKILL_POSITION],
-            Skill::Idle(_, _)
-        )
+        && !matches!(context.skills[SkillKind::ErdaShower], Skill::Idle(_, _))
     {
         return false;
     }
@@ -761,7 +758,9 @@ mod tests {
     use opencv::core::{Point, Vec4b};
 
     use super::*;
-    use crate::{Position, detect::MockDetector, minimap::MinimapIdle};
+    use crate::{
+        Position, buff::BuffKind, detect::MockDetector, minimap::MinimapIdle, skill::SkillKind,
+    };
 
     const NORMAL_ACTION: Action = Action::Move(ActionMove {
         position: Position {
@@ -818,8 +817,7 @@ mod tests {
         let mut context = Context::default();
         let now = Instant::now();
 
-        context.skills[ERDA_SHOWER_SKILL_POSITION] =
-            Skill::Idle(Point::default(), Vec4b::default());
+        context.skills[SkillKind::ErdaShower] = Skill::Idle(Point::default(), Vec4b::default());
         assert!(!should_queue_fixed_action(
             &context,
             Some(now - Duration::from_millis(COOLDOWN_BETWEEN_QUEUE_MILLIS as u64 - 1000)),
@@ -831,7 +829,7 @@ mod tests {
             ActionCondition::ErdaShowerOffCooldown
         ));
 
-        context.skills[ERDA_SHOWER_SKILL_POSITION] = Skill::Detecting;
+        context.skills[SkillKind::ErdaShower] = Skill::Detecting;
         assert!(!should_queue_fixed_action(
             &context,
             Some(now - Duration::from_millis(COOLDOWN_BETWEEN_QUEUE_MILLIS as u64)),
@@ -843,7 +841,7 @@ mod tests {
     fn rotator_build_actions() {
         let mut rotator = Rotator::default();
         let actions = vec![NORMAL_ACTION, NORMAL_ACTION, PRIORITY_ACTION];
-        let buffs = vec![(0, KeyBinding::default()); 4];
+        let buffs = vec![(BuffKind::Rune, KeyBinding::default()); 4];
 
         rotator.build_actions(&actions, &buffs, KeyBinding::A, RotatorMode::default());
         assert_eq!(rotator.priority_actions.len(), 7);
@@ -913,7 +911,7 @@ mod tests {
             minimap: Minimap::Idle(minimap),
             ..Context::default()
         };
-        context.buffs[RUNE_BUFF_POSITION] = Buff::NoBuff;
+        context.buffs[BuffKind::Rune] = Buff::NoBuff;
         rotator.priority_actions.insert(
             55,
             PriorityAction {

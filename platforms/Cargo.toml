@@ -7,6 +7,8 @@ edition.workspace = true
 thiserror = "2"
 tokio = { workspace = true }
 bit-vec = "0.8"
+tao = "0.33.0"
+softbuffer = "0.4.6"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.59", features = [

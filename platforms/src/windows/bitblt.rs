@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::mem;
 use std::ptr;
 use std::slice;
 
@@ -7,12 +8,19 @@ use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Gdi::BI_BITFIELDS;
 use windows::Win32::Graphics::Gdi::BITMAPV4HEADER;
 use windows::Win32::Graphics::Gdi::BitBlt;
+use windows::Win32::Graphics::Gdi::CreateDCW;
+use windows::Win32::Graphics::Gdi::GetMonitorInfoW;
+use windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONULL;
+use windows::Win32::Graphics::Gdi::MONITORINFO;
+use windows::Win32::Graphics::Gdi::MONITORINFOEXW;
+use windows::Win32::Graphics::Gdi::MonitorFromWindow;
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, GetDC, HBITMAP, HDC, ReleaseDC,
     SRCCOPY, SelectObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 use windows::core::Owned;
+use windows::core::PCWSTR;
 
 use super::Frame;
 use super::HandleCell;
@@ -52,22 +60,33 @@ struct Bitmap {
 pub struct BitBltCapture {
     handle: HandleCell,
     bitmap: Option<Bitmap>,
+    overlap: bool,
 }
 
 impl BitBltCapture {
-    pub fn new(handle: Handle) -> Self {
+    /// Creates a new `BitBlt` capture
+    ///
+    /// When `overlap` is true, the capture uses the monitor where `handle` is in as the source and
+    /// rectangle of `handle` as the area of the capture. So if another window is on top of
+    /// `handle`, its content will also be visible.
+    pub fn new(handle: Handle, overlap: bool) -> Self {
         Self {
             handle: HandleCell::new(handle),
             bitmap: None,
+            overlap,
         }
     }
 
     #[inline]
     pub fn grab(&mut self) -> Result<Frame, Error> {
-        self.grab_inner()
+        self.grab_inner(None)
     }
 
-    fn grab_inner(&mut self) -> Result<Frame, Error> {
+    pub(crate) fn grab_inner_offset(&mut self, offset: Option<(i32, i32)>) -> Result<Frame, Error> {
+        self.grab_inner(offset)
+    }
+
+    fn grab_inner(&mut self, offset: Option<(i32, i32)>) -> Result<Frame, Error> {
         let handle = self.handle.as_inner().ok_or(Error::WindowNotFound)?;
         let rect = get_rect(handle)?;
         let width = rect.right - rect.left;
@@ -76,7 +95,11 @@ impl BitBltCapture {
             return Err(Error::InvalidWindowSize);
         }
 
-        let handle_dc = get_device_context(handle)?;
+        let handle_dc = if self.overlap {
+            get_device_context_from_monitor(handle)?
+        } else {
+            get_device_context(handle)?
+        };
         if self.bitmap.is_none() {
             self.bitmap = Some(create_bitmap(handle_dc.inner, width, height)?);
         }
@@ -92,6 +115,7 @@ impl BitBltCapture {
         if object.is_invalid() {
             return Err(Error::from_last_win_error());
         }
+        let (left, top) = offset.unwrap_or((0, 0));
         let result = unsafe {
             BitBlt(
                 bitmap_dc.inner,
@@ -100,8 +124,8 @@ impl BitBltCapture {
                 bitmap.width,
                 bitmap.height,
                 Some(handle_dc.inner),
-                rect.top,
-                rect.left,
+                left,
+                top,
                 SRCCOPY,
             )
         };
@@ -125,6 +149,34 @@ fn get_rect(handle: HWND) -> Result<RECT, Error> {
     let mut rect = RECT::default();
     unsafe { GetClientRect(handle, &raw mut rect) }?;
     Ok(rect)
+}
+
+#[inline]
+fn get_device_context_from_monitor(handle: HWND) -> Result<DeviceContext, Error> {
+    let monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
+    if monitor.is_invalid() {
+        return Err(Error::WindowNotFound);
+    }
+    let mut info = MONITORINFOEXW {
+        monitorInfo: MONITORINFO {
+            cbSize: mem::size_of::<MONITORINFOEXW>() as u32,
+            ..MONITORINFO::default()
+        },
+        ..MONITORINFOEXW::default()
+    };
+    unsafe {
+        GetMonitorInfoW(monitor, (&raw mut info).cast()).ok()?;
+    }
+    let handle_dc =
+        unsafe { CreateDCW(None, PCWSTR::from_raw(info.szDevice.as_ptr()), None, None) };
+    if handle_dc.is_invalid() {
+        return Err(Error::WindowNotFound);
+    }
+    Ok(DeviceContext {
+        inner: handle_dc,
+        handle: None,
+        release: false,
+    })
 }
 
 #[inline]
