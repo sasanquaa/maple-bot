@@ -31,14 +31,14 @@
 - Platforms pathing (find a path to reach a platform)
 - ~~Barely maintainable~~ UI ~~(please help)~~
 - Work by taking an image and send key inputs (no memory hacking)
-- Not a feature but currently only work in GMS:
-  - Haven't tested MSEA but it is in English...
+- Not a feature but currently work best in GMS:
   - Updating PNGs are required to support non-English regions
+  - Work with TMS/MSEA but I can't with their anti-human bot detection (Rune solving works fine)
 - I hate this game 
 - Why do Jett gets free BOD just to be deleted?
 
 ## How to use
-#### Map (Update for v0.3.0)
+#### Map
 - Map is automatically detected but must be created manually by providing a name
 - The created map is saved and can be selected again later
 - Any actions preset created in the detected map is saved to that map only
@@ -200,7 +200,7 @@ There is currently no way to customize key inputs sending method. And I will pro
 
 
 ## Troubleshooting
-#### Wrong map detection (Update for v0.3.0)
+#### Wrong map detection
 Since v0.3.0, most of the times, there wouldn't be any problem because automatic map's name is no longer detected
 but map detection can still be wrong sometimes. You will most likely notice it right away because it does not look
 "tight", well cropped or aligned with actual map in the game.
