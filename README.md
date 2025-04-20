@@ -16,6 +16,7 @@
   - [Default Ratio game resolution](#default-ratio-game-resolution)
   - [Preventing double jump(s)](#preventing-double-jumps)
   - [Mage up jump](#mage-up-jump)
+  - [Installation](#installation)
 - [Contact](#contact)
 - [Showcase](#showcase)
   - [Rotation](#rotation)
@@ -236,9 +237,12 @@ when play in `1920x1080` or above, making the UI blurry.
 **This is subject to change** but if you want to the bot to only walk between points then the two
 points `x` distance should be less than `25`.
 
-#### Mage Up Jump
+#### Mage up jump
 If your mage class does not have an up jump through jump key but only through teleport, you need to set 
 the up jump key the same as the teleport key.
+
+#### Installation
+If you use the bot on a newly installed Windows, make sure [Visual C++ Redistributable 2015-2022](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist#visual-studio-2015-2017-2019-and-2022) is installed.
 
 ## Contact
 - You can reach me by creating an issue on Github or by joining the [Discord](https://discord.gg/ReTp6MHgF6)
