@@ -133,10 +133,10 @@ pub struct Rotator {
 impl Rotator {
     pub fn build_actions(
         &mut self,
+        mode: RotatorMode,
         actions: &[Action],
         buffs: &[(BuffKind, KeyBinding)],
         potion_key: KeyBinding,
-        mode: RotatorMode,
     ) {
         debug!(target: "rotator", "preparing actions {actions:?} {buffs:?}");
         self.reset_queue();
@@ -155,8 +155,8 @@ impl Rotator {
                 Action::Move(_) => false,
                 Action::Key(ActionKey { queue_to_front, .. }) => queue_to_front.unwrap_or_default(),
             };
-            debug_assert!(i != 0 || !matches!(condition, ActionCondition::Linked));
             let (action, offset) = rotator_action(action, i, actions);
+            debug_assert!(i != 0 || !matches!(condition, ActionCondition::Linked));
             match condition {
                 ActionCondition::EveryMillis(_) | ActionCondition::ErdaShowerOffCooldown => {
                     self.priority_actions.insert(

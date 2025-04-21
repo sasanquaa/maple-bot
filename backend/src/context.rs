@@ -9,10 +9,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use log::{debug, info};
+use log::info;
 #[cfg(test)]
 use mockall::automock;
-use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
 use platforms::windows::{
     self, BitBltCapture, Error, Handle, KeyInputKind, KeyKind, KeyReceiver, Keys, WgcCapture,
     WindowBoxCapture,
@@ -21,15 +20,15 @@ use strum::IntoEnumIterator;
 use tokio::sync::broadcast;
 
 use crate::{
-    Action, ActionCondition, ActionKey, Bound, KeyBindingConfiguration, RequestHandler,
-    RotatorMode, Settings,
+    Action,
     buff::{Buff, BuffKind, BuffState},
-    database::{CaptureMode, Configuration, KeyBinding, PotionMode},
+    database::{CaptureMode, KeyBinding},
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
     player::{Player, PlayerState},
-    poll_request, query_configs, query_settings,
+    query_configs, query_settings,
+    request_handler::{DefaultRequestHandler, config_buffs},
     rotator::Rotator,
     skill::{Skill, SkillKind, SkillState},
 };
@@ -67,7 +66,7 @@ pub trait Contextual {
         Self: Sized;
 }
 
-/// Represents an object that can send keys
+/// A trait for sending keys
 #[cfg_attr(test, automock)]
 pub trait KeySender: Debug + Any {
     fn set_input_kind(&mut self, handle: Handle, kind: KeyInputKind);
@@ -108,7 +107,7 @@ impl KeySender for DefaultKeySender {
     }
 }
 
-/// An object that stores the game information.
+/// A struct that stores the game information
 #[derive(Debug)]
 pub struct Context {
     /// The `MapleStory` class game handle
@@ -133,175 +132,6 @@ impl Default for Context {
             buffs: [Buff::NoBuff; BuffKind::COUNT],
             halting: false,
         }
-    }
-}
-
-struct DefaultRequestHandler<'a> {
-    context: &'a mut Context,
-    config: &'a mut Configuration,
-    settings: &'a mut Settings,
-    buffs: &'a mut Vec<(BuffKind, KeyBinding)>,
-    actions: &'a mut Vec<Action>,
-    rotator: &'a mut Rotator,
-    mat: Option<&'a OwnedMat>,
-    player: &'a mut PlayerState,
-    minimap: &'a mut MinimapState,
-    key_sender: &'a broadcast::Sender<KeyBinding>,
-    key_receiver: &'a mut KeyReceiver,
-    wgc_capture: Option<&'a mut WgcCapture>,
-    window_box_capture: &'a WindowBoxCapture,
-}
-
-impl DefaultRequestHandler<'_> {
-    fn update_rotator_actions(&mut self, mode: RotatorMode) {
-        self.rotator.build_actions(
-            config_actions(self.config)
-                .into_iter()
-                .chain(self.actions.iter().copied())
-                .collect::<Vec<_>>()
-                .as_slice(),
-            self.buffs,
-            self.config.potion_key.key,
-            mode,
-        );
-    }
-}
-
-impl RequestHandler for DefaultRequestHandler<'_> {
-    fn on_rotate_actions(&mut self, halting: bool) {
-        if self.minimap.data().is_some() {
-            self.context.halting = halting;
-            if halting {
-                self.rotator.reset_queue();
-                self.player.abort_actions();
-            }
-        }
-    }
-
-    fn on_rotate_actions_halting(&self) -> bool {
-        self.context.halting
-    }
-
-    fn on_create_minimap(&self, name: String) -> Option<crate::Minimap> {
-        if let Minimap::Idle(idle) = self.context.minimap {
-            Some(crate::Minimap {
-                name,
-                width: idle.bbox.width,
-                height: idle.bbox.height,
-                ..crate::Minimap::default()
-            })
-        } else {
-            None
-        }
-    }
-
-    fn on_update_minimap(&mut self, preset: Option<String>, minimap: crate::Minimap) {
-        self.minimap.set_data(minimap);
-
-        let minimap = self.minimap.data().unwrap();
-        self.player.reset();
-        self.player.config.rune_platforms_pathing = minimap.rune_platforms_pathing;
-        self.player.config.rune_platforms_pathing_up_jump_only =
-            minimap.rune_platforms_pathing_up_jump_only;
-        self.player.config.auto_mob_platforms_pathing = minimap.auto_mob_platforms_pathing;
-        self.player.config.auto_mob_platforms_pathing_up_jump_only =
-            minimap.auto_mob_platforms_pathing_up_jump_only;
-        self.player.config.auto_mob_platforms_bound = minimap.auto_mob_platforms_bound;
-        *self.actions = preset
-            .and_then(|preset| minimap.actions.get(&preset).cloned())
-            .unwrap_or_default();
-        self.update_rotator_actions(minimap.rotation_mode.into());
-    }
-
-    fn on_update_configuration(&mut self, config: Configuration) {
-        *self.config = config;
-        *self.buffs = config_buffs(self.config);
-        self.player.reset();
-        self.player.config.class = self.config.class;
-        self.player.config.interact_key = self.config.interact_key.key.into();
-        self.player.config.grappling_key = self.config.ropelift_key.key.into();
-        self.player.config.teleport_key = self.config.teleport_key.map(|key| key.key.into());
-        self.player.config.jump_key = self.config.jump_key.key.into();
-        self.player.config.upjump_key = self.config.up_jump_key.map(|key| key.key.into());
-        self.player.config.cash_shop_key = self.config.cash_shop_key.key.into();
-        self.player.config.potion_key = self.config.potion_key.key.into();
-        self.player.config.use_potion_below_percent =
-            match (self.config.potion_key.enabled, self.config.potion_mode) {
-                (false, _) | (_, PotionMode::EveryMillis(_)) => None,
-                (_, PotionMode::Percentage(percent)) => Some(percent / 100.0),
-            };
-        self.player.config.update_health_millis = Some(self.config.health_update_millis);
-        self.update_rotator_actions(
-            self.minimap
-                .data()
-                .map(|minimap| minimap.rotation_mode)
-                .unwrap_or_default()
-                .into(),
-        );
-    }
-
-    fn on_update_settings(&mut self, settings: Settings) {
-        if !matches!(settings.capture_mode, CaptureMode::WindowsGraphicsCapture) {
-            if let Some(ref mut wgc_capture) = self.wgc_capture {
-                wgc_capture.stop_capture();
-            }
-        }
-        if !matches!(settings.capture_mode, CaptureMode::BitBltArea) {
-            self.window_box_capture.hide();
-            self.context
-                .keys
-                .set_input_kind(self.context.handle, KeyInputKind::Fixed);
-        } else {
-            self.window_box_capture.show();
-            *self.key_receiver =
-                KeyReceiver::new(self.window_box_capture.handle(), KeyInputKind::Foreground);
-            self.context
-                .keys
-                .set_input_kind(self.window_box_capture.handle(), KeyInputKind::Foreground);
-        }
-        *self.settings = settings;
-    }
-
-    fn on_redetect_minimap(&mut self) {
-        self.context.minimap = Minimap::Detecting;
-    }
-
-    fn on_player_state(&self) -> crate::PlayerState {
-        crate::PlayerState {
-            position: self.player.last_known_pos.map(|pos| (pos.x, pos.y)),
-            health: self.player.health,
-            state: self.context.player.to_string(),
-            normal_action: self.player.normal_action_name(),
-            priority_action: self.player.priority_action_name(),
-            erda_shower_state: self.context.skills[SkillKind::ErdaShower].to_string(),
-            destinations: self
-                .player
-                .last_destinations
-                .clone()
-                .map(|points| {
-                    points
-                        .into_iter()
-                        .map(|point| (point.x, point.y))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default(),
-        }
-    }
-
-    fn on_minimap_frame(&self) -> Option<(Vec<u8>, usize, usize)> {
-        self.mat.and_then(|mat| extract_minimap(self.context, mat))
-    }
-
-    fn on_minimap_platforms_bound(&self) -> Option<Bound> {
-        if let Minimap::Idle(idle) = self.context.minimap {
-            idle.platforms_bound.map(|bound| bound.into())
-        } else {
-            None
-        }
-    }
-
-    fn on_key_receiver(&self) -> broadcast::Receiver<KeyBinding> {
-        self.key_sender.subscribe()
     }
 }
 
@@ -427,40 +257,9 @@ fn update_loop() {
             wgc_capture: wgc_capture.as_mut().ok(),
             window_box_capture: &window_box_capture,
         };
-        poll_request(&mut handler);
-        poll_key(&mut handler);
+        handler.poll_request();
+        handler.poll_key();
     });
-}
-
-#[inline]
-fn poll_key(handler: &mut DefaultRequestHandler) {
-    let Some(received_key) = handler.key_receiver.try_recv() else {
-        return;
-    };
-    debug!(target: "context", "received key {received_key:?}");
-    let KeyBindingConfiguration { key, enabled } = handler.settings.toggle_actions_key;
-    if enabled && KeyKind::from(key) == received_key {
-        handler.on_rotate_actions(!handler.context.halting);
-    }
-    let _ = handler.key_sender.send(received_key.into());
-}
-
-#[inline]
-fn extract_minimap(context: &Context, mat: &impl MatTraitConst) -> Option<(Vec<u8>, usize, usize)> {
-    if let Minimap::Idle(idle) = context.minimap {
-        let minimap = mat
-            .roi(idle.bbox)
-            .unwrap()
-            .iter::<Vec4b>()
-            .unwrap()
-            .flat_map(|bgra| {
-                let bgra = bgra.1;
-                [bgra[2], bgra[1], bgra[0], 255]
-            })
-            .collect::<Vec<u8>>();
-        return Some((minimap, idle.bbox.width as usize, idle.bbox.height as usize));
-    }
-    None
 }
 
 #[inline]
@@ -500,63 +299,4 @@ fn loop_with_fps(fps: u32, mut on_tick: impl FnMut()) {
             info!(target: "context", "ticking running late at {}ms", (elapsed_nanos - nanos_per_frame) / 1_000_000);
         }
     }
-}
-
-fn config_buffs(config: &Configuration) -> Vec<(BuffKind, KeyBinding)> {
-    let mut buffs = Vec::new();
-    let KeyBindingConfiguration { key, enabled, .. } = config.sayram_elixir_key;
-    if enabled {
-        buffs.push((BuffKind::SayramElixir, key));
-    }
-    let KeyBindingConfiguration { key, enabled, .. } = config.aurelia_elixir_key;
-    if enabled {
-        buffs.push((BuffKind::AureliaElixir, key));
-    }
-    let KeyBindingConfiguration { key, enabled, .. } = config.exp_x3_key;
-    if enabled {
-        buffs.push((BuffKind::ExpCouponX3, key));
-    }
-    let KeyBindingConfiguration { key, enabled, .. } = config.bonus_exp_key;
-    if enabled {
-        buffs.push((BuffKind::BonusExpCoupon, key));
-    }
-    let KeyBindingConfiguration { key, enabled, .. } = config.legion_luck_key;
-    if enabled {
-        buffs.push((BuffKind::LegionLuck, key));
-    }
-    let KeyBindingConfiguration { key, enabled, .. } = config.legion_wealth_key;
-    if enabled {
-        buffs.push((BuffKind::LegionWealth, key));
-    }
-    buffs
-}
-
-fn config_actions(config: &Configuration) -> Vec<Action> {
-    let mut vec = Vec::new();
-    let KeyBindingConfiguration { key, enabled } = config.feed_pet_key;
-    if enabled {
-        let feed_pet_action = Action::Key(ActionKey {
-            key,
-            count: 1,
-            condition: ActionCondition::EveryMillis(config.feed_pet_millis),
-            wait_before_use_millis: 350,
-            wait_after_use_millis: 350,
-            ..ActionKey::default()
-        });
-        vec.push(feed_pet_action);
-        vec.push(feed_pet_action);
-        vec.push(feed_pet_action);
-    }
-    let KeyBindingConfiguration { key, enabled } = config.potion_key;
-    if enabled && let PotionMode::EveryMillis(millis) = config.potion_mode {
-        vec.push(Action::Key(ActionKey {
-            key,
-            count: 1,
-            condition: ActionCondition::EveryMillis(millis),
-            wait_before_use_millis: 350,
-            wait_after_use_millis: 350,
-            ..ActionKey::default()
-        }));
-    }
-    vec
 }

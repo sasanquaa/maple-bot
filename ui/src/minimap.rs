@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use backend::{
-    Action, ActionKey, ActionMove, Minimap as MinimapData, PlayerState, RotationMode,
-    create_minimap, delete_map, minimap_frame, minimap_platforms_bound, player_state, query_maps,
-    redetect_minimap, rotate_actions, rotate_actions_halting, update_minimap, upsert_map,
+    Action, ActionKey, ActionMove, GameState, Minimap as MinimapData, RotationMode, create_minimap,
+    delete_map, minimap_frame, minimap_platforms_bound, player_state, query_maps, redetect_minimap,
+    rotate_actions, rotate_actions_halting, update_minimap, upsert_map,
 };
 use dioxus::{document::EvalError, prelude::*};
 use futures_util::StreamExt;
@@ -149,7 +149,7 @@ pub fn Minimap(
     copy_position: Signal<Option<(i32, i32)>>,
 ) -> Element {
     let mut halting = use_signal(|| true);
-    let mut state = use_signal::<Option<PlayerState>>(|| None);
+    let mut state = use_signal::<Option<GameState>>(|| None);
     let mut detected_minimap_size = use_signal::<Option<(usize, usize)>>(|| None);
     let mut platforms_bound = use_signal(|| None);
     let mut minimaps = use_resource(move || async move {

@@ -26,6 +26,7 @@ mod minimap;
 mod pathing;
 mod player;
 mod player_actions;
+mod request_handler;
 mod rotator;
 mod skill;
 mod task;
@@ -82,7 +83,7 @@ enum Request {
     UpdateConfiguration(Configuration),
     UpdateSettings(Settings),
     RedetectMinimap,
-    PlayerState,
+    GameState,
     MinimapFrame,
     MinimapPlatformsBound,
     KeyReceiver,
@@ -101,7 +102,7 @@ enum Response {
     UpdateConfiguration,
     UpdateSettings,
     RedetectMinimap,
-    PlayerState(PlayerState),
+    GameState(GameState),
     MinimapFrame(Option<(Vec<u8>, usize, usize)>),
     MinimapPlatformsBound(Option<Bound>),
     KeyReceiver(broadcast::Receiver<KeyBinding>),
@@ -122,7 +123,7 @@ pub(crate) trait RequestHandler {
 
     fn on_redetect_minimap(&mut self);
 
-    fn on_player_state(&self) -> PlayerState;
+    fn on_game_state(&self) -> GameState;
 
     fn on_minimap_frame(&self) -> Option<(Vec<u8>, usize, usize)>;
 
@@ -132,7 +133,7 @@ pub(crate) trait RequestHandler {
 }
 
 #[derive(Debug, Clone)]
-pub struct PlayerState {
+pub struct GameState {
     pub position: Option<(i32, i32)>,
     pub health: Option<(u32, u32)>,
     pub state: String,
@@ -191,8 +192,8 @@ pub async fn redetect_minimap() {
     )
 }
 
-pub async fn player_state() -> PlayerState {
-    expect_value_variant!(request(Request::PlayerState).await, Response::PlayerState)
+pub async fn player_state() -> GameState {
+    expect_value_variant!(request(Request::GameState).await, Response::GameState)
 }
 
 pub async fn minimap_frame() -> Result<(Vec<u8>, usize, usize)> {
@@ -240,7 +241,7 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
                 handler.on_redetect_minimap();
                 Response::RedetectMinimap
             }
-            Request::PlayerState => Response::PlayerState(handler.on_player_state()),
+            Request::GameState => Response::GameState(handler.on_game_state()),
             Request::MinimapFrame => Response::MinimapFrame(handler.on_minimap_frame()),
             Request::MinimapPlatformsBound => {
                 Response::MinimapPlatformsBound(handler.on_minimap_platforms_bound())
