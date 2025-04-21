@@ -54,6 +54,8 @@ pub struct Settings {
     pub id: Option<i64>,
     #[serde(default)]
     pub capture_mode: CaptureMode,
+    #[serde(default = "enable_rune_solving_default")]
+    pub enable_rune_solving: bool,
     #[serde(default = "toggle_actions_key_default")]
     pub toggle_actions_key: KeyBindingConfiguration,
     #[serde(default = "platform_start_key_default")]
@@ -69,6 +71,7 @@ impl Default for Settings {
         Self {
             id: None,
             capture_mode: CaptureMode::default(),
+            enable_rune_solving: enable_rune_solving_default(),
             toggle_actions_key: toggle_actions_key_default(),
             platform_start_key: platform_start_key_default(),
             platform_end_key: platform_end_key_default(),
@@ -85,6 +88,10 @@ impl Identifiable for Settings {
     fn set_id(&mut self, id: i64) {
         self.id = Some(id);
     }
+}
+
+fn enable_rune_solving_default() -> bool {
+    true
 }
 
 fn toggle_actions_key_default() -> KeyBindingConfiguration {

@@ -1,7 +1,9 @@
 use backend::{CaptureMode, KeyBindingConfiguration, Settings as SettingsData};
 use dioxus::prelude::*;
 
-use crate::{AppMessage, configuration::ConfigEnumSelect, key::KeyBindingConfigurationInput};
+use crate::{
+    AppMessage, configuration::ConfigEnumSelect, input::Checkbox, key::KeyBindingConfigurationInput,
+};
 
 const TOGGLE_ACTIONS: &str = "Start/Stop Actions";
 const PLATFORM_START: &str = "Mark Platform Start";
@@ -38,68 +40,84 @@ pub fn Settings(
                 }
             }
             div { class: "h-2 border-b border-gray-300 mb-2" }
-            ConfigEnumSelect::<CaptureMode> {
-                label: "Capture Mode",
-                on_select: move |capture_mode| {
-                    on_settings(SettingsData {
-                        capture_mode,
-                        ..settings_view.peek().clone()
-                    });
-                },
-                disabled: false,
-                selected: settings_view().capture_mode,
-            }
-            KeyBindingConfigurationInput {
-                label: TOGGLE_ACTIONS,
-                label_active: active,
-                is_toggleable: true,
-                is_disabled: false,
-                on_input: move |key: Option<KeyBindingConfiguration>| {
-                    on_settings(SettingsData {
-                        toggle_actions_key: key.unwrap(),
-                        ..settings_view.peek().clone()
-                    });
-                },
-                value: Some(settings_view().toggle_actions_key),
-            }
-            KeyBindingConfigurationInput {
-                label: PLATFORM_START,
-                label_active: active,
-                is_toggleable: true,
-                is_disabled: false,
-                on_input: move |key: Option<KeyBindingConfiguration>| {
-                    on_settings(SettingsData {
-                        platform_start_key: key.unwrap(),
-                        ..settings_view.peek().clone()
-                    });
-                },
-                value: Some(settings_view().platform_start_key),
-            }
-            KeyBindingConfigurationInput {
-                label: PLATFORM_END,
-                label_active: active,
-                is_toggleable: true,
-                is_disabled: false,
-                on_input: move |key: Option<KeyBindingConfiguration>| {
-                    on_settings(SettingsData {
-                        platform_end_key: key.unwrap(),
-                        ..settings_view.peek().clone()
-                    });
-                },
-                value: Some(settings_view().platform_end_key),
-            }
-            KeyBindingConfigurationInput {
-                label: PLATFORM_ADD,
-                label_active: active,
-                is_toggleable: true,
-                is_disabled: false,
-                on_input: move |key: Option<KeyBindingConfiguration>| {
-                    on_settings(SettingsData {
-                        platform_add_key: key.unwrap(),
-                        ..settings_view.peek().clone()
-                    });
-                },
-                value: Some(settings_view().platform_add_key),
+            div { class: "flex flex-col space-y-2",
+                ConfigEnumSelect::<CaptureMode> {
+                    label: "Capture Mode",
+                    on_select: move |capture_mode| {
+                        on_settings(SettingsData {
+                            capture_mode,
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    disabled: false,
+                    selected: settings_view().capture_mode,
+                }
+                Checkbox {
+                    label: "Enable Rune Solving",
+                    label_class: "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400",
+                    div_class: "flex items-center space-x-4 mt-2",
+                    input_class: "w-44 text-xs text-gray-700 text-ellipsis rounded outline-none disabled:cursor-not-allowed disabled:text-gray-400",
+                    disabled: false,
+                    on_input: move |enable_rune_solving| {
+                        on_settings(SettingsData {
+                            enable_rune_solving,
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: settings_view().enable_rune_solving,
+                }
+                KeyBindingConfigurationInput {
+                    label: TOGGLE_ACTIONS,
+                    label_active: active,
+                    is_toggleable: true,
+                    is_disabled: false,
+                    on_input: move |key: Option<KeyBindingConfiguration>| {
+                        on_settings(SettingsData {
+                            toggle_actions_key: key.unwrap(),
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: Some(settings_view().toggle_actions_key),
+                }
+                KeyBindingConfigurationInput {
+                    label: PLATFORM_START,
+                    label_active: active,
+                    is_toggleable: true,
+                    is_disabled: false,
+                    on_input: move |key: Option<KeyBindingConfiguration>| {
+                        on_settings(SettingsData {
+                            platform_start_key: key.unwrap(),
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: Some(settings_view().platform_start_key),
+                }
+                KeyBindingConfigurationInput {
+                    label: PLATFORM_END,
+                    label_active: active,
+                    is_toggleable: true,
+                    is_disabled: false,
+                    on_input: move |key: Option<KeyBindingConfiguration>| {
+                        on_settings(SettingsData {
+                            platform_end_key: key.unwrap(),
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: Some(settings_view().platform_end_key),
+                }
+                KeyBindingConfigurationInput {
+                    label: PLATFORM_ADD,
+                    label_active: active,
+                    is_toggleable: true,
+                    is_disabled: false,
+                    on_input: move |key: Option<KeyBindingConfiguration>| {
+                        on_settings(SettingsData {
+                            platform_add_key: key.unwrap(),
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: Some(settings_view().platform_add_key),
+                }
             }
         }
     }

@@ -52,6 +52,7 @@ impl DefaultRequestHandler<'_> {
                 .as_slice(),
             self.buffs,
             self.config.potion_key.key,
+            self.settings.enable_rune_solving,
         );
     }
 }
@@ -149,6 +150,13 @@ impl RequestHandler for DefaultRequestHandler<'_> {
                 .set_input_kind(self.window_box_capture.handle(), KeyInputKind::Foreground);
         }
         *self.settings = settings;
+        self.update_rotator_actions(
+            self.minimap
+                .data()
+                .map(|minimap| minimap.rotation_mode)
+                .unwrap_or_default()
+                .into(),
+        );
     }
 
     fn on_redetect_minimap(&mut self) {
