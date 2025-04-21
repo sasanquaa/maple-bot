@@ -48,6 +48,15 @@ trait Identifiable {
     fn set_id(&mut self, id: i64);
 }
 
+#[derive(
+    Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumIter, Display, EnumString,
+)]
+pub enum InputMethod {
+    #[default]
+    Default,
+    Rpc,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(skip_serializing, default)]
@@ -56,6 +65,10 @@ pub struct Settings {
     pub capture_mode: CaptureMode,
     #[serde(default = "enable_rune_solving_default")]
     pub enable_rune_solving: bool,
+    #[serde(default)]
+    pub input_method: InputMethod,
+    #[serde(default)]
+    pub input_method_rpc_server_url: String,
     #[serde(default = "toggle_actions_key_default")]
     pub toggle_actions_key: KeyBindingConfiguration,
     #[serde(default = "platform_start_key_default")]
@@ -72,6 +85,8 @@ impl Default for Settings {
             id: None,
             capture_mode: CaptureMode::default(),
             enable_rune_solving: enable_rune_solving_default(),
+            input_method: InputMethod::default(),
+            input_method_rpc_server_url: String::default(),
             toggle_actions_key: toggle_actions_key_default(),
             platform_start_key: platform_start_key_default(),
             platform_end_key: platform_end_key_default(),

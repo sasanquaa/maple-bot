@@ -1,5 +1,6 @@
 use std::{
     any::Any,
+    cell::{RefCell, RefMut},
     env,
     fmt::Debug,
     fs::File,
@@ -9,11 +10,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::{Error, anyhow};
 use log::info;
 #[cfg(test)]
 use mockall::automock;
 use platforms::windows::{
-    self, BitBltCapture, Error, Handle, KeyInputKind, KeyKind, KeyReceiver, Keys, WgcCapture,
+    self, BitBltCapture, Handle, KeyInputKind, KeyKind, KeyReceiver, Keys, WgcCapture,
     WindowBoxCapture,
 };
 use strum::IntoEnumIterator;
@@ -22,7 +24,7 @@ use tokio::sync::broadcast;
 use crate::{
     Action,
     buff::{Buff, BuffKind, BuffState},
-    database::{CaptureMode, KeyBinding},
+    database::{CaptureMode, InputMethod, KeyBinding},
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
@@ -30,6 +32,7 @@ use crate::{
     query_configs, query_settings,
     request_handler::{DefaultRequestHandler, config_buffs},
     rotator::Rotator,
+    rpc::KeysService,
     skill::{Skill, SkillKind, SkillState},
 };
 
@@ -66,10 +69,20 @@ pub trait Contextual {
         Self: Sized;
 }
 
+/// The kind of key input method
+///
+/// Bridge enum between platform and RPC
+#[derive(Clone, Debug)]
+pub enum KeySenderKind {
+    Rpc(String),
+    Foreground(Handle),
+    Fixed(Handle),
+}
+
 /// A trait for sending keys
 #[cfg_attr(test, automock)]
 pub trait KeySender: Debug + Any {
-    fn set_input_kind(&mut self, handle: Handle, kind: KeyInputKind);
+    fn set_kind(&mut self, kind: KeySenderKind);
 
     fn send(&self, kind: KeyKind) -> Result<(), Error>;
 
@@ -82,28 +95,90 @@ pub trait KeySender: Debug + Any {
 
 #[derive(Debug)]
 struct DefaultKeySender {
-    keys: Keys,
+    platform: Keys,
+    service: Option<RefCell<KeysService>>,
+    kind: KeySenderKind,
+}
+
+impl DefaultKeySender {
+    #[inline]
+    fn borrow_service_mut(&self) -> Result<RefMut<KeysService>, Error> {
+        self.service
+            .as_ref()
+            .map(|service| service.borrow_mut())
+            .ok_or(anyhow!("service not connected"))
+    }
 }
 
 impl KeySender for DefaultKeySender {
-    fn set_input_kind(&mut self, handle: Handle, kind: KeyInputKind) {
-        self.keys.set_input_kind(handle, kind);
+    fn set_kind(&mut self, kind: KeySenderKind) {
+        match kind.clone() {
+            KeySenderKind::Rpc(url) => {
+                if self.service.is_none() {
+                    self.service = KeysService::connect(url).map(RefCell::new).ok();
+                }
+            }
+            KeySenderKind::Foreground(handle) => {
+                self.platform
+                    .set_input_kind(handle, KeyInputKind::Foreground);
+            }
+            KeySenderKind::Fixed(handle) => {
+                self.platform.set_input_kind(handle, KeyInputKind::Fixed);
+            }
+        }
+        if let Ok(mut service) = self.borrow_service_mut() {
+            service.reset();
+        }
+        self.kind = kind;
     }
 
     fn send(&self, kind: KeyKind) -> Result<(), Error> {
-        self.keys.send(kind)
+        match self.kind {
+            KeySenderKind::Rpc(_) => {
+                self.borrow_service_mut()?.send(kind)?;
+                Ok(())
+            }
+            KeySenderKind::Foreground(_) | KeySenderKind::Fixed(_) => {
+                self.platform.send(kind)?;
+                Ok(())
+            }
+        }
     }
 
     fn send_click_to_focus(&self) -> Result<(), Error> {
-        self.keys.send_click_to_focus()
+        match self.kind {
+            KeySenderKind::Rpc(_) => Ok(()),
+            KeySenderKind::Foreground(_) | KeySenderKind::Fixed(_) => {
+                self.platform.send_click_to_focus()?;
+                Ok(())
+            }
+        }
     }
 
     fn send_up(&self, kind: KeyKind) -> Result<(), Error> {
-        self.keys.send_up(kind)
+        match self.kind {
+            KeySenderKind::Rpc(_) => {
+                self.borrow_service_mut()?.send_up(kind)?;
+                Ok(())
+            }
+            KeySenderKind::Foreground(_) | KeySenderKind::Fixed(_) => {
+                self.platform.send_up(kind)?;
+                Ok(())
+            }
+        }
     }
 
     fn send_down(&self, kind: KeyKind) -> Result<(), Error> {
-        self.keys.send_down(kind)
+        match self.kind {
+            KeySenderKind::Rpc(_) => {
+                self.borrow_service_mut()?.send_down(kind)?;
+                Ok(())
+            }
+            KeySenderKind::Foreground(_) | KeySenderKind::Fixed(_) => {
+                self.platform.send_down(kind)?;
+                Ok(())
+            }
+        }
     }
 }
 
@@ -112,7 +187,7 @@ impl KeySender for DefaultKeySender {
 pub struct Context {
     /// The `MapleStory` class game handle
     pub handle: Handle, // FIXME: This shoulnd't be pub, it is pub for tests
-    pub keys: &'static mut dyn KeySender,
+    pub keys: Box<dyn KeySender>,
     pub minimap: Minimap,
     pub player: Player,
     pub skills: [Skill; SkillKind::COUNT],
@@ -125,7 +200,7 @@ impl Default for Context {
     fn default() -> Self {
         Self {
             handle: Handle::new(""),
-            keys: Box::leak(Box::new(MockKeySender::new())),
+            keys: Box::new(MockKeySender::new()),
             minimap: Minimap::Detecting,
             player: Player::Detecting,
             skills: [Skill::Detecting; SkillKind::COUNT],
@@ -155,7 +230,7 @@ pub fn init() {
         windows::init();
         thread::spawn(|| {
             let tokio_rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_time()
+                .enable_all()
                 .build()
                 .unwrap();
             let _tokio_guard = tokio_rt.enter();
@@ -172,26 +247,36 @@ fn update_loop() {
     // MapleStoryClassSG <- MSEA
     // MapleStoryClassTW <- TMS
     let handle = Handle::new("MapleStoryClass");
-    let keys = DefaultKeySender {
-        keys: Keys::new(handle),
-    };
-    let key_sender = broadcast::channel::<KeyBinding>(1).0; // Callback to UI
-    let mut key_receiver = KeyReceiver::new(handle, KeyInputKind::Fixed);
-
     let mut rotator = Rotator::default();
     let mut actions = Vec::<Action>::new();
     let mut config = query_configs().unwrap().into_iter().next().unwrap(); // Override by UI
     let mut buffs = config_buffs(&config);
-    let mut context = Context {
-        handle,
-        keys: Box::leak(Box::new(keys)),
-        minimap: Minimap::Detecting,
-        player: Player::Idle,
-        skills: [Skill::Detecting],
-        buffs: [Buff::NoBuff; BuffKind::COUNT],
-        halting: true,
-    };
     let mut settings = query_settings(); // Override by UI
+
+    let keys_service = if let InputMethod::Rpc = settings.input_method {
+        KeysService::connect(settings.input_method_rpc_server_url.clone())
+            .map(RefCell::new)
+            .ok()
+    } else {
+        None
+    };
+    let key_sender_kind = if let InputMethod::Rpc = settings.input_method {
+        KeySenderKind::Rpc(settings.input_method_rpc_server_url.clone())
+    } else {
+        match settings.capture_mode {
+            CaptureMode::BitBlt | CaptureMode::WindowsGraphicsCapture => {
+                KeySenderKind::Fixed(handle)
+            }
+            CaptureMode::BitBltArea => KeySenderKind::Foreground(handle),
+        }
+    };
+    let mut keys = DefaultKeySender {
+        platform: Keys::new(handle),
+        service: keys_service,
+        kind: key_sender_kind,
+    };
+    let key_sender = broadcast::channel::<KeyBinding>(1).0; // Callback to UI
+    let mut key_receiver = KeyReceiver::new(handle, KeyInputKind::Fixed);
 
     let mut bitblt_capture = BitBltCapture::new(handle, false);
     let mut wgc_capture = WgcCapture::new(handle, MS_PER_TICK);
@@ -200,11 +285,19 @@ fn update_loop() {
         window_box_capture.hide();
     } else {
         key_receiver = KeyReceiver::new(window_box_capture.handle(), KeyInputKind::Foreground);
-        context
-            .keys
+        keys.platform
             .set_input_kind(window_box_capture.handle(), KeyInputKind::Foreground);
     }
 
+    let mut context = Context {
+        handle,
+        keys: Box::new(keys),
+        minimap: Minimap::Detecting,
+        player: Player::Idle,
+        skills: [Skill::Detecting],
+        buffs: [Buff::NoBuff; BuffKind::COUNT],
+        halting: true,
+    };
     let mut player_state = PlayerState::default();
     let mut minimap_state = MinimapState::default();
     let mut skill_states = SkillKind::iter()

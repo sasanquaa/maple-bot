@@ -23,7 +23,7 @@ pub struct SelectProps<T: 'static + Clone + PartialEq> {
 }
 
 #[component]
-pub fn EnumSelect<T: 'static + Clone + Copy + PartialEq + Display + FromStr + IntoEnumIterator>(
+pub fn EnumSelect<T: 'static + Clone + PartialEq + Display + FromStr + IntoEnumIterator>(
     #[props(default = String::default())] label: String,
     #[props(default = String::from("collapse"))] label_class: String,
     #[props(default = String::default())] div_class: String,

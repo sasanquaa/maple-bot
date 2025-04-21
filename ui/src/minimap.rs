@@ -187,6 +187,7 @@ pub fn Minimap(
                             upsert_map(&mut data).unwrap();
                             minimap.set(Some(data));
                             minimaps.restart();
+                            preset.set(None);
                         }
                     }
                     MinimapMessage::UpdateMinimap(mut data, save) => {

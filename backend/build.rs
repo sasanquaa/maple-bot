@@ -36,6 +36,8 @@ fn main() {
     let text_detection_model = dir.join("text_detection.onnx");
     let text_recognition_model = dir.join("text_recognition.onnx");
     let text_alphabet_txt = dir.join("alphabet_94.txt");
+
+    tonic_build::compile_protos("proto/input.proto").unwrap();
     println!(
         "cargo:rustc-env=ESC_SETTING_TEMPLATE={}",
         esc_setting.to_str().unwrap()

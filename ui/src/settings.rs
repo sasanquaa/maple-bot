@@ -1,8 +1,11 @@
-use backend::{CaptureMode, KeyBindingConfiguration, Settings as SettingsData};
+use backend::{CaptureMode, InputMethod, KeyBindingConfiguration, Settings as SettingsData};
 use dioxus::prelude::*;
 
 use crate::{
-    AppMessage, configuration::ConfigEnumSelect, input::Checkbox, key::KeyBindingConfigurationInput,
+    AppMessage,
+    configuration::ConfigEnumSelect,
+    input::{Checkbox, LabeledInput},
+    key::KeyBindingConfigurationInput,
 };
 
 const TOGGLE_ACTIONS: &str = "Start/Stop Actions";
@@ -40,18 +43,7 @@ pub fn Settings(
                 }
             }
             div { class: "h-2 border-b border-gray-300 mb-2" }
-            div { class: "flex flex-col space-y-2",
-                ConfigEnumSelect::<CaptureMode> {
-                    label: "Capture Mode",
-                    on_select: move |capture_mode| {
-                        on_settings(SettingsData {
-                            capture_mode,
-                            ..settings_view.peek().clone()
-                        });
-                    },
-                    disabled: false,
-                    selected: settings_view().capture_mode,
-                }
+            div { class: "flex flex-col space-y-3",
                 Checkbox {
                     label: "Enable Rune Solving",
                     label_class: "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400",
@@ -66,6 +58,18 @@ pub fn Settings(
                     },
                     value: settings_view().enable_rune_solving,
                 }
+                ConfigEnumSelect::<CaptureMode> {
+                    label: "Capture Mode",
+                    on_select: move |capture_mode| {
+                        on_settings(SettingsData {
+                            capture_mode,
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    disabled: false,
+                    selected: settings_view().capture_mode,
+                }
+                SettingsInputMethodSelect { app_coroutine, settings_view }
                 KeyBindingConfigurationInput {
                     label: TOGGLE_ACTIONS,
                     label_active: active,
@@ -117,6 +121,56 @@ pub fn Settings(
                         });
                     },
                     value: Some(settings_view().platform_add_key),
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn SettingsInputMethodSelect(
+    app_coroutine: Coroutine<AppMessage>,
+    settings_view: Memo<SettingsData>,
+) -> Element {
+    let on_settings = move |updated| {
+        app_coroutine.send(AppMessage::UpdateSettings(updated));
+    };
+    let mut url = use_signal(|| settings_view().input_method_rpc_server_url);
+
+    rsx! {
+        ConfigEnumSelect::<InputMethod> {
+            label: "Input Method",
+            on_select: move |input_method| {
+                on_settings(SettingsData {
+                    input_method,
+                    ..settings_view.peek().clone()
+                });
+            },
+            disabled: false,
+            selected: settings_view().input_method,
+        }
+        if matches!(settings_view().input_method, InputMethod::Rpc) {
+            LabeledInput {
+                label: "Server URL",
+                label_class: "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400",
+                div_class: "flex space-x-2 items-center",
+                disabled: false,
+                input {
+                    class: "w-24 text-gray-700 text-xs p-1 border rounded border-gray-300",
+                    oninput: move |e| {
+                        url.set(e.parsed::<String>().unwrap_or_default());
+                    },
+                    value: url(),
+                }
+                button {
+                    class: "button-primary w-18 h-full",
+                    onclick: move |_| {
+                        on_settings(SettingsData {
+                            input_method_rpc_server_url: url.peek().clone(),
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    "Update"
                 }
             }
         }

@@ -5,7 +5,7 @@ pub enum Error {
     #[error("the current window size is invalid")]
     InvalidWindowSize,
     #[error("key or click was not sent due to the window not focused or other error")]
-    NotSent,
+    KeyNotSent,
     #[error("window matching provided class and title cannot be found")]
     WindowNotFound,
     #[error("capture frame is not available")]
