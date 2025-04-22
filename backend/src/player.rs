@@ -2855,7 +2855,7 @@ mod tests {
             .withf(|key| matches!(key, KeyKind::Space))
             .returning(|_| Ok(()))
             .once();
-        context.keys = Box::leak(Box::new(keys));
+        context.keys = Box::new(keys);
         // Space + Up only
         update_up_jumping_context(&context, &mut state, pos, moving);
         let _ = context.keys; // drop mock for validation
@@ -2870,7 +2870,7 @@ mod tests {
             .withf(|key| matches!(key, KeyKind::Space))
             .never()
             .returning(|_| Ok(()));
-        context.keys = Box::leak(Box::new(keys));
+        context.keys = Box::new(keys);
         // Up only
         update_up_jumping_context(&context, &mut state, pos, moving);
         let _ = context.keys; // drop mock for validation
@@ -2885,7 +2885,7 @@ mod tests {
             .withf(|key| matches!(key, KeyKind::Space))
             .once()
             .returning(|_| Ok(()));
-        context.keys = Box::leak(Box::new(keys));
+        context.keys = Box::new(keys);
         // Space + Up
         update_up_jumping_context(&context, &mut state, pos, moving);
         let _ = context.keys; // drop mock for validation
@@ -2936,7 +2936,7 @@ mod tests {
             .withf(|key| matches!(key, KeyKind::Space))
             .returning(|_| Ok(()));
         let context = Context {
-            keys: Box::leak(Box::new(keys)),
+            keys: Box::new(keys),
             ..Default::default()
         };
         let pos = Point::new(5, 5);
@@ -2955,7 +2955,7 @@ mod tests {
         keys.expect_send_down().never();
         keys.expect_send().never();
         let context = Context {
-            keys: Box::leak(Box::new(keys)),
+            keys: Box::new(keys),
             ..Default::default()
         };
         state.is_stationary = false;
@@ -2970,7 +2970,7 @@ mod tests {
             .once()
             .returning(|_| Ok(()));
         let context = Context {
-            keys: Box::leak(Box::new(keys)),
+            keys: Box::new(keys),
             ..Default::default()
         };
         let pos = Point::new(5, 5);
@@ -3073,7 +3073,7 @@ mod tests {
             .returning(|_| Ok(()));
         let mut state = PlayerState::default();
         let context = Context {
-            keys: Box::leak(Box::new(keys)),
+            keys: Box::new(keys),
             ..Context::default()
         };
         let use_key = UseKey {
@@ -3161,7 +3161,7 @@ mod tests {
             .returning(|_| Ok(()));
         let mut state = PlayerState::default();
         let context = Context {
-            keys: Box::leak(Box::new(keys)),
+            keys: Box::new(keys),
             ..Context::default()
         };
         let use_key = UseKey {
@@ -3238,7 +3238,7 @@ mod tests {
             .return_once(|_| Ok(()));
         let mut state = PlayerState::default();
         let context = Context {
-            keys: Box::leak(Box::new(keys)),
+            keys: Box::new(keys),
             ..Context::default()
         };
         let use_key = UseKey {

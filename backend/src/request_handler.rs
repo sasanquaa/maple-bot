@@ -8,7 +8,8 @@ use crate::{
     KeyBindingConfiguration, Minimap as MinimapData, PotionMode, RequestHandler, RotatorMode,
     Settings,
     buff::BuffKind,
-    context::Context,
+    context::{Context, KeySenderKind},
+    database::InputMethod,
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
     player::PlayerState,
@@ -52,6 +53,7 @@ impl DefaultRequestHandler<'_> {
                 .as_slice(),
             self.buffs,
             self.config.potion_key.key,
+            self.settings.enable_rune_solving,
         );
     }
 }
@@ -137,24 +139,42 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         }
         if !matches!(settings.capture_mode, CaptureMode::BitBltArea) {
             self.window_box_capture.hide();
-            self.context
-                .keys
-                .set_input_kind(self.context.handle, KeyInputKind::Fixed);
+            if matches!(settings.input_method, InputMethod::Default) {
+                self.context
+                    .keys
+                    .set_kind(KeySenderKind::Fixed(self.context.handle));
+            }
         } else {
             self.window_box_capture.show();
             *self.key_receiver =
                 KeyReceiver::new(self.window_box_capture.handle(), KeyInputKind::Foreground);
-            self.context
-                .keys
-                .set_input_kind(self.window_box_capture.handle(), KeyInputKind::Foreground);
+            if matches!(settings.input_method, InputMethod::Default) {
+                self.context
+                    .keys
+                    .set_kind(KeySenderKind::Foreground(self.window_box_capture.handle()));
+            }
+        }
+        if let InputMethod::Rpc = settings.input_method {
+            self.context.keys.set_kind(KeySenderKind::Rpc(
+                settings.input_method_rpc_server_url.clone(),
+            ));
         }
         *self.settings = settings;
+        self.update_rotator_actions(
+            self.minimap
+                .data()
+                .map(|minimap| minimap.rotation_mode)
+                .unwrap_or_default()
+                .into(),
+        );
     }
 
+    #[inline]
     fn on_redetect_minimap(&mut self) {
         self.context.minimap = Minimap::Detecting;
     }
 
+    #[inline]
     fn on_game_state(&self) -> GameState {
         GameState {
             position: self.player.last_known_pos.map(|pos| (pos.x, pos.y)),
@@ -177,6 +197,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         }
     }
 
+    #[inline]
     fn on_minimap_frame(&self) -> Option<(Vec<u8>, usize, usize)> {
         self.mat.and_then(|mat| extract_minimap(self.context, mat))
     }
@@ -189,6 +210,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         }
     }
 
+    #[inline]
     fn on_key_receiver(&self) -> broadcast::Receiver<KeyBinding> {
         self.key_sender.subscribe()
     }

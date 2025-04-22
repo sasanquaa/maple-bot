@@ -137,6 +137,7 @@ impl Rotator {
         actions: &[Action],
         buffs: &[(BuffKind, KeyBinding)],
         potion_key: KeyBinding,
+        enable_rune_solving: bool,
     ) {
         debug!(target: "rotator", "preparing actions {actions:?} {buffs:?}");
         self.reset_queue();
@@ -180,10 +181,12 @@ impl Rotator {
             self.id_counter.fetch_add(1, Ordering::Relaxed),
             elite_boss_potion_spam_priority_action(potion_key),
         );
-        self.priority_actions.insert(
-            self.id_counter.fetch_add(1, Ordering::Relaxed),
-            solve_rune_priority_action(),
-        );
+        if enable_rune_solving {
+            self.priority_actions.insert(
+                self.id_counter.fetch_add(1, Ordering::Relaxed),
+                solve_rune_priority_action(),
+            );
+        }
         for (i, key) in buffs.iter().copied() {
             self.priority_actions.insert(
                 self.id_counter.fetch_add(1, Ordering::Relaxed),
@@ -843,7 +846,13 @@ mod tests {
         let actions = vec![NORMAL_ACTION, NORMAL_ACTION, PRIORITY_ACTION];
         let buffs = vec![(BuffKind::Rune, KeyBinding::default()); 4];
 
-        rotator.build_actions(&actions, &buffs, KeyBinding::A, RotatorMode::default());
+        rotator.build_actions(
+            RotatorMode::default(),
+            &actions,
+            &buffs,
+            KeyBinding::A,
+            true,
+        );
         assert_eq!(rotator.priority_actions.len(), 7);
         assert_eq!(rotator.normal_actions.len(), 2);
     }

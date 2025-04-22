@@ -1,7 +1,12 @@
-use backend::{CaptureMode, KeyBindingConfiguration, Settings as SettingsData};
+use backend::{CaptureMode, InputMethod, KeyBindingConfiguration, Settings as SettingsData};
 use dioxus::prelude::*;
 
-use crate::{AppMessage, configuration::ConfigEnumSelect, key::KeyBindingConfigurationInput};
+use crate::{
+    AppMessage,
+    configuration::ConfigEnumSelect,
+    input::{Checkbox, LabeledInput},
+    key::KeyBindingConfigurationInput,
+};
 
 const TOGGLE_ACTIONS: &str = "Start/Stop Actions";
 const PLATFORM_START: &str = "Mark Platform Start";
@@ -38,68 +43,173 @@ pub fn Settings(
                 }
             }
             div { class: "h-2 border-b border-gray-300 mb-2" }
-            ConfigEnumSelect::<CaptureMode> {
-                label: "Capture Mode",
-                on_select: move |capture_mode| {
-                    on_settings(SettingsData {
-                        capture_mode,
-                        ..settings_view.peek().clone()
-                    });
-                },
-                disabled: false,
-                selected: settings_view().capture_mode,
+            div { class: "flex flex-col space-y-3.5",
+                SettingsCheckbox {
+                    label: "Enable Rune Solving",
+                    on_input: move |enable_rune_solving| {
+                        on_settings(SettingsData {
+                            enable_rune_solving,
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: settings_view().enable_rune_solving,
+                }
+                SettingsCheckbox {
+                    label: "Stop Actions If Fails / Changes Map",
+                    on_input: move |stop_on_fail_or_change_map| {
+                        on_settings(SettingsData {
+                            stop_on_fail_or_change_map,
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: settings_view().stop_on_fail_or_change_map,
+                }
+                ConfigEnumSelect::<CaptureMode> {
+                    label: "Capture Mode",
+                    on_select: move |capture_mode| {
+                        on_settings(SettingsData {
+                            capture_mode,
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    disabled: false,
+                    selected: settings_view().capture_mode,
+                }
+                SettingsInputMethodSelect { app_coroutine, settings_view }
+                KeyBindingConfigurationInput {
+                    label: TOGGLE_ACTIONS,
+                    label_active: active,
+                    is_toggleable: true,
+                    is_disabled: false,
+                    on_input: move |key: Option<KeyBindingConfiguration>| {
+                        on_settings(SettingsData {
+                            toggle_actions_key: key.unwrap(),
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: Some(settings_view().toggle_actions_key),
+                }
+                KeyBindingConfigurationInput {
+                    label: PLATFORM_START,
+                    label_active: active,
+                    is_toggleable: true,
+                    is_disabled: false,
+                    on_input: move |key: Option<KeyBindingConfiguration>| {
+                        on_settings(SettingsData {
+                            platform_start_key: key.unwrap(),
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: Some(settings_view().platform_start_key),
+                }
+                KeyBindingConfigurationInput {
+                    label: PLATFORM_END,
+                    label_active: active,
+                    is_toggleable: true,
+                    is_disabled: false,
+                    on_input: move |key: Option<KeyBindingConfiguration>| {
+                        on_settings(SettingsData {
+                            platform_end_key: key.unwrap(),
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: Some(settings_view().platform_end_key),
+                }
+                KeyBindingConfigurationInput {
+                    label: PLATFORM_ADD,
+                    label_active: active,
+                    is_toggleable: true,
+                    is_disabled: false,
+                    on_input: move |key: Option<KeyBindingConfiguration>| {
+                        on_settings(SettingsData {
+                            platform_add_key: key.unwrap(),
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: Some(settings_view().platform_add_key),
+                }
             }
-            KeyBindingConfigurationInput {
-                label: TOGGLE_ACTIONS,
-                label_active: active,
-                is_toggleable: true,
-                is_disabled: false,
-                on_input: move |key: Option<KeyBindingConfiguration>| {
-                    on_settings(SettingsData {
-                        toggle_actions_key: key.unwrap(),
-                        ..settings_view.peek().clone()
-                    });
+        }
+    }
+}
+
+// TODO: Needs to group settings components
+#[component]
+pub fn SettingsCheckbox(label: String, on_input: EventHandler<bool>, value: bool) -> Element {
+    rsx! {
+        Checkbox {
+            label,
+            label_class: "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400",
+            div_class: "flex items-center space-x-4 mt-2",
+            input_class: "w-44 text-xs text-gray-700 text-ellipsis rounded outline-none disabled:cursor-not-allowed disabled:text-gray-400",
+            disabled: false,
+            on_input: move |checked| {
+                on_input(checked);
+            },
+            value,
+        }
+    }
+}
+
+#[component]
+pub fn SettingsTextInput(label: String, on_input: EventHandler<String>, value: String) -> Element {
+    let mut value = use_signal(move || value);
+
+    rsx! {
+        LabeledInput {
+            label,
+            label_class: "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400",
+            div_class: "flex space-x-2 items-center",
+            disabled: false,
+            input {
+                class: "w-24 text-gray-700 text-xs p-1 border rounded border-gray-300",
+                oninput: move |e| {
+                    value.set(e.parsed::<String>().unwrap_or_default());
                 },
-                value: Some(settings_view().toggle_actions_key),
+                value: value(),
             }
-            KeyBindingConfigurationInput {
-                label: PLATFORM_START,
-                label_active: active,
-                is_toggleable: true,
-                is_disabled: false,
-                on_input: move |key: Option<KeyBindingConfiguration>| {
-                    on_settings(SettingsData {
-                        platform_start_key: key.unwrap(),
-                        ..settings_view.peek().clone()
-                    });
+            button {
+                class: "button-primary w-18 h-full",
+                onclick: move |_| {
+                    on_input(value.peek().clone());
                 },
-                value: Some(settings_view().platform_start_key),
+                "Update"
             }
-            KeyBindingConfigurationInput {
-                label: PLATFORM_END,
-                label_active: active,
-                is_toggleable: true,
-                is_disabled: false,
-                on_input: move |key: Option<KeyBindingConfiguration>| {
+        }
+    }
+}
+
+#[component]
+fn SettingsInputMethodSelect(
+    app_coroutine: Coroutine<AppMessage>,
+    settings_view: Memo<SettingsData>,
+) -> Element {
+    let on_settings = move |updated| {
+        app_coroutine.send(AppMessage::UpdateSettings(updated));
+    };
+
+    rsx! {
+        ConfigEnumSelect::<InputMethod> {
+            label: "Input Method",
+            on_select: move |input_method| {
+                on_settings(SettingsData {
+                    input_method,
+                    ..settings_view.peek().clone()
+                });
+            },
+            disabled: false,
+            selected: settings_view().input_method,
+        }
+        if matches!(settings_view().input_method, InputMethod::Rpc) {
+            SettingsTextInput {
+                label: "Server URL",
+                on_input: move |url| {
                     on_settings(SettingsData {
-                        platform_end_key: key.unwrap(),
+                        input_method_rpc_server_url: url,
                         ..settings_view.peek().clone()
                     });
                 },
-                value: Some(settings_view().platform_end_key),
-            }
-            KeyBindingConfigurationInput {
-                label: PLATFORM_ADD,
-                label_active: active,
-                is_toggleable: true,
-                is_disabled: false,
-                on_input: move |key: Option<KeyBindingConfiguration>| {
-                    on_settings(SettingsData {
-                        platform_add_key: key.unwrap(),
-                        ..settings_view.peek().clone()
-                    });
-                },
-                value: Some(settings_view().platform_add_key),
+                value: settings_view().input_method_rpc_server_url,
             }
         }
     }

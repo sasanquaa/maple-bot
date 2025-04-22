@@ -59,6 +59,12 @@ pub enum BuffKind {
     BonusExpCoupon,
     LegionWealth,
     LegionLuck,
+    WealthAcquisitionPotion,
+    ExpAccumulationPotion,
+    ExtremeRedPotion,
+    ExtremeBluePotion,
+    ExtremeGreenPotion,
+    ExtremeGoldPotion,
 }
 
 impl BuffKind {
@@ -110,6 +116,16 @@ fn update_context(contextual: Buff, detector: &impl Detector, state: &mut BuffSt
             BuffKind::BonusExpCoupon => detector.detect_player_bonus_exp_coupon_buff(),
             BuffKind::LegionWealth => detector.detect_player_legion_wealth_buff(),
             BuffKind::LegionLuck => detector.detect_player_legion_luck_buff(),
+            BuffKind::WealthAcquisitionPotion => {
+                detector.detect_player_wealth_acquisition_potion_buff()
+            }
+            BuffKind::ExpAccumulationPotion => {
+                detector.detect_player_exp_accumulation_potion_buff()
+            }
+            BuffKind::ExtremeRedPotion => detector.detect_player_extreme_red_potion_buff(),
+            BuffKind::ExtremeBluePotion => detector.detect_player_extreme_blue_potion_buff(),
+            BuffKind::ExtremeGreenPotion => detector.detect_player_extreme_green_potion_buff(),
+            BuffKind::ExtremeGoldPotion => detector.detect_player_extreme_gold_potion_buff(),
         })
     }) else {
         return contextual;
@@ -181,6 +197,36 @@ mod tests {
             BuffKind::LegionLuck => {
                 detector
                     .expect_detect_player_legion_luck_buff()
+                    .return_const(result);
+            }
+            BuffKind::WealthAcquisitionPotion => {
+                detector
+                    .expect_detect_player_wealth_acquisition_potion_buff()
+                    .return_const(result);
+            }
+            BuffKind::ExpAccumulationPotion => {
+                detector
+                    .expect_detect_player_exp_accumulation_potion_buff()
+                    .return_const(result);
+            }
+            BuffKind::ExtremeRedPotion => {
+                detector
+                    .expect_detect_player_extreme_red_potion_buff()
+                    .return_const(result);
+            }
+            BuffKind::ExtremeBluePotion => {
+                detector
+                    .expect_detect_player_extreme_blue_potion_buff()
+                    .return_const(result);
+            }
+            BuffKind::ExtremeGreenPotion => {
+                detector
+                    .expect_detect_player_extreme_green_potion_buff()
+                    .return_const(result);
+            }
+            BuffKind::ExtremeGoldPotion => {
+                detector
+                    .expect_detect_player_extreme_gold_potion_buff()
                     .return_const(result);
             }
         }

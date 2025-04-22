@@ -112,6 +112,25 @@ pub trait Detector: 'static + Send + Clone {
     /// Detects whether the player has a legion luck buff.
     fn detect_player_legion_luck_buff(&self) -> bool;
 
+    /// Detects whether the player has a weatlh acquisition potion buff.
+    fn detect_player_wealth_acquisition_potion_buff(&self) -> bool;
+
+    /// Detects whether the player has an exp accumulation potion buff.
+    fn detect_player_exp_accumulation_potion_buff(&self) -> bool;
+
+    // TODO: Could use enum or something but this fine too
+    /// Detects whether the player has a extreme red potion buff.
+    fn detect_player_extreme_red_potion_buff(&self) -> bool;
+
+    /// Detects whether the player has a extreme blue potion buff.
+    fn detect_player_extreme_blue_potion_buff(&self) -> bool;
+
+    /// Detects whether the player has a extreme green potion buff.
+    fn detect_player_extreme_green_potion_buff(&self) -> bool;
+
+    /// Detects whether the player has a extreme gold potion buff.
+    fn detect_player_extreme_gold_potion_buff(&self) -> bool;
+
     /// Detects rune arrows from the given RGBA image `Mat`.
     fn detect_rune_arrows(&self) -> Result<[KeyKind; 4]>;
 
@@ -143,6 +162,12 @@ mock! {
         fn detect_player_bonus_exp_coupon_buff(&self) -> bool;
         fn detect_player_legion_wealth_buff(&self) -> bool;
         fn detect_player_legion_luck_buff(&self) -> bool;
+        fn detect_player_wealth_acquisition_potion_buff(&self) -> bool;
+        fn detect_player_exp_accumulation_potion_buff(&self) -> bool;
+        fn detect_player_extreme_red_potion_buff(&self) -> bool;
+        fn detect_player_extreme_blue_potion_buff(&self) -> bool;
+        fn detect_player_extreme_green_potion_buff(&self) -> bool;
+        fn detect_player_extreme_gold_potion_buff(&self) -> bool;
         fn detect_rune_arrows(&self) -> Result<[KeyKind; 4]>;
         fn detect_erda_shower(&self) -> Result<Rect>;
     }
@@ -262,6 +287,30 @@ impl Detector for CachedDetector {
 
     fn detect_player_legion_luck_buff(&self) -> bool {
         detect_player_legion_luck_buff(&to_bgr(&crop_to_buffs_region(&*self.mat)))
+    }
+
+    fn detect_player_wealth_acquisition_potion_buff(&self) -> bool {
+        detect_player_wealth_acquisition_potion_buff(&to_bgr(&crop_to_buffs_region(&*self.mat)))
+    }
+
+    fn detect_player_exp_accumulation_potion_buff(&self) -> bool {
+        detect_player_exp_accumulation_potion_buff(&to_bgr(&crop_to_buffs_region(&*self.mat)))
+    }
+
+    fn detect_player_extreme_red_potion_buff(&self) -> bool {
+        detect_player_extreme_red_potion_buff(&to_bgr(&crop_to_buffs_region(&*self.mat)))
+    }
+
+    fn detect_player_extreme_blue_potion_buff(&self) -> bool {
+        detect_player_extreme_blue_potion_buff(&to_bgr(&crop_to_buffs_region(&*self.mat)))
+    }
+
+    fn detect_player_extreme_green_potion_buff(&self) -> bool {
+        detect_player_extreme_green_potion_buff(&to_bgr(&crop_to_buffs_region(&*self.mat)))
+    }
+
+    fn detect_player_extreme_gold_potion_buff(&self) -> bool {
+        detect_player_extreme_gold_potion_buff(&to_bgr(&crop_to_buffs_region(&*self.mat)))
     }
 
     fn detect_rune_arrows(&self) -> Result<[KeyKind; 4]> {
@@ -558,6 +607,92 @@ fn detect_player_legion_luck_buff(mat: &impl ToInputArray) -> bool {
     detect_template(mat, &*LEGION_LUCK_BUFF, Point::default(), 0.75, None).is_ok()
 }
 
+fn detect_player_wealth_acquisition_potion_buff(mat: &impl ToInputArray) -> bool {
+    /// TODO: Support default ratio
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("WEALTH_ACQUISITION_POTION_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+
+    if cfg!(feature = "wealth_exp_pots") {
+        detect_template(mat, &*TEMPLATE, Point::default(), 0.75, Some("wealth")).is_ok()
+    } else {
+        true
+    }
+}
+
+fn detect_player_exp_accumulation_potion_buff(mat: &impl ToInputArray) -> bool {
+    /// TODO: Support default ratio
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("EXP_ACCUMULATION_POTION_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+
+    if cfg!(feature = "wealth_exp_pots") {
+        detect_template(mat, &*TEMPLATE, Point::default(), 0.75, Some("exp")).is_ok()
+    } else {
+        true
+    }
+}
+
+fn detect_player_extreme_red_potion_buff(mat: &impl ToInputArray) -> bool {
+    /// TODO: Support default ratio
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("EXTREME_RED_POTION_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+
+    detect_template(mat, &*TEMPLATE, Point::default(), 0.75, None).is_ok()
+}
+
+fn detect_player_extreme_blue_potion_buff(mat: &impl ToInputArray) -> bool {
+    /// TODO: Support default ratio
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("EXTREME_BLUE_POTION_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+
+    detect_template(mat, &*TEMPLATE, Point::default(), 0.75, None).is_ok()
+}
+
+fn detect_player_extreme_green_potion_buff(mat: &impl ToInputArray) -> bool {
+    /// TODO: Support default ratio
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("EXTREME_GREEN_POTION_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+
+    detect_template(mat, &*TEMPLATE, Point::default(), 0.75, None).is_ok()
+}
+
+fn detect_player_extreme_gold_potion_buff(mat: &impl ToInputArray) -> bool {
+    /// TODO: Support default ratio
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("EXTREME_GOLD_POTION_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+
+    detect_template(mat, &*TEMPLATE, Point::default(), 0.75, None).is_ok()
+}
+
 fn detect_erda_shower(mat: &impl MatTraitConst) -> Result<Rect> {
     /// TODO: Support default ratio
     static ERDA_SHOWER: LazyLock<Mat> = LazyLock::new(|| {
@@ -789,7 +924,7 @@ fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {
     detect_template(&boss_bar, template, Point::default(), 0.9, None).is_ok()
 }
 
-/// Detects the `template` from the given BGRA image `Mat`.
+/// Detects the `template` from the given BGR image `Mat`.
 #[inline]
 fn detect_template<T: ToInputArray + MatTraitConst>(
     mat: &impl ToInputArray,

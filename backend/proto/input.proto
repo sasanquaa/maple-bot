@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package input;
+
+enum Key {
+    A = 0;
+    B = 1;
+    C = 2;
+    D = 3;
+    E = 4;
+    F = 5;
+    G = 6;
+    H = 7;
+    I = 8;
+    J = 9;
+    K = 10;
+    L = 11;
+    M = 12;
+    N = 13;
+    O = 14;
+    P = 15;
+    Q = 16;
+    R = 17;
+    S = 18;
+    T = 19;
+    U = 20;
+    V = 21;
+    W = 22;
+    X = 23;
+    Y = 24;
+    Z = 25;
+    Zero = 26;
+    One = 27;
+    Two = 28;
+    Three = 29;
+    Four = 30;
+    Five = 31;
+    Six = 32;
+    Seven = 33;
+    Eight = 34;
+    Nine = 35;
+    F1 = 36;
+    F2 = 37;
+    F3 = 38;
+    F4 = 39;
+    F5 = 40;
+    F6 = 41;
+    F7 = 42;
+    F8 = 43;
+    F9 = 44;
+    F10 = 45;
+    F11 = 46;
+    F12 = 47;
+    Up = 48;
+    Down = 49;
+    Left = 50;
+    Right = 51;
+    Home = 52;
+    End = 53;
+    PageUp = 54;
+    PageDown = 55;
+    Insert = 56;
+    Delete = 57;
+    Ctrl = 58;
+    Enter = 59;
+    Space = 60;
+    Tilde = 61;
+    Quote = 62;
+    Semicolon = 63;
+    Comma = 64;
+    Period = 65;
+    Slash = 66;
+    Esc = 67;
+    Shift = 68;
+    Alt = 69;
+}
+
+service KeyInput {
+  rpc Send (KeyRequest) returns (KeyResponse);
+  rpc SendUp (KeyRequest) returns (KeyResponse);
+  rpc SendDown (KeyRequest) returns (KeyResponse);
+}
+
+message KeyRequest {
+  Key key = 1;
+}
+
+message KeyResponse {} // Empty for now

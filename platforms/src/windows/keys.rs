@@ -112,7 +112,7 @@ pub enum KeyInputKind {
     /// Sends input only if [`Keys::handle`] is in the foreground and focused
     Fixed,
     ///
-    /// Sends input only if the foreground window is not [`HandleCell`], on top of
+    /// Sends input only if the foreground window is not [`Keys::handle`], on top of
     /// [`Keys::handle`] window and is focused
     Foreground,
 }
@@ -261,18 +261,18 @@ impl Keys {
     }
 
     pub fn send_up(&self, kind: KeyKind) -> Result<(), Error> {
-        self.send_input(kind, true)
-    }
-
-    pub fn send_down(&self, kind: KeyKind) -> Result<(), Error> {
         self.send_input(kind, false)
     }
 
+    pub fn send_down(&self, kind: KeyKind) -> Result<(), Error> {
+        self.send_input(kind, true)
+    }
+
     #[inline]
-    fn send_input(&self, kind: KeyKind, is_up: bool) -> Result<(), Error> {
+    fn send_input(&self, kind: KeyKind, is_down: bool) -> Result<(), Error> {
         let handle = self.get_handle()?;
         if !is_foreground(handle, self.key_input_kind) {
-            return Err(Error::NotSent);
+            return Err(Error::KeyNotSent);
         }
         let key = kind.into();
         let (scan_code, is_extended) = to_scan_code(key);
@@ -280,14 +280,13 @@ impl Keys {
         // SAFETY: VIRTUAL_KEY is from range 0..254 (inclusive) and BitVec
         // was initialized with 256 elements
         let was_key_down = unsafe { key_down.get_unchecked(key.0 as usize) };
-        match (is_up, was_key_down) {
-            (is_up, was_down) if !is_up && was_down => return Err(Error::NotSent),
-            (is_up, was_down) if is_up && !was_down => return Err(Error::NotSent),
+        match (is_down, was_key_down) {
+            (true, true) | (false, false) => return Err(Error::KeyNotSent),
             _ => {
-                key_down.set(key.0 as usize, !is_up);
+                key_down.set(key.0 as usize, is_down);
             }
         }
-        send_input(to_input(key, scan_code, is_extended, is_up))
+        send_input(to_input(key, scan_code, is_extended, is_down))
     }
 
     #[inline]
@@ -514,16 +513,16 @@ fn to_scan_code(key: VIRTUAL_KEY) -> (u16, bool) {
 }
 
 #[inline]
-fn to_input(key: VIRTUAL_KEY, scan_code: u16, is_extended: bool, is_up: bool) -> [INPUT; 1] {
+fn to_input(key: VIRTUAL_KEY, scan_code: u16, is_extended: bool, is_down: bool) -> [INPUT; 1] {
     let is_extended = if is_extended {
         KEYEVENTF_EXTENDEDKEY
     } else {
         KEYBD_EVENT_FLAGS::default()
     };
-    let is_up = if is_up {
-        KEYEVENTF_KEYUP
-    } else {
+    let is_up = if is_down {
         KEYBD_EVENT_FLAGS::default()
+    } else {
+        KEYEVENTF_KEYUP
     };
     [INPUT {
         r#type: INPUT_KEYBOARD,

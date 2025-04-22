@@ -7,6 +7,7 @@ use crate::{
     context::{Context, Contextual, ControlFlow},
     database::Minimap as MinimapData,
     detect::Detector,
+    network::NotificationKind,
     pathing::{
         MAX_PLATFORMS_COUNT, Platform, PlatformWithNeighbors, find_neighbors, find_platforms_bound,
     },
@@ -201,6 +202,7 @@ fn update_rune_task(
     minimap: Rect,
     rune: Option<Point>,
 ) -> Option<Point> {
+    let was_none = rune.is_none();
     let detector = detector.clone();
     let update = if matches!(context.player, Player::SolvingRune(_)) && rune.is_some() {
         Update::Pending
@@ -212,7 +214,14 @@ fn update_rune_task(
         })
     };
     match update {
-        Update::Complete(rune) => rune.ok(),
+        Update::Complete(rune) => {
+            if was_none && rune.is_ok() && !context.halting {
+                let _ = context
+                    .notification
+                    .schedule_notification(NotificationKind::RuneAppear);
+            }
+            rune.ok()
+        }
         Update::Pending => rune,
     }
 }

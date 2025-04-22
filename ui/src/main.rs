@@ -20,6 +20,7 @@ use dioxus::{
 };
 use futures_util::StreamExt;
 use minimap::{Minimap, MinimapMessage};
+use notification::Notifications;
 use settings::Settings;
 use tab::Tab;
 use tokio::{
@@ -37,6 +38,7 @@ mod icons;
 mod input;
 mod key;
 mod minimap;
+mod notification;
 mod platform;
 mod rotation;
 mod select;
@@ -51,7 +53,7 @@ fn main() {
     LogTracer::init().unwrap();
     backend::init();
     let window = WindowBuilder::new()
-        .with_inner_size(Size::Physical(PhysicalSize::new(448, 820)))
+        .with_inner_size(Size::Physical(PhysicalSize::new(448, 900)))
         .with_inner_size_constraints(WindowSizeConstraints::new(
             Some(PixelUnit::Physical(448.into())),
             Some(PixelUnit::Physical(820.into())),
@@ -79,6 +81,7 @@ fn App() -> Element {
     const TAB_CONFIGURATION: &str = "Configuration";
     const TAB_ACTIONS: &str = "Actions";
     const TAB_SETTINGS: &str = "Settings";
+    const TAB_SETTINGS_NOTIFICATIONS: &str = "Notifications";
 
     // TODO: Move to AppMessage?
     let (minimap_tx, minimap_rx) = mpsc::channel::<MinimapMessage>(1);
@@ -172,8 +175,9 @@ fn App() -> Element {
                         TAB_CONFIGURATION.to_string(),
                         TAB_ACTIONS.to_string(),
                         TAB_SETTINGS.to_string(),
+                        TAB_SETTINGS_NOTIFICATIONS.to_string(),
                     ],
-                    class: "py-2 px-4 font-medium text-sm focus:outline-none",
+                    class: "py-2 px-3 font-medium text-sm focus:outline-none",
                     selected_class: "bg-white text-gray-800",
                     unselected_class: "hover:text-gray-700 text-gray-400 bg-gray-100",
                     on_tab: move |tab| {
@@ -183,9 +187,7 @@ fn App() -> Element {
                 }
                 match active_tab().as_str() {
                     TAB_CONFIGURATION => rsx! {
-                        div { class: "px-2 pb-2 pt-2 overflow-y-auto scrollbar h-full",
-                            Configuration { app_coroutine: coroutine, configs, config }
-                        }
+                        Configuration { app_coroutine: coroutine, configs, config }
                     },
                     TAB_ACTIONS => rsx! {
                         Actions {
@@ -198,6 +200,9 @@ fn App() -> Element {
                     },
                     TAB_SETTINGS => rsx! {
                         Settings { app_coroutine: coroutine, settings }
+                    },
+                    TAB_SETTINGS_NOTIFICATIONS => rsx! {
+                        Notifications { app_coroutine: coroutine, settings }
                     },
                     _ => unreachable!(),
                 }

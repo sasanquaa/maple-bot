@@ -185,8 +185,10 @@ pub fn Minimap(
                     MinimapMessage::CreateMinimap(name) => {
                         if let Some(mut data) = create_minimap(name).await {
                             upsert_map(&mut data).unwrap();
+                            update_minimap(None, data.clone()).await;
                             minimap.set(Some(data));
                             minimaps.restart();
+                            preset.set(None);
                         }
                     }
                     MinimapMessage::UpdateMinimap(mut data, save) => {
@@ -327,8 +329,8 @@ pub fn Minimap(
     });
 
     rsx! {
-        div { class: "flex flex-col items-center justify-center space-y-4 mb-8",
-            div { class: "flex flex-col items-center justify-center space-y-2 text-gray-700 text-xs",
+        div { class: "flex flex-col items-center justify-center space-y-4 mb-4",
+            div { class: "flex flex-col items-center justify-center space-y-1 text-gray-700 text-xs",
                 MinimapsSelect { minimap, minimaps, coroutine }
                 p {
                     {
@@ -347,22 +349,22 @@ pub fn Minimap(
                     }
                 }
             }
-            div { class: "relative p-3 h-36 border border-gray-300 rounded-md",
+            div { class: "relative h-30 border border-gray-300 rounded-md",
                 canvas { class: "w-full h-full", id: "canvas-minimap" }
                 div { class: "absolute inset-3",
                     canvas { class: "w-full h-full", id: "canvas-minimap-actions" }
                 }
             }
             div { class: "flex flex-col text-gray-700 text-xs space-y-1 font-mono",
-                p { class: "text-center",
-                    {
-                        state()
-                            .and_then(|state| state.position)
-                            .map(|(x, y)| { format!("{}, {}", x, y) })
-                            .unwrap_or("X, Y".to_string())
-                    }
-                }
                 div { class: "flex flex-col text-left",
+                    p {
+                        {
+                            state()
+                                .and_then(|state| state.position)
+                                .map(|(x, y)| { format!("Position: {}, {}", x, y) })
+                                .unwrap_or("Position: X, Y".to_string())
+                        }
+                    }
                     p {
                         {
                             state()
