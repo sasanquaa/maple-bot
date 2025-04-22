@@ -133,6 +133,7 @@ pub fn Settings(
     }
 }
 
+// TODO: Needs to group settings components
 #[component]
 pub fn SettingsCheckbox(label: String, on_input: EventHandler<bool>, value: bool) -> Element {
     rsx! {

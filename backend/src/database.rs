@@ -74,11 +74,11 @@ pub struct Settings {
     #[serde(default = "enable_rune_solving_default")]
     pub enable_rune_solving: bool,
     #[serde(default)]
+    pub stop_on_fail_or_change_map: bool,
+    #[serde(default)]
     pub input_method: InputMethod,
     #[serde(default)]
     pub input_method_rpc_server_url: String,
-    #[serde(default)]
-    pub stop_on_fail_or_change_map: bool,
     #[serde(default)]
     pub notifications: Notifications,
     #[serde(default = "toggle_actions_key_default")]
@@ -186,6 +186,18 @@ pub struct Configuration {
     pub legion_wealth_key: KeyBindingConfiguration,
     pub legion_luck_key: KeyBindingConfiguration,
     #[serde(default)]
+    pub wealth_acquisition_potion_key: KeyBindingConfiguration,
+    #[serde(default)]
+    pub exp_accumulation_potion_key: KeyBindingConfiguration,
+    #[serde(default)]
+    pub extreme_red_potion_key: KeyBindingConfiguration,
+    #[serde(default)]
+    pub extreme_blue_potion_key: KeyBindingConfiguration,
+    #[serde(default)]
+    pub extreme_green_potion_key: KeyBindingConfiguration,
+    #[serde(default)]
+    pub extreme_gold_potion_key: KeyBindingConfiguration,
+    #[serde(default)]
     pub class: Class,
 }
 
@@ -218,6 +230,12 @@ impl Default for Configuration {
             bonus_exp_key: KeyBindingConfiguration::default(),
             legion_wealth_key: KeyBindingConfiguration::default(),
             legion_luck_key: KeyBindingConfiguration::default(),
+            wealth_acquisition_potion_key: KeyBindingConfiguration::default(),
+            exp_accumulation_potion_key: KeyBindingConfiguration::default(),
+            extreme_red_potion_key: KeyBindingConfiguration::default(),
+            extreme_blue_potion_key: KeyBindingConfiguration::default(),
+            extreme_green_potion_key: KeyBindingConfiguration::default(),
+            extreme_gold_potion_key: KeyBindingConfiguration::default(),
             class: Class::default(),
         }
     }
@@ -235,19 +253,10 @@ impl Default for PotionMode {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize)]
 pub struct KeyBindingConfiguration {
     pub key: KeyBinding,
     pub enabled: bool,
-}
-
-impl Default for KeyBindingConfiguration {
-    fn default() -> Self {
-        Self {
-            key: KeyBinding::default(),
-            enabled: true,
-        }
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize)]

@@ -76,7 +76,7 @@ pub fn Actions(
                 TAB_ROTATION_MODE.to_string(),
                 TAB_PLATFORMS.to_string(),
             ],
-            div_class: "px-2 pt-2 pb-2 mb-2",
+            div_class: "px-2 pt-2 pb-1 mb-2",
             class: "text-xs px-2 pb-2 focus:outline-none",
             selected_class: "text-gray-800 border-b",
             unselected_class: "hover:text-gray-700 text-gray-400",

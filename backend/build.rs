@@ -22,6 +22,12 @@ fn main() {
     let bonus_exp_coupon_buff = dir.join("bonus_exp_coupon_buff_ideal_ratio.png");
     let legion_wealth_buff = dir.join("legion_wealth_buff_ideal_ratio.png");
     let legion_luck_buff = dir.join("legion_luck_buff_ideal_ratio.png");
+    let wealth_acquisition_potion_buff = dir.join("wealth_acquisition_potion_ideal_ratio.png");
+    let exp_accumulation_potion_buff = dir.join("exp_accumulation_potion_ideal_ratio.png");
+    let extreme_red_potion_buff = dir.join("extreme_red_potion_ideal_ratio.png");
+    let extreme_blue_potion_buff = dir.join("extreme_blue_potion_ideal_ratio.png");
+    let extreme_green_potion_buff = dir.join("extreme_green_potion_ideal_ratio.png");
+    let extreme_gold_potion_buff = dir.join("extreme_gold_potion_ideal_ratio.png");
     let cash_shop = dir.join("cash_shop.png");
     let hp_start = dir.join("hp_start_ideal_ratio.png");
     let hp_separator_1 = dir.join("hp_separator_ideal_ratio_1.png");
@@ -114,6 +120,30 @@ fn main() {
     println!(
         "cargo:rustc-env=LEGION_LUCK_BUFF_TEMPLATE={}",
         legion_luck_buff.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=WEALTH_ACQUISITION_POTION_BUFF_TEMPLATE={}",
+        wealth_acquisition_potion_buff.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=EXP_ACCUMULATION_POTION_BUFF_TEMPLATE={}",
+        exp_accumulation_potion_buff.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=EXTREME_RED_POTION_BUFF_TEMPLATE={}",
+        extreme_red_potion_buff.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=EXTREME_BLUE_POTION_BUFF_TEMPLATE={}",
+        extreme_blue_potion_buff.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=EXTREME_GREEN_POTION_BUFF_TEMPLATE={}",
+        extreme_green_potion_buff.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=EXTREME_GOLD_POTION_BUFF_TEMPLATE={}",
+        extreme_gold_potion_buff.to_str().unwrap()
     );
     println!(
         "cargo:rustc-env=CASH_SHOP_TEMPLATE={}",

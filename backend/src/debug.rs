@@ -89,7 +89,7 @@ pub fn debug_mat<T: AsRef<str>>(
 pub fn save_image_for_training(mat: &impl MatTraitConst) {
     let name = Alphanumeric.sample_string(&mut rand::rng(), 8);
     let mat = to_grayscale(mat);
-    // let mat = mat.clone();
+    // let mat = mat.try_clone().unwrap();
     let image = LazyLock::force(&DATASET_DIR).join(format!("{name}.png"));
 
     debug_mat("Image", &mat, 0, &[] as &[(_, &str); 0]);

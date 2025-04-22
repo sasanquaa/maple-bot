@@ -349,7 +349,7 @@ pub fn Minimap(
                     }
                 }
             }
-            div { class: "relative p-3 h-36 border border-gray-300 rounded-md",
+            div { class: "relative h-30 border border-gray-300 rounded-md",
                 canvas { class: "w-full h-full", id: "canvas-minimap" }
                 div { class: "absolute inset-3",
                     canvas { class: "w-full h-full", id: "canvas-minimap-actions" }

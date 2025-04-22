@@ -177,7 +177,7 @@ fn App() -> Element {
                         TAB_SETTINGS.to_string(),
                         TAB_SETTINGS_NOTIFICATIONS.to_string(),
                     ],
-                    class: "py-2 px-4 font-medium text-sm focus:outline-none",
+                    class: "py-2 px-3 font-medium text-sm focus:outline-none",
                     selected_class: "bg-white text-gray-800",
                     unselected_class: "hover:text-gray-700 text-gray-400 bg-gray-100",
                     on_tab: move |tab| {
@@ -187,9 +187,7 @@ fn App() -> Element {
                 }
                 match active_tab().as_str() {
                     TAB_CONFIGURATION => rsx! {
-                        div { class: "px-2 pb-2 pt-2 overflow-y-auto scrollbar h-full",
-                            Configuration { app_coroutine: coroutine, configs, config }
-                        }
+                        Configuration { app_coroutine: coroutine, configs, config }
                     },
                     TAB_ACTIONS => rsx! {
                         Actions {
