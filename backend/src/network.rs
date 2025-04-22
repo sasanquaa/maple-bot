@@ -4,7 +4,7 @@ use std::{
     ops::{Index, Not},
     rc::Rc,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{Error, Ok, bail};
@@ -15,7 +15,10 @@ use reqwest::{
     multipart::{Form, Part},
 };
 use serde::Serialize;
-use tokio::{spawn, time::sleep};
+use tokio::{
+    spawn,
+    time::{Instant, sleep},
+};
 
 use crate::Settings;
 
@@ -56,10 +59,10 @@ struct ScheduledNotification {
     body: DiscordWebhookBody,
     /// Stores fixed size tuples of frame and frame deadline in seconds
     ///
-    /// During each [`DiscordNotification::update_schedule`], the last frame passing the deadline
-    /// will try to capture the image from current game state. This is useful for showing
-    /// `before and after` whnen map changes. So frame that cannot capture when the deadline has
-    /// moved beyond the next frame deadline will be skipped.
+    /// During each [`DiscordNotification::update_schedule`], the first frame not passing the
+    /// deadline will try to capture the image from current game state. This is useful for showing
+    /// `before and after` whnen map changes. So frame that cannot capture when the deadline is
+    /// reached will be skipped.
     frames: Vec<(Option<Vec<u8>>, u32)>,
 }
 
@@ -139,8 +142,8 @@ impl DiscordNotification {
             attachments: vec![],
         };
         let frames = match kind {
-            NotificationKind::FailOrMapChanged => vec![(None, 0), (None, 3)],
-            NotificationKind::RuneAppear => vec![(None, 0)],
+            NotificationKind::FailOrMapChanged => vec![(None, 3), (None, 6)],
+            NotificationKind::RuneAppear => vec![(None, 3)],
         };
 
         let mut scheduled = self.scheduled.lock().unwrap();
@@ -190,8 +193,8 @@ impl DiscordNotification {
     pub fn update_scheduled_frames(&self, frame: impl Fn() -> Option<Vec<u8>>) {
         for item in self.scheduled.lock().unwrap().iter_mut() {
             let elapsed_secs = item.instant.elapsed().as_secs() as u32;
-            for (item_frame, deadline) in item.frames.iter_mut().rev() {
-                if elapsed_secs >= *deadline {
+            for (item_frame, deadline) in item.frames.iter_mut() {
+                if elapsed_secs <= *deadline {
                     if item_frame.is_none() {
                         *item_frame = frame();
                     }
@@ -269,10 +272,96 @@ struct Attachment {
 
 #[cfg(test)]
 mod test {
-    // TODO
-    #[test]
-    fn schedule_kind_unique() {}
+    use std::{cell::RefCell, rc::Rc, time::Duration};
 
-    #[test]
-    fn update_scheduled_frames_deadline() {}
+    use tokio::time::{Instant, advance};
+
+    use super::{DiscordNotification, DiscordWebhookBody, NotificationKind, ScheduledNotification};
+    use crate::{Notifications, Settings};
+
+    #[tokio::test(start_paused = true)]
+    async fn schedule_kind_unique() {
+        let noti = DiscordNotification::new(Rc::new(RefCell::new(Settings {
+            notifications: Notifications {
+                discord_webhook_url: "https://discord.com/api/webhooks/foo/bar".to_string(),
+                notify_on_fail_or_change_map: true,
+                notify_on_rune_appear: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        })));
+
+        assert!(
+            noti.schedule_notification(NotificationKind::FailOrMapChanged)
+                .is_ok()
+        );
+        assert!(noti.scheduled.lock().unwrap().len() == 1);
+        assert!(
+            noti.pending
+                .lock()
+                .unwrap()
+                .get(NotificationKind::FailOrMapChanged.into())
+                .unwrap()
+        );
+        assert!(
+            noti.schedule_notification(NotificationKind::FailOrMapChanged)
+                .is_err()
+        );
+        assert!(
+            noti.schedule_notification(NotificationKind::RuneAppear)
+                .is_ok()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn schedule_invalid_url() {
+        let noti = DiscordNotification::new(Rc::new(RefCell::new(Settings {
+            notifications: Notifications {
+                notify_on_fail_or_change_map: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        })));
+
+        assert!(
+            noti.schedule_notification(NotificationKind::FailOrMapChanged)
+                .is_err()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    #[allow(clippy::await_holding_lock)]
+    async fn update_scheduled_frames_deadline() {
+        let noti = DiscordNotification::new(Rc::new(RefCell::new(Settings::default())));
+        noti.scheduled.lock().unwrap().push(ScheduledNotification {
+            instant: Instant::now(),
+            kind: NotificationKind::FailOrMapChanged,
+            url: "https://example.com".into(),
+            frames: vec![(None, 3), (None, 6), (None, 9)],
+            body: DiscordWebhookBody {
+                content: "content".into(),
+                username: "username",
+                attachments: vec![],
+            },
+        });
+
+        advance(Duration::from_secs(4)).await;
+        // Skip frame 1 because deadline passed to frame 2
+        noti.update_scheduled_frames(|| Some(vec![]));
+        let scheduled_guard = noti.scheduled.lock().unwrap();
+        let scheduled = scheduled_guard.first().unwrap();
+        assert!(scheduled.frames[0].0.is_none());
+        assert!(scheduled.frames[1].0.is_some());
+        assert!(scheduled.frames[2].0.is_none());
+        drop(scheduled_guard);
+
+        // Frame 3
+        advance(Duration::from_secs(4)).await;
+        noti.update_scheduled_frames(|| Some(vec![]));
+        let scheduled = noti.scheduled.lock().unwrap();
+        let scheduled = scheduled.first().unwrap();
+        assert!(scheduled.frames[0].0.is_none());
+        assert!(scheduled.frames[1].0.is_some());
+        assert!(scheduled.frames[2].0.is_some());
+    }
 }

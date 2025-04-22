@@ -1,15 +1,12 @@
 use anyhow::{Error, Ok, bail};
 use bit_vec::BitVec;
 use input::key_input_client::KeyInputClient;
-use input::{Key, KeyRequest, KeyResponse};
+use input::{Key, KeyRequest};
 use platforms::windows::KeyKind;
 use tokio::runtime::Handle;
 use tokio::task::block_in_place;
 use tonic::Request;
-use tonic::{
-    Response,
-    transport::{Channel, Endpoint},
-};
+use tonic::transport::{Channel, Endpoint};
 
 mod input {
     tonic::include_proto!("input");
@@ -47,40 +44,45 @@ impl KeysService {
         self.key_down.clear();
     }
 
-    pub fn send(&mut self, key: KeyKind) -> Result<Response<KeyResponse>, Error> {
-        self.key_down
-            .set(i32::from(from_key_kind(key)) as usize, false);
+    pub fn send(&mut self, key: KeyKind) -> Result<(), Error> {
         Ok(block_future(async move {
-            self.client.send(to_request(key)).await
+            self.client.send(to_request(key)).await?;
+            self.key_down
+                .set(i32::from(from_key_kind(key)) as usize, false);
+            Ok(())
         })?)
     }
 
-    pub fn send_up(&mut self, key: KeyKind) -> Result<Response<KeyResponse>, Error> {
-        self.update_key(key, false)?;
+    pub fn send_up(&mut self, key: KeyKind) -> Result<(), Error> {
+        if !self.can_send_key(key, false) {
+            bail!("key not sent");
+        }
         Ok(block_future(async move {
-            self.client.send_up(to_request(key)).await
+            self.client.send_up(to_request(key)).await?;
+            self.key_down
+                .set(i32::from(from_key_kind(key)) as usize, false);
+            Ok(())
         })?)
     }
 
-    pub fn send_down(&mut self, key: KeyKind) -> Result<Response<KeyResponse>, Error> {
-        self.update_key(key, true)?;
+    pub fn send_down(&mut self, key: KeyKind) -> Result<(), Error> {
+        if !self.can_send_key(key, true) {
+            bail!("key not sent");
+        }
         Ok(block_future(async move {
-            self.client.send_down(to_request(key)).await
+            self.client.send_down(to_request(key)).await?;
+            self.key_down
+                .set(i32::from(from_key_kind(key)) as usize, true);
+            Ok(())
         })?)
     }
 
     #[inline]
-    fn update_key(&mut self, key: KeyKind, is_down: bool) -> Result<(), Error> {
+    fn can_send_key(&self, key: KeyKind, is_down: bool) -> bool {
         let key = from_key_kind(key);
         let key_num = i32::from(key) as usize;
         let was_down = self.key_down.get(key_num).unwrap();
-        match (was_down, is_down) {
-            (true, true) | (false, false) => bail!("key not sent"),
-            _ => {
-                self.key_down.set(key_num, is_down);
-            }
-        }
-        Ok(())
+        !matches!((was_down, is_down), (true, true) | (false, false))
     }
 }
 
@@ -174,5 +176,5 @@ fn from_key_kind(key: KeyKind) -> Key {
 
 #[cfg(test)]
 mod test {
-    // TODO
+    // TODO HOW TO?
 }
