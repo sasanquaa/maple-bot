@@ -433,11 +433,9 @@ impl Rotator {
             bound.into()
         };
         let detector = detector.clone();
-        let Update::Complete(Ok(points)) =
-            update_task_repeatable(0, &mut self.auto_mob_task, move || {
-                detector.detect_mobs(idle.bbox, bound, pos)
-            })
-        else {
+        let Update::Ok(points) = update_task_repeatable(0, &mut self.auto_mob_task, move || {
+            detector.detect_mobs(idle.bbox, bound, pos)
+        }) else {
             return;
         };
         let Some(point) = points

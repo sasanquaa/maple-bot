@@ -105,7 +105,7 @@ fn update_context(
 
 fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) -> Minimap {
     let detector = detector.clone();
-    let Update::Complete(Ok((anchors, bbox))) =
+    let Update::Ok((anchors, bbox)) =
         update_task_repeatable(2000, &mut state.data_task, move || {
             let bbox = detector.detect_minimap(MINIMAP_BORDER_WHITENESS_THRESHOLD)?;
             let size = bbox.width.min(bbox.height) as usize;
@@ -214,15 +214,15 @@ fn update_rune_task(
         })
     };
     match update {
-        Update::Complete(rune) => {
-            if was_none && rune.is_ok() && !context.halting {
+        Update::Ok(rune) => {
+            if was_none && !context.halting {
                 let _ = context
                     .notification
                     .schedule_notification(NotificationKind::RuneAppear);
             }
-            rune.ok()
+            Some(rune)
         }
-        Update::Pending => rune,
+        Update::Err(_) | Update::Pending => rune,
     }
 }
 
@@ -237,8 +237,9 @@ fn update_elite_boss_task(
         Ok(detector.detect_elite_boss_bar())
     });
     match update {
-        Update::Complete(has_elite_boss) => has_elite_boss.unwrap(),
+        Update::Ok(has_elite_boss) => has_elite_boss,
         Update::Pending => has_elite_boss,
+        Update::Err(_) => unreachable!(),
     }
 }
 
@@ -254,7 +255,7 @@ fn update_portals_task(
         detector.detect_minimap_portals(minimap)
     });
     match update {
-        Update::Complete(Ok(vec)) if portals.len() < vec.len() => {
+        Update::Ok(vec) if portals.len() < vec.len() => {
             Array::from_iter(vec.into_iter().map(|portal| {
                 Rect::new(
                     portal.x,
@@ -264,7 +265,7 @@ fn update_portals_task(
                 )
             }))
         }
-        Update::Complete(_) | Update::Pending => portals,
+        Update::Ok(_) | Update::Err(_) | Update::Pending => portals,
     }
 }
 

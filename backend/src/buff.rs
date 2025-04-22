@@ -107,7 +107,7 @@ impl Contextual for Buff {
 fn update_context(contextual: Buff, detector: &impl Detector, state: &mut BuffState) -> Buff {
     let detector = detector.clone();
     let kind = state.kind;
-    let Update::Complete(Ok(has_buff)) = update_task_repeatable(5000, &mut state.task, move || {
+    let Update::Ok(has_buff) = update_task_repeatable(5000, &mut state.task, move || {
         Ok(match kind {
             BuffKind::Rune => detector.detect_player_rune_buff(),
             BuffKind::SayramElixir => detector.detect_player_sayram_elixir_buff(),

@@ -100,27 +100,26 @@ fn update_detection(
     contextual: Skill,
     detector: &impl Detector,
     state: &mut SkillState,
-    update: impl FnOnce(Point, Vec4b) -> Skill,
+    on_next: impl FnOnce(Point, Vec4b) -> Skill,
 ) -> Skill {
     let detector = detector.clone();
     let kind = state.kind;
-    let Update::Complete(anchor) = update_task_repeatable(1000, &mut state.task, move || {
+    let update = update_task_repeatable(1000, &mut state.task, move || {
         let bbox = match kind {
             SkillKind::ErdaShower => detector.detect_erda_shower()?,
         };
         Ok(get_anchor(detector.mat(), bbox))
-    }) else {
-        return contextual;
-    };
-    match anchor {
-        Ok((point, pixel)) => update(point, pixel),
-        Err(err) => {
+    });
+    match update {
+        Update::Ok((point, pixel)) => on_next(point, pixel),
+        Update::Err(err) => {
             if err.downcast::<f64>().unwrap() < 0.52 {
                 Skill::Detecting
             } else {
                 contextual
             }
         }
+        Update::Pending => contextual,
     }
 }
 

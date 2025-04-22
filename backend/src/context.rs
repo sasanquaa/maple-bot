@@ -122,6 +122,11 @@ impl KeySender for DefaultKeySender {
     fn set_kind(&mut self, kind: KeySenderKind) {
         match kind.clone() {
             KeySenderKind::Rpc(url) => {
+                if let KeySenderKind::Rpc(ref cur_url) = self.kind
+                    && cur_url != &url
+                {
+                    self.service = None;
+                }
                 if self.service.is_none() {
                     self.service = KeysService::connect(url).map(RefCell::new).ok();
                 }

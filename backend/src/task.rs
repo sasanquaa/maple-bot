@@ -1,11 +1,11 @@
 use std::{fmt, time::Duration};
 
-use anyhow::Result;
+use anyhow::{Error, Result};
 use tokio::{
     spawn,
-    sync::oneshot::{self, Receiver, error::TryRecvError},
+    sync::oneshot::{self, Receiver},
     task::spawn_blocking,
-    time::{self},
+    time::sleep,
 };
 
 /// An asynchronous task.
@@ -16,14 +16,6 @@ use tokio::{
 pub struct Task<T> {
     rx: Receiver<T>,
     completed: bool,
-}
-
-#[derive(Copy, Clone, Debug)]
-enum TaskState<T> {
-    Complete(T),
-    AlreadyCompleted,
-    Pending,
-    Error,
 }
 
 impl<T: fmt::Debug> Task<T> {
@@ -47,26 +39,21 @@ impl<T: fmt::Debug> Task<T> {
         self.completed
     }
 
-    fn poll_inner(&mut self) -> TaskState<T> {
+    fn poll_inner(&mut self) -> Option<T> {
         if self.completed {
-            return TaskState::AlreadyCompleted;
+            return None;
         }
         debug_assert!(!self.completed);
-        let state = match self.rx.try_recv() {
-            Ok(value) => TaskState::Complete(value),
-            Err(TryRecvError::Empty) => TaskState::Pending,
-            Err(TryRecvError::Closed) => TaskState::Error,
-        };
-        if matches!(state, TaskState::Complete(_)) {
-            self.completed = true;
-        }
-        state
+        let value = self.rx.try_recv().ok();
+        self.completed = value.is_some();
+        value
     }
 }
 
 #[derive(Debug)]
 pub enum Update<T> {
-    Complete(T),
+    Ok(T),
+    Err(Error),
     Pending,
 }
 
@@ -75,28 +62,27 @@ pub fn update_task_repeatable<F, T>(
     repeat_millis: u64,
     task: &mut Option<Task<Result<T>>>,
     task_fn: F,
-) -> Update<Result<T>>
+) -> Update<T>
 where
     F: FnOnce() -> Result<T> + Send + 'static,
-    T: Send + fmt::Debug + 'static,
+    T: fmt::Debug + Send + 'static,
 {
-    match task.as_mut().map(|task| task.poll_inner()) {
-        Some(TaskState::Error) | Some(TaskState::AlreadyCompleted) => {
-            *task = Some(Task::spawn(async move {
-                time::sleep(Duration::from_millis(repeat_millis)).await;
-                spawn_blocking(task_fn).await.unwrap()
-            }));
-            Update::Pending
-        }
-        Some(TaskState::Complete(value)) => Update::Complete(value),
-        Some(TaskState::Pending) => Update::Pending,
-        None => {
-            *task = Some(Task::spawn(async move {
-                spawn_blocking(task_fn).await.unwrap()
-            }));
-            Update::Pending
-        }
+    let update = match task.as_mut().and_then(|task| task.poll_inner()) {
+        Some(Ok(value)) => Update::Ok(value),
+        Some(Err(err)) => Update::Err(err),
+        None => Update::Pending,
+    };
+    if matches!(update, Update::Pending) && task.as_ref().is_none_or(|task| task.completed) {
+        let has_delay = task.as_ref().is_some_and(|task| task.completed);
+        let spawned = Task::spawn(async move {
+            if has_delay {
+                sleep(Duration::from_millis(repeat_millis)).await;
+            }
+            spawn_blocking(task_fn).await.unwrap()
+        });
+        *task = Some(spawned);
     }
+    update
 }
 
 #[cfg(test)]
@@ -106,7 +92,7 @@ mod tests {
     use anyhow::Result;
     use tokio::task::yield_now;
 
-    use crate::task::{Task, TaskState, Update, update_task_repeatable};
+    use crate::task::{Task, Update, update_task_repeatable};
 
     #[tokio::test(start_paused = true)]
     async fn spawn_state() {
@@ -115,13 +101,11 @@ mod tests {
 
         while !task.completed() {
             match task.poll_inner() {
-                TaskState::Complete(value) => assert_eq!(value, 0),
-                TaskState::Pending => yield_now().await,
-                TaskState::Error => unreachable!(),
-                TaskState::AlreadyCompleted => unreachable!(),
+                Some(value) => assert_eq!(value, 0),
+                None => yield_now().await,
             };
         }
-        assert_matches!(task.poll_inner(), TaskState::AlreadyCompleted);
+        assert_matches!(task.poll_inner(), None);
         assert!(task.completed());
     }
 
@@ -138,14 +122,12 @@ mod tests {
 
         while !task.as_ref().unwrap().completed() {
             match update_task_repeatable(1000, &mut task, || Ok(0)) {
-                Update::Complete(value) => assert!(value.is_ok_and(|value| value == 0)),
+                Update::Ok(value) => assert!(value == 0),
                 Update::Pending => yield_now().await,
+                Update::Err(_) => unreachable!(),
             }
         }
-        assert_matches!(
-            task.as_mut().unwrap().poll_inner(),
-            TaskState::AlreadyCompleted
-        );
+        assert_matches!(task.as_mut().unwrap().poll_inner(), None);
         assert!(task.as_ref().unwrap().completed());
 
         assert_matches!(

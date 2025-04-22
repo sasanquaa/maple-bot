@@ -2146,7 +2146,7 @@ fn update_unstucking_context(
     if !timeout.started {
         if state.unstuck_consecutive_counter + 1 < GAMBA_MODE_COUNT && has_settings.is_none() {
             let detector = detector.clone();
-            let Update::Complete(Ok(has_settings)) =
+            let Update::Ok(has_settings) =
                 update_task_repeatable(0, &mut state.unstuck_task, move || {
                     Ok(detector.detect_esc_settings())
                 })
@@ -2305,7 +2305,7 @@ fn update_solving_rune_context(
         |timeout| {
             if solving_rune.keys.is_none() {
                 let detector = detector.clone();
-                let Update::Complete(Ok(keys)) =
+                let Update::Ok(keys) =
                     update_task_repeatable(500, &mut state.rune_task, move || {
                         detector.detect_rune_arrows()
                     })
@@ -2665,18 +2665,19 @@ fn update_health_state(context: &Context, detector: &impl Detector, state: &mut 
         reset_health(state);
         return;
     }
-    let percentage = state.config.use_potion_below_percent.unwrap();
+
     let detector = detector.clone();
     let Some(health_bar) = state.health_bar else {
         let update = update_task_repeatable(1000, &mut state.health_bar_task, move || {
             detector.detect_player_health_bar()
         });
-        if let Update::Complete(Ok(health_bar)) = update {
+        if let Update::Ok(health_bar) = update {
             state.health_bar = Some(health_bar);
         }
         return;
     };
-    let Update::Complete(health) = update_task_repeatable(
+
+    let Update::Ok(health) = update_task_repeatable(
         state.config.update_health_millis.unwrap_or(1000),
         &mut state.health_task,
         move || {
@@ -2689,12 +2690,14 @@ fn update_health_state(context: &Context, detector: &impl Detector, state: &mut 
     ) else {
         return;
     };
-    state.health = health.ok();
-    if let Some((current, max)) = state.health {
-        let ratio = current as f32 / max as f32;
-        if ratio <= percentage {
-            let _ = context.keys.send(state.config.potion_key);
-        }
+
+    let percentage = state.config.use_potion_below_percent.unwrap();
+    let (current, max) = health;
+    let ratio = current as f32 / max as f32;
+
+    state.health = Some(health);
+    if ratio <= percentage {
+        let _ = context.keys.send(state.config.potion_key);
     }
 }
 
