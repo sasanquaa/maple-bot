@@ -7,7 +7,7 @@ use crate::{
     context::{Context, Contextual, ControlFlow},
     database::Minimap as MinimapData,
     detect::Detector,
-    network::DiscordNotificationKind,
+    network::NotificationKind,
     pathing::{
         MAX_PLATFORMS_COUNT, Platform, PlatformWithNeighbors, find_neighbors, find_platforms_bound,
     },
@@ -218,7 +218,7 @@ fn update_rune_task(
             if was_none && rune.is_ok() && !context.halting {
                 let _ = context
                     .notification
-                    .schedule_notification(DiscordNotificationKind::RuneAppear);
+                    .schedule_notification(NotificationKind::RuneAppear);
             }
             rune.ok()
         }

@@ -2,6 +2,7 @@ use std::{
     cell::RefCell,
     mem,
     ops::{Index, Not},
+    rc::Rc,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -21,23 +22,23 @@ use crate::Settings;
 static TRUE: bool = true;
 static FALSE: bool = false;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 #[repr(usize)]
-pub enum DiscordNotificationKind {
+pub enum NotificationKind {
     FailOrMapChanged,
     RuneAppear,
 }
 
-impl From<DiscordNotificationKind> for usize {
-    fn from(kind: DiscordNotificationKind) -> Self {
+impl From<NotificationKind> for usize {
+    fn from(kind: NotificationKind) -> Self {
         kind as usize
     }
 }
 
-impl Index<DiscordNotificationKind> for BitVec {
+impl Index<NotificationKind> for BitVec {
     type Output = bool;
 
-    fn index(&self, index: DiscordNotificationKind) -> &Self::Output {
+    fn index(&self, index: NotificationKind) -> &Self::Output {
         if self.get(index.into()).expect("index out of bound") {
             &TRUE
         } else {
@@ -50,7 +51,7 @@ impl Index<DiscordNotificationKind> for BitVec {
 struct ScheduledNotification {
     /// The instant it was scheduled
     instant: Instant,
-    kind: DiscordNotificationKind,
+    kind: NotificationKind,
     url: String,
     body: DiscordWebhookBody,
     /// Stores fixed size tuples of frame and frame deadline in seconds
@@ -65,31 +66,34 @@ struct ScheduledNotification {
 #[derive(Debug)]
 pub struct DiscordNotification {
     client: Client,
-    settings: RefCell<Settings>,
+    settings: Rc<RefCell<Settings>>,
     scheduled: Arc<Mutex<Vec<ScheduledNotification>>>,
+    /// Storing currently incomplete / pending notifications
+    ///
+    /// There can only be one unique [`NotificationKind`] scheduled at a time.
     pending: Arc<Mutex<BitVec>>,
 }
 
 impl DiscordNotification {
-    pub fn new(settings: RefCell<Settings>) -> Self {
+    pub fn new(settings: Rc<RefCell<Settings>>) -> Self {
         Self {
             client: Client::new(),
             settings,
             scheduled: Arc::new(Mutex::new(vec![])),
             pending: Arc::new(Mutex::new(BitVec::from_elem(
-                mem::variant_count::<DiscordNotificationKind>(),
+                mem::variant_count::<NotificationKind>(),
                 false,
             ))),
         }
     }
 
-    pub fn schedule_notification(&self, kind: DiscordNotificationKind) -> Result<(), Error> {
+    pub fn schedule_notification(&self, kind: NotificationKind) -> Result<(), Error> {
         let settings = self.settings.borrow();
         let is_enabled = match kind {
-            DiscordNotificationKind::FailOrMapChanged => {
+            NotificationKind::FailOrMapChanged => {
                 settings.notifications.notify_on_fail_or_change_map
             }
-            DiscordNotificationKind::RuneAppear => settings.notifications.notify_on_rune_appear,
+            NotificationKind::RuneAppear => settings.notifications.notify_on_rune_appear,
         };
         if !is_enabled {
             bail!("notification not enabled");
@@ -116,7 +120,7 @@ impl DiscordNotification {
             .then_some(format!("<@{}> ", settings.notifications.discord_user_id))
             .unwrap_or_default();
         let content = match kind {
-            DiscordNotificationKind::FailOrMapChanged => {
+            NotificationKind::FailOrMapChanged => {
                 if self.settings.borrow().stop_on_fail_or_change_map {
                     format!(
                         "{user_id}Bot stopped because it has failed to detect or the map has changed"
@@ -125,7 +129,7 @@ impl DiscordNotification {
                     format!("{user_id}Bot has failed to detect or the map has changed")
                 }
             }
-            DiscordNotificationKind::RuneAppear => {
+            NotificationKind::RuneAppear => {
                 format!("{user_id}Bot has detected a rune on map")
             }
         };
@@ -135,8 +139,8 @@ impl DiscordNotification {
             attachments: vec![],
         };
         let frames = match kind {
-            DiscordNotificationKind::FailOrMapChanged => vec![(None, 0), (None, 3)],
-            DiscordNotificationKind::RuneAppear => vec![(None, 0)],
+            NotificationKind::FailOrMapChanged => vec![(None, 0), (None, 3)],
+            NotificationKind::RuneAppear => vec![(None, 0)],
         };
 
         let mut scheduled = self.scheduled.lock().unwrap();
@@ -149,14 +153,25 @@ impl DiscordNotification {
         });
         pending.set(kind.into(), true);
 
-        let index = scheduled.len();
         let client = self.client.clone();
         let pending = self.pending.clone();
         let scheduled = self.scheduled.clone();
         spawn(async move {
             sleep(Duration::from_secs(5)).await;
 
-            let notification = scheduled.lock().unwrap().remove(index);
+            let notification = scheduled
+                .lock()
+                .ok()
+                .map(|mut scheduled| {
+                    // Inside closure or compiler will complain about MutexGuard not being Send
+                    let (index, _) = scheduled
+                        .iter()
+                        .enumerate()
+                        .find(|(_, item)| item.kind == kind)
+                        .unwrap();
+                    scheduled.remove(index)
+                })
+                .unwrap();
             let kind = notification.kind;
             debug_assert!(
                 pending
@@ -255,4 +270,9 @@ struct Attachment {
 #[cfg(test)]
 mod test {
     // TODO
+    #[test]
+    fn schedule_kind_unique() {}
+
+    #[test]
+    fn update_scheduled_frames_deadline() {}
 }

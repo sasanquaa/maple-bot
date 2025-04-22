@@ -21,7 +21,7 @@ pub fn KeyBindingConfigurationInput(
     let input_width = if is_toggleable { "w-24" } else { "w-44" };
 
     rsx! {
-        div { class: "flex flex-col space-y-4 py-3 border-b border-gray-100",
+        div { class: "flex flex-col space-y-4 pb-3 pt-1.5 border-b border-gray-100",
             div { class: "flex items-center space-x-4",
                 div { class: "flex-1",
                     span {

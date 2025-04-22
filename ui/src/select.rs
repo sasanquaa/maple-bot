@@ -87,7 +87,7 @@ pub fn TextSelect(
     }));
 
     rsx! {
-        div { class: "flex w-fit h-7 items-stretch mb-5",
+        div { class: "flex w-fit h-7 items-stretch mb-3",
             if options.is_empty() && !is_creating() {
                 button {
                     class: "button-secondary border border-gray-300",

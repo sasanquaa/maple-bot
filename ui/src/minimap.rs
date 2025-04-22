@@ -329,8 +329,8 @@ pub fn Minimap(
     });
 
     rsx! {
-        div { class: "flex flex-col items-center justify-center space-y-4 mb-8",
-            div { class: "flex flex-col items-center justify-center space-y-2 text-gray-700 text-xs",
+        div { class: "flex flex-col items-center justify-center space-y-4 mb-4",
+            div { class: "flex flex-col items-center justify-center space-y-1 text-gray-700 text-xs",
                 MinimapsSelect { minimap, minimaps, coroutine }
                 p {
                     {
@@ -356,15 +356,15 @@ pub fn Minimap(
                 }
             }
             div { class: "flex flex-col text-gray-700 text-xs space-y-1 font-mono",
-                p { class: "text-center",
-                    {
-                        state()
-                            .and_then(|state| state.position)
-                            .map(|(x, y)| { format!("{}, {}", x, y) })
-                            .unwrap_or("X, Y".to_string())
-                    }
-                }
                 div { class: "flex flex-col text-left",
+                    p {
+                        {
+                            state()
+                                .and_then(|state| state.position)
+                                .map(|(x, y)| { format!("Position: {}, {}", x, y) })
+                                .unwrap_or("Position: X, Y".to_string())
+                        }
+                    }
                     p {
                         {
                             state()

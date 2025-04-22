@@ -394,7 +394,7 @@ pub fn ConfigEnumSelect<T: 'static + Clone + PartialEq + Display + FromStr + Int
             disabled,
             div_class: "flex items-center space-x-4",
             label_class: "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400",
-            select_class: "w-44 text-xs text-gray-700 text-ellipsis rounded outline-none disabled:cursor-not-allowed disabled:text-gray-400",
+            select_class: "w-44 h-7 text-xs text-gray-700 text-ellipsis border border-gray-300 rounded outline-none disabled:cursor-not-allowed disabled:text-gray-400",
             on_select: move |variant: T| {
                 on_select(variant);
             },

@@ -43,13 +43,9 @@ pub fn Settings(
                 }
             }
             div { class: "h-2 border-b border-gray-300 mb-2" }
-            div { class: "flex flex-col space-y-3",
-                Checkbox {
+            div { class: "flex flex-col space-y-3.5",
+                SettingsCheckbox {
                     label: "Enable Rune Solving",
-                    label_class: "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400",
-                    div_class: "flex items-center space-x-4 mt-2",
-                    input_class: "w-44 text-xs text-gray-700 text-ellipsis rounded outline-none disabled:cursor-not-allowed disabled:text-gray-400",
-                    disabled: false,
                     on_input: move |enable_rune_solving| {
                         on_settings(SettingsData {
                             enable_rune_solving,
@@ -57,6 +53,16 @@ pub fn Settings(
                         });
                     },
                     value: settings_view().enable_rune_solving,
+                }
+                SettingsCheckbox {
+                    label: "Stop Actions If Fails / Changes Map",
+                    on_input: move |stop_on_fail_or_change_map| {
+                        on_settings(SettingsData {
+                            stop_on_fail_or_change_map,
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: settings_view().stop_on_fail_or_change_map,
                 }
                 ConfigEnumSelect::<CaptureMode> {
                     label: "Capture Mode",
@@ -128,6 +134,51 @@ pub fn Settings(
 }
 
 #[component]
+pub fn SettingsCheckbox(label: String, on_input: EventHandler<bool>, value: bool) -> Element {
+    rsx! {
+        Checkbox {
+            label,
+            label_class: "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400",
+            div_class: "flex items-center space-x-4 mt-2",
+            input_class: "w-44 text-xs text-gray-700 text-ellipsis rounded outline-none disabled:cursor-not-allowed disabled:text-gray-400",
+            disabled: false,
+            on_input: move |checked| {
+                on_input(checked);
+            },
+            value,
+        }
+    }
+}
+
+#[component]
+pub fn SettingsTextInput(label: String, on_input: EventHandler<String>, value: String) -> Element {
+    let mut value = use_signal(move || value);
+
+    rsx! {
+        LabeledInput {
+            label,
+            label_class: "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400",
+            div_class: "flex space-x-2 items-center",
+            disabled: false,
+            input {
+                class: "w-24 text-gray-700 text-xs p-1 border rounded border-gray-300",
+                oninput: move |e| {
+                    value.set(e.parsed::<String>().unwrap_or_default());
+                },
+                value: value(),
+            }
+            button {
+                class: "button-primary w-18 h-full",
+                onclick: move |_| {
+                    on_input(value.peek().clone());
+                },
+                "Update"
+            }
+        }
+    }
+}
+
+#[component]
 fn SettingsInputMethodSelect(
     app_coroutine: Coroutine<AppMessage>,
     settings_view: Memo<SettingsData>,
@@ -135,7 +186,6 @@ fn SettingsInputMethodSelect(
     let on_settings = move |updated| {
         app_coroutine.send(AppMessage::UpdateSettings(updated));
     };
-    let mut url = use_signal(|| settings_view().input_method_rpc_server_url);
 
     rsx! {
         ConfigEnumSelect::<InputMethod> {
@@ -150,28 +200,15 @@ fn SettingsInputMethodSelect(
             selected: settings_view().input_method,
         }
         if matches!(settings_view().input_method, InputMethod::Rpc) {
-            LabeledInput {
+            SettingsTextInput {
                 label: "Server URL",
-                label_class: "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400",
-                div_class: "flex space-x-2 items-center",
-                disabled: false,
-                input {
-                    class: "w-24 text-gray-700 text-xs p-1 border rounded border-gray-300",
-                    oninput: move |e| {
-                        url.set(e.parsed::<String>().unwrap_or_default());
-                    },
-                    value: url(),
-                }
-                button {
-                    class: "button-primary w-18 h-full",
-                    onclick: move |_| {
-                        on_settings(SettingsData {
-                            input_method_rpc_server_url: url.peek().clone(),
-                            ..settings_view.peek().clone()
-                        });
-                    },
-                    "Update"
-                }
+                on_input: move |url| {
+                    on_settings(SettingsData {
+                        input_method_rpc_server_url: url,
+                        ..settings_view.peek().clone()
+                    });
+                },
+                value: settings_view().input_method_rpc_server_url,
             }
         }
     }

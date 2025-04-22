@@ -5,6 +5,7 @@ use std::{
     fmt::Debug,
     fs::File,
     io::Write,
+    rc::Rc,
     sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant},
@@ -34,7 +35,7 @@ use crate::{
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
-    network::{DiscordNotification, DiscordNotificationKind},
+    network::{DiscordNotification, NotificationKind},
     player::{Player, PlayerState},
     query_configs, query_settings,
     request_handler::{DefaultRequestHandler, config_buffs},
@@ -209,7 +210,7 @@ impl Default for Context {
         Self {
             handle: Handle::new(""),
             keys: Box::new(MockKeySender::new()),
-            notification: DiscordNotification::new(RefCell::new(Settings::default())),
+            notification: DiscordNotification::new(Rc::new(RefCell::new(Settings::default()))),
             minimap: Minimap::Detecting,
             player: Player::Detecting,
             skills: [Skill::Detecting; SkillKind::COUNT],
@@ -298,7 +299,7 @@ fn update_loop() {
             .set_input_kind(window_box_capture.handle(), KeyInputKind::Foreground);
     }
 
-    let settings = RefCell::new(settings);
+    let settings = Rc::new(RefCell::new(settings));
     let mut context = Context {
         handle,
         keys: Box::new(keys),
@@ -385,7 +386,7 @@ fn update_loop() {
             drop(settings_borrow_mut); // For notification to borrow immutably
             let _ = context
                 .notification
-                .schedule_notification(DiscordNotificationKind::FailOrMapChanged);
+                .schedule_notification(NotificationKind::FailOrMapChanged);
         }
     });
 }
