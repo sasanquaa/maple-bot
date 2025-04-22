@@ -23,6 +23,7 @@ mod debug;
 mod detect;
 mod mat;
 mod minimap;
+mod network;
 mod pathing;
 mod player;
 mod player_actions;

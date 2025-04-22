@@ -57,6 +57,14 @@ pub enum InputMethod {
     Rpc,
 }
 
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+pub struct Notifications {
+    pub discord_webhook_url: String,
+    pub discord_user_id: String,
+    pub notify_on_fail_or_change_map: bool,
+    pub notify_on_rune_appear: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(skip_serializing, default)]
@@ -69,6 +77,10 @@ pub struct Settings {
     pub input_method: InputMethod,
     #[serde(default)]
     pub input_method_rpc_server_url: String,
+    #[serde(default)]
+    pub stop_on_fail_or_change_map: bool,
+    #[serde(default)]
+    pub notifications: Notifications,
     #[serde(default = "toggle_actions_key_default")]
     pub toggle_actions_key: KeyBindingConfiguration,
     #[serde(default = "platform_start_key_default")]
@@ -87,6 +99,8 @@ impl Default for Settings {
             enable_rune_solving: enable_rune_solving_default(),
             input_method: InputMethod::default(),
             input_method_rpc_server_url: String::default(),
+            stop_on_fail_or_change_map: false,
+            notifications: Notifications::default(),
             toggle_actions_key: toggle_actions_key_default(),
             platform_start_key: platform_start_key_default(),
             platform_end_key: platform_end_key_default(),

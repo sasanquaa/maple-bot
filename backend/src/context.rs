@@ -14,6 +14,10 @@ use anyhow::{Error, anyhow};
 use log::info;
 #[cfg(test)]
 use mockall::automock;
+use opencv::{
+    core::{Vector, VectorToVec},
+    imgcodecs::imencode_def,
+};
 use platforms::windows::{
     self, BitBltCapture, Handle, KeyInputKind, KeyKind, KeyReceiver, Keys, WgcCapture,
     WindowBoxCapture,
@@ -21,13 +25,16 @@ use platforms::windows::{
 use strum::IntoEnumIterator;
 use tokio::sync::broadcast;
 
+#[cfg(test)]
+use crate::Settings;
 use crate::{
-    Action,
+    Action, RequestHandler,
     buff::{Buff, BuffKind, BuffState},
     database::{CaptureMode, InputMethod, KeyBinding},
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
+    network::{DiscordNotification, DiscordNotificationKind},
     player::{Player, PlayerState},
     query_configs, query_settings,
     request_handler::{DefaultRequestHandler, config_buffs},
@@ -188,6 +195,7 @@ pub struct Context {
     /// The `MapleStory` class game handle
     pub handle: Handle, // FIXME: This shoulnd't be pub, it is pub for tests
     pub keys: Box<dyn KeySender>,
+    pub notification: DiscordNotification,
     pub minimap: Minimap,
     pub player: Player,
     pub skills: [Skill; SkillKind::COUNT],
@@ -201,6 +209,7 @@ impl Default for Context {
         Self {
             handle: Handle::new(""),
             keys: Box::new(MockKeySender::new()),
+            notification: DiscordNotification::new(RefCell::new(Settings::default())),
             minimap: Minimap::Detecting,
             player: Player::Detecting,
             skills: [Skill::Detecting; SkillKind::COUNT],
@@ -251,7 +260,7 @@ fn update_loop() {
     let mut actions = Vec::<Action>::new();
     let mut config = query_configs().unwrap().into_iter().next().unwrap(); // Override by UI
     let mut buffs = config_buffs(&config);
-    let mut settings = query_settings(); // Override by UI
+    let settings = query_settings(); // Override by UI
 
     let keys_service = if let InputMethod::Rpc = settings.input_method {
         KeysService::connect(settings.input_method_rpc_server_url.clone())
@@ -289,9 +298,11 @@ fn update_loop() {
             .set_input_kind(window_box_capture.handle(), KeyInputKind::Foreground);
     }
 
+    let settings = RefCell::new(settings);
     let mut context = Context {
         handle,
         keys: Box::new(keys),
+        notification: DiscordNotification::new(settings.clone()),
         minimap: Minimap::Detecting,
         player: Player::Idle,
         skills: [Skill::Detecting],
@@ -308,7 +319,7 @@ fn update_loop() {
         .collect::<Vec<BuffState>>();
 
     loop_with_fps(FPS, || {
-        let mat = match settings.capture_mode {
+        let mat = match settings.borrow().capture_mode {
             CaptureMode::BitBlt => bitblt_capture.grab().ok().map(OwnedMat::new),
             CaptureMode::WindowsGraphicsCapture => wgc_capture
                 .as_mut()
@@ -317,7 +328,9 @@ fn update_loop() {
                 .map(OwnedMat::new),
             CaptureMode::BitBltArea => window_box_capture.grab().ok().map(OwnedMat::new),
         };
+        let was_minimap_idle = matches!(context.minimap, Minimap::Idle(_));
         let detector = mat.map(CachedDetector::new);
+
         if let Some(ref detector) = detector {
             context.minimap = fold_context(&context, detector, context.minimap, &mut minimap_state);
             context.player = fold_context(&context, detector, context.player, &mut player_state);
@@ -334,11 +347,14 @@ fn update_loop() {
             // Rotating action must always be done last
             rotator.rotate_action(&context, detector, &mut player_state);
         }
+
+        // Poll requests, keys and update scheduled notifications frames
+        let mut settings_borrow_mut = settings.borrow_mut();
         // I know what you are thinking...
         let mut handler = DefaultRequestHandler {
             context: &mut context,
             config: &mut config,
-            settings: &mut settings,
+            settings: &mut settings_borrow_mut,
             buffs: &mut buffs,
             actions: &mut actions,
             rotator: &mut rotator,
@@ -352,6 +368,25 @@ fn update_loop() {
         };
         handler.poll_request();
         handler.poll_key();
+        handler
+            .context
+            .notification
+            .update_scheduled_frames(|| to_png(handler.mat));
+        // Upon accidental or white roomed causing map to change,
+        // abort actions and send notification
+        if handler.minimap.data().is_some()
+            && matches!(handler.context.minimap, Minimap::Detecting)
+            && was_minimap_idle
+            && !handler.context.halting
+        {
+            if handler.settings.stop_on_fail_or_change_map {
+                handler.on_rotate_actions(true);
+            }
+            drop(settings_borrow_mut); // For notification to borrow immutably
+            let _ = context
+                .notification
+                .schedule_notification(DiscordNotificationKind::FailOrMapChanged);
+        }
     });
 }
 
@@ -392,4 +427,13 @@ fn loop_with_fps(fps: u32, mut on_tick: impl FnMut()) {
             info!(target: "context", "ticking running late at {}ms", (elapsed_nanos - nanos_per_frame) / 1_000_000);
         }
     }
+}
+
+#[inline]
+fn to_png(frame: Option<&OwnedMat>) -> Option<Vec<u8>> {
+    frame.and_then(|image| {
+        let mut bytes = Vector::new();
+        imencode_def(".png", image, &mut bytes).ok()?;
+        Some(bytes.to_vec())
+    })
 }

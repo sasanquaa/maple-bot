@@ -171,3 +171,8 @@ fn from_key_kind(key: KeyKind) -> Key {
         KeyKind::Alt => Key::Alt,
     }
 }
+
+#[cfg(test)]
+mod test {
+    // TODO
+}

@@ -185,6 +185,7 @@ pub fn Minimap(
                     MinimapMessage::CreateMinimap(name) => {
                         if let Some(mut data) = create_minimap(name).await {
                             upsert_map(&mut data).unwrap();
+                            update_minimap(None, data.clone()).await;
                             minimap.set(Some(data));
                             minimaps.restart();
                             preset.set(None);
