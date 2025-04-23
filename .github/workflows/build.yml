@@ -87,6 +87,7 @@ jobs:
           git checkout .
           git checkout "$env:VCPKG_VERSION"
           ./bootstrap-vcpkg.bat -disableMetrics
+          echo "set(VCPKG_BUILD_TYPE release)" >> triplets/x64-windows.cmake
           echo "set(VCPKG_BUILD_TYPE release)" >> triplets/x64-windows-static.cmake
 
       - name: Install OpenCV
