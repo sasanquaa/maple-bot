@@ -63,6 +63,14 @@ jobs:
 
       - uses: cargo-bins/cargo-binstall@main
 
+      - name: Install TailwindCSS and Dioxus CLI
+        shell: pwsh
+        run: |
+          cd ui
+          npm install
+          cd ../
+          cargo binstall dioxus-cli --no-confirm
+
       - name: Install LLVM & protoc
         shell: pwsh
         run: |
@@ -86,14 +94,6 @@ jobs:
         run: |
           cd "$env:VCPKG_ROOT"
           ./vcpkg.exe install --clean-after-build --recurse opencv4[contrib,nonfree]
-
-      - name: Install tools
-        shell: pwsh
-        run: |
-          cd ui
-          npm install
-          cd ../
-          cargo binstall dioxus-cli --no-confirm
 
       # - name: Format
         # https://github.com/DioxusLabs/dioxus/issues/3433
