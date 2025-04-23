@@ -49,22 +49,29 @@ struct Anchors {
 #[cfg_attr(test, derive(Default))]
 pub struct MinimapIdle {
     /// The two anchors top left and bottom right of the minimap
+    ///
     /// They are just two fixed pixels
     anchors: Anchors,
     /// The bounding box of the minimap.
     pub bbox: Rect,
-    /// Whether the UI width is scaled or not depending on the saved data
+    /// Whether the UI is being partially overlapped
+    ///
+    /// It is partially overlapped by other UIs if one of the anchor mismatches.
     pub partially_overlapping: bool,
     /// The rune position
     pub rune: Option<Point>,
     /// Whether there is an elite boss
+    ///
     /// This does not belong to minimap though...
     pub has_elite_boss: bool,
     /// The portal positions
+    ///
     /// Praying each night that there won't be more than 16 portals...
-    // initially it is only 8 until it crashes at Henesys with 10 portals smh
+    /// Initially, it is only 8 until it crashes at Henesys with 10 portals smh
     pub portals: Array<Rect, 16>,
+    /// The user provided platforms
     pub platforms: Array<PlatformWithNeighbors, MAX_PLATFORMS_COUNT>,
+    /// The largest rectangle containing all the platforms
     pub platforms_bound: Option<Rect>,
 }
 
@@ -118,6 +125,7 @@ fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) 
     else {
         return Minimap::Detecting;
     };
+
     let (platforms, platforms_bound) = state
         .data
         .as_ref()
@@ -126,6 +134,7 @@ fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) 
     state.update_platforms = false;
     state.rune_task = None;
     state.has_elite_boss_task = None;
+
     Minimap::Idle(MinimapIdle {
         anchors,
         bbox,
@@ -171,9 +180,10 @@ fn update_idle_context(
         return None;
     }
     let partially_overlapping = (tl_match && !br_match) || (!tl_match && br_match);
-    let rune = update_rune_task(context, state, detector, bbox, rune);
-    let has_elite_boss = update_elite_boss_task(state, detector, has_elite_boss);
-    let portals = update_portals_task(state, detector, portals, bbox);
+    let rune = update_rune_task(context, &mut state.rune_task, detector, bbox, rune);
+    let has_elite_boss =
+        update_elite_boss_task(&mut state.has_elite_boss_task, detector, has_elite_boss);
+    let portals = update_portals_task(&mut state.portals_task, detector, portals, bbox);
     // TODO: any better way to read persistent state in other contextual?
     if state.update_platforms {
         let (updated_platforms, updated_bound) =
@@ -197,7 +207,7 @@ fn update_idle_context(
 #[inline]
 fn update_rune_task(
     context: &Context,
-    state: &mut MinimapState,
+    task: &mut Option<Task<Result<Point>>>,
     detector: &impl Detector,
     minimap: Rect,
     rune: Option<Point>,
@@ -207,7 +217,7 @@ fn update_rune_task(
     let update = if matches!(context.player, Player::SolvingRune(_)) && rune.is_some() {
         Update::Pending
     } else {
-        update_task_repeatable(10000, &mut state.rune_task, move || {
+        update_task_repeatable(10000, task, move || {
             detector
                 .detect_minimap_rune(minimap)
                 .map(|rune| center_of_bbox(rune, minimap))
@@ -228,14 +238,12 @@ fn update_rune_task(
 
 #[inline]
 fn update_elite_boss_task(
-    state: &mut MinimapState,
+    task: &mut Option<Task<Result<bool>>>,
     detector: &impl Detector,
     has_elite_boss: bool,
 ) -> bool {
     let detector = detector.clone();
-    let update = update_task_repeatable(10000, &mut state.has_elite_boss_task, move || {
-        Ok(detector.detect_elite_boss_bar())
-    });
+    let update = update_task_repeatable(10000, task, move || Ok(detector.detect_elite_boss_bar()));
     match update {
         Update::Ok(has_elite_boss) => has_elite_boss,
         Update::Pending => has_elite_boss,
@@ -245,15 +253,14 @@ fn update_elite_boss_task(
 
 #[inline]
 fn update_portals_task(
-    state: &mut MinimapState,
+    task: &mut Option<Task<Result<Vec<Rect>>>>,
     detector: &impl Detector,
     portals: Array<Rect, 16>,
     minimap: Rect,
 ) -> Array<Rect, 16> {
     let detector = detector.clone();
-    let update = update_task_repeatable(5000, &mut state.portals_task, move || {
-        detector.detect_minimap_portals(minimap)
-    });
+    let update =
+        update_task_repeatable(5000, task, move || detector.detect_minimap_portals(minimap));
     match update {
         Update::Ok(vec) if portals.len() < vec.len() => {
             Array::from_iter(vec.into_iter().map(|portal| {
