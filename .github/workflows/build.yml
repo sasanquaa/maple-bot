@@ -1,4 +1,4 @@
-name: Build windows-x64-static-release
+name: maple-bot
 
 on:
   workflow_dispatch:
@@ -10,53 +10,51 @@ on:
       - "master"
       - "v*.*.*"
 
-permissions: write-all
-
-env:
-  VCPKG_ENABLE_METRICS: 0
-  VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg/installed
-  VCPKG_DEFAULT_TRIPLET: x64-windows-static-release
-  VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static-release
-  VCPKGRS_TRIPLET: x64-windows-static-release
-  CARGO_TERM_COLOR: always
-  OPENCV_MSVC_CRT: static
-  RUST_BACKTRACE: 1
-  OPENCV_DISABLE_PROBES: environment,pkg_config,cmake,vcpkg_cmake
+permissions:
+  contents: read
 
 jobs:
-  build:
+  windows-x64-static:
+    strategy:
+      fail-fast: false
+
     runs-on: windows-latest
+
+    env:
+      OPENCV_MSVC_CRT: static
+      OPENCV_DISABLE_PROBES: environment,pkg_config,cmake,vcpkg_cmake
+
+      VCPKG_VERSION: "2025.04.09"
+      VCPKG_ENABLE_METRICS: 0
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg/installed
+      VCPKG_DEFAULT_TRIPLET: x64-windows-static
+      VCPKGRS_TRIPLET: x64-windows-static
+
+      PROTOC_VERSION: "30.2.0"
+      LLVM_VERSION: "20.1.2"
+      CARGO_TERM_COLOR: always
+      SCCACHE_GHA_ENABLED: "true"
+      RUST_BACKTRACE: 1
+      RUSTC_WRAPPER: "sccache"
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: arduino/setup-protoc@v3
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/vcpkg
+          key: vcpkg-${{ env.VCPKG_VERSION }}
 
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-x86_64-pc-windows-msvc
           components: clippy, rustfmt
 
-      - uses: cargo-bins/cargo-binstall@main
-
-      - run: cargo binstall dioxus-cli --no-confirm
-
-      - name: Format
+      - name: Code format
         # https://github.com/DioxusLabs/dioxus/issues/3433
         # Need to add dx fmt
         run: cargo fmt --check
-
-      - uses: lukka/get-cmake@latest
-        with:
-          cmakeVersion: 3.31.6
-
-      - uses: lukka/run-vcpkg@v11
-        with:
-          doNotCache: false
-          runVcpkgFormatString: '[`install`, `--recurse`, `--clean-after-build`, `--debug`, `--x-install-root`, `$[env.VCPKG_INSTALLED_DIR]`, `--triplet`, `$[env.VCPKG_DEFAULT_TRIPLET]`]'
-          runVcpkgInstall: true
-
-      - uses: Swatinem/rust-cache@v2
 
       - uses: actions/setup-node@v4
         with:
@@ -64,22 +62,47 @@ jobs:
           cache: "npm"
           cache-dependency-path: "./ui/package-lock.json"
 
-      - name: Install NPM packages
+      - uses: mozilla-actions/sccache-action@v0.0.9
+
+      - uses: cargo-bins/cargo-binstall@main
+
+      - name: Install TailwindCSS and Dioxus CLI
+        shell: pwsh
         run: |
           cd ui
           npm install
+          cd ../
+          cargo binstall dioxus-cli --no-confirm
 
-      - uses: KyleMayes/install-llvm-action@v2
-        with:
-          # can't install LLVM 19
-          # possibly related https://github.com/KyleMayes/install-llvm-action/issues/86
-          version: "18.1.8"
+      - name: Install LLVM & protoc
+        shell: pwsh
+        run: |
+          choco install -y protoc --version "$env:PROTOC_VERSION"
+          choco install -y llvm --version "$env:LLVM_VERSION"
 
-      - name: Lint
-        run: cargo clippy -- -D warnings
+      - name: Install vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/Microsoft/vcpkg.git "$env:VCPKG_ROOT"
+          cd "$env:VCPKG_ROOT"
+          git fetch --all --prune --tags
+          git status
+          git checkout .
+          git checkout "$env:VCPKG_VERSION"
+          ./bootstrap-vcpkg.bat -disableMetrics
+          echo "set(VCPKG_BUILD_TYPE release)" >> triplets/x64-windows.cmake
+          echo "set(VCPKG_BUILD_TYPE release)" >> triplets/x64-windows-static.cmake
 
-      - name: Test
-        run: cargo test --verbose
+      - name: Install OpenCV
+        shell: pwsh
+        run: |
+          cd "$env:VCPKG_ROOT"
+          ./vcpkg.exe install --clean-after-build --recurse opencv4[contrib,nonfree]
+
+      - name: Lint & test
+        run: |
+          cargo clippy -- -D warnings
+          cargo test --verbose
 
       - name: Build
         shell: pwsh
