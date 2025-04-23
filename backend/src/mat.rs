@@ -1,7 +1,7 @@
 use std::ffi::c_void;
 
 use opencv::{
-    boxed_ref::{BoxedRef, BoxedRefMut},
+    boxed_ref::BoxedRef,
     core::{_InputArray, CV_8UC4, Mat, MatTraitConst, ToInputArray},
 };
 use platforms::windows::Frame;
@@ -9,7 +9,7 @@ use platforms::windows::Frame;
 // A Mat that owns the external buffer.
 #[derive(Debug)]
 pub struct OwnedMat {
-    mat: BoxedRefMut<'static, Mat>,
+    mat: BoxedRef<'static, Mat>,
     #[allow(unused)]
     data: Vec<u8>,
 }
@@ -17,7 +17,7 @@ pub struct OwnedMat {
 impl OwnedMat {
     pub fn new(frame: Frame) -> Self {
         let data = frame.data;
-        let mat = BoxedRefMut::from(unsafe {
+        let mat = BoxedRef::from(unsafe {
             Mat::new_nd_with_data_unsafe_def(
                 &[frame.height, frame.width],
                 CV_8UC4,
@@ -33,7 +33,7 @@ impl OwnedMat {
 impl From<Mat> for OwnedMat {
     fn from(value: Mat) -> Self {
         Self {
-            mat: BoxedRefMut::from(value),
+            mat: BoxedRef::from(value),
             data: vec![],
         }
     }

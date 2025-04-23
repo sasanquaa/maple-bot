@@ -16,12 +16,11 @@ use crate::{
     buff::{Buff, BuffKind},
     context::{Context, MS_PER_TICK},
     database::{Action, ActionCondition, ActionKey, ActionMove},
-    detect::Detector,
     minimap::Minimap,
     player::{GRAPPLING_THRESHOLD, Player, PlayerState},
     player_actions::{PlayerAction, PlayerActionAutoMob, PlayerActionKey},
     skill::{Skill, SkillKind},
-    task::{Task, Update, update_task_repeatable},
+    task::{Task, Update, update_detection_task},
 };
 
 const COOLDOWN_BETWEEN_QUEUE_MILLIS: u128 = 20_000;
@@ -205,12 +204,7 @@ impl Rotator {
     }
 
     #[inline]
-    pub fn rotate_action(
-        &mut self,
-        context: &Context,
-        detector: &impl Detector,
-        player: &mut PlayerState,
-    ) {
+    pub fn rotate_action(&mut self, context: &Context, player: &mut PlayerState) {
         if context.halting || matches!(context.player, Player::CashShopThenExit(_, _)) {
             return;
         }
@@ -221,7 +215,7 @@ impl Rotator {
                 RotatorMode::StartToEnd => self.rotate_start_to_end(player),
                 RotatorMode::StartToEndThenReverse => self.rotate_start_to_end_then_reverse(player),
                 RotatorMode::AutoMobbing(auto_mobbing) => {
-                    self.rotate_auto_mobbing(context, detector, player, auto_mobbing)
+                    self.rotate_auto_mobbing(context, player, auto_mobbing)
                 }
             }
         }
@@ -409,7 +403,6 @@ impl Rotator {
     fn rotate_auto_mobbing(
         &mut self,
         context: &Context,
-        detector: &impl Detector,
         player: &mut PlayerState,
         auto_mobbing: AutoMobbing,
     ) {
@@ -432,10 +425,11 @@ impl Rotator {
         } else {
             bound.into()
         };
-        let detector = detector.clone();
-        let Update::Ok(points) = update_task_repeatable(0, &mut self.auto_mob_task, move || {
-            detector.detect_mobs(idle.bbox, bound, pos)
-        }) else {
+        let Update::Ok(points) =
+            update_detection_task(context, 0, &mut self.auto_mob_task, move |detector| {
+                detector.detect_mobs(idle.bbox, bound, pos)
+            })
+        else {
             return;
         };
         let Some(point) = points
@@ -759,9 +753,7 @@ mod tests {
     use opencv::core::{Point, Vec4b};
 
     use super::*;
-    use crate::{
-        Position, buff::BuffKind, detect::MockDetector, minimap::MinimapIdle, skill::SkillKind,
-    };
+    use crate::{Position, buff::BuffKind, minimap::MinimapIdle, skill::SkillKind};
 
     const NORMAL_ACTION: Action = Action::Move(ActionMove {
         position: Position {
@@ -798,7 +790,7 @@ mod tests {
 
     #[test]
     fn rotator_should_queue_fixed_action_every_millis() {
-        let context = Context::default();
+        let context = Context::new(None, None);
         let now = Instant::now();
 
         assert!(should_queue_fixed_action(
@@ -815,7 +807,7 @@ mod tests {
 
     #[test]
     fn rotator_should_queue_fixed_action_erda_shower() {
-        let mut context = Context::default();
+        let mut context = Context::new(None, None);
         let now = Instant::now();
 
         context.skills[SkillKind::ErdaShower] = Skill::Idle(Point::default(), Vec4b::default());
@@ -859,8 +851,7 @@ mod tests {
     fn rotator_rotate_action_start_to_end_then_reverse() {
         let mut rotator = Rotator::default();
         let mut player = PlayerState::default();
-        let context = Context::default();
-        let detector = MockDetector::new();
+        let context = Context::new(None, None);
         rotator.normal_rotate_mode = RotatorMode::StartToEndThenReverse;
         for i in 0..2 {
             rotator
@@ -868,14 +859,14 @@ mod tests {
                 .push((i, RotatorAction::Single(NORMAL_ACTION.into())));
         }
 
-        rotator.rotate_action(&context, &detector, &mut player);
+        rotator.rotate_action(&context, &mut player);
         assert!(player.has_normal_action());
         assert!(!rotator.normal_actions_backward);
         assert_eq!(rotator.normal_index, 1);
 
         player.abort_actions();
 
-        rotator.rotate_action(&context, &detector, &mut player);
+        rotator.rotate_action(&context, &mut player);
         assert!(player.has_normal_action());
         assert!(rotator.normal_actions_backward);
         assert_eq!(rotator.normal_index, 0);
@@ -885,8 +876,7 @@ mod tests {
     fn rotator_rotate_action_start_to_end() {
         let mut rotator = Rotator::default();
         let mut player = PlayerState::default();
-        let context = Context::default();
-        let detector = MockDetector::new();
+        let context = Context::new(None, None);
         rotator.normal_rotate_mode = RotatorMode::StartToEnd;
         for i in 0..2 {
             rotator
@@ -894,14 +884,14 @@ mod tests {
                 .push((i, RotatorAction::Single(NORMAL_ACTION.into())));
         }
 
-        rotator.rotate_action(&context, &detector, &mut player);
+        rotator.rotate_action(&context, &mut player);
         assert!(player.has_normal_action());
         assert!(!rotator.normal_actions_backward);
         assert_eq!(rotator.normal_index, 1);
 
         player.abort_actions();
 
-        rotator.rotate_action(&context, &detector, &mut player);
+        rotator.rotate_action(&context, &mut player);
         assert!(player.has_normal_action());
         assert!(!rotator.normal_actions_backward);
         assert_eq!(rotator.normal_index, 0);
@@ -913,11 +903,8 @@ mod tests {
         let mut player = PlayerState::default();
         let mut minimap = MinimapIdle::default();
         minimap.rune = Some(Point::default());
-        let detector = MockDetector::new();
-        let mut context = Context {
-            minimap: Minimap::Idle(minimap),
-            ..Context::default()
-        };
+        let mut context = Context::new(None, None);
+        context.minimap = Minimap::Idle(minimap);
         context.buffs[BuffKind::Rune] = Buff::NoBuff;
         rotator.priority_actions.insert(
             55,
@@ -933,7 +920,7 @@ mod tests {
             },
         );
 
-        rotator.rotate_action(&context, &detector, &mut player);
+        rotator.rotate_action(&context, &mut player);
         assert_eq!(rotator.priority_actions_queue.len(), 0);
         assert_eq!(player.priority_action_id(), Some(55));
     }
@@ -942,8 +929,7 @@ mod tests {
     fn rotator_priority_action_queue_to_front() {
         let mut rotator = Rotator::default();
         let mut player = PlayerState::default();
-        let detector = MockDetector::new();
-        let context = Context::default();
+        let context = Context::new(None, None);
         // queue 2 non-front priority actions
         rotator.priority_actions.insert(
             2,
@@ -968,7 +954,7 @@ mod tests {
             },
         );
 
-        rotator.rotate_action(&context, &detector, &mut player);
+        rotator.rotate_action(&context, &mut player);
         assert_eq!(rotator.priority_actions_queue.len(), 1);
         assert_eq!(player.priority_action_id(), Some(2));
 
@@ -986,7 +972,7 @@ mod tests {
         );
 
         // non-front priority action get replaced
-        rotator.rotate_action(&context, &detector, &mut player);
+        rotator.rotate_action(&context, &mut player);
         assert_eq!(
             rotator.priority_actions_queue,
             VecDeque::from_iter([2, 3].into_iter())
@@ -1008,7 +994,7 @@ mod tests {
 
         // queued front priority action cannot be replaced
         // by another front priority action
-        rotator.rotate_action(&context, &detector, &mut player);
+        rotator.rotate_action(&context, &mut player);
         assert_eq!(
             rotator.priority_actions_queue,
             VecDeque::from_iter([5, 2, 3].into_iter())
@@ -1020,8 +1006,7 @@ mod tests {
     fn rotator_priority_linked_action() {
         let mut rotator = Rotator::default();
         let mut player = PlayerState::default();
-        let detector = MockDetector::new();
-        let context = Context::default();
+        let context = Context::new(None, None);
         rotator.priority_actions.insert(
             2,
             PriorityAction {
@@ -1041,7 +1026,7 @@ mod tests {
         );
 
         // linked action queued
-        rotator.rotate_action(&context, &detector, &mut player);
+        rotator.rotate_action(&context, &mut player);
         assert!(rotator.priority_actions_queue.is_empty());
         assert!(rotator.priority_queuing_linked_action.is_some());
         assert_eq!(player.priority_action_id(), Some(2));
@@ -1058,14 +1043,14 @@ mod tests {
                 last_queued_time: None,
             },
         );
-        rotator.rotate_action(&context, &detector, &mut player);
+        rotator.rotate_action(&context, &mut player);
         assert_eq!(
             rotator.priority_actions_queue,
             VecDeque::from_iter([4].into_iter())
         );
 
         player.abort_actions();
-        rotator.rotate_action(&context, &detector, &mut player);
+        rotator.rotate_action(&context, &mut player);
         assert!(rotator.priority_queuing_linked_action.is_none());
         assert_eq!(
             rotator.priority_actions_queue,

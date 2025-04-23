@@ -13,11 +13,10 @@ use crate::{
     buff::{Buff, BuffKind},
     context::{Context, Contextual, ControlFlow},
     database::{ActionKeyDirection, ActionKeyWith, KeyBinding, LinkKeyBinding},
-    detect::Detector,
     minimap::Minimap,
     pathing::{PlatformWithNeighbors, find_points_with},
     player_actions::{PlayerAction, PlayerActionAutoMob, PlayerActionKey, PlayerActionMove},
-    task::{Task, Update, update_task_repeatable},
+    task::{Task, Update, update_detection_task},
 };
 
 /// Maximum number of times [`Player::Moving`] state can be transitioned to
@@ -690,12 +689,7 @@ impl Contextual for Player {
     // 草草ｗｗ。。。
     // TODO: detect if a point is reachable after number of retries?
     // TODO: split into smaller files?
-    fn update(
-        self,
-        context: &Context,
-        detector: &impl Detector,
-        state: &mut PlayerState,
-    ) -> ControlFlow<Self> {
+    fn update(self, context: &Context, state: &mut PlayerState) -> ControlFlow<Self> {
         if state.rune_cash_shop {
             let _ = context.keys.send_up(KeyKind::Up);
             let _ = context.keys.send_up(KeyKind::Down);
@@ -711,7 +705,7 @@ impl Contextual for Player {
         let cur_pos = if state.ignore_pos_update {
             state.last_known_pos
         } else {
-            update_state(context, detector, state)
+            update_state(context, state)
         };
         let Some(cur_pos) = cur_pos else {
             // When the player detection fails, the possible causes are:
@@ -721,8 +715,7 @@ impl Contextual for Player {
             // `update_non_positional_context` is here to continue updating
             // `Player::Unstucking` returned from below when the player
             // is inside the edges of the minimap. And also `Player::CashShopThenExit`.
-            if let Some(next) = update_non_positional_context(self, context, detector, state, true)
-            {
+            if let Some(next) = update_non_positional_context(self, context, state, true) {
                 return ControlFlow::Next(next);
             }
             let next = if !context.halting
@@ -743,7 +736,7 @@ impl Contextual for Player {
         } else {
             self
         };
-        let next = update_non_positional_context(contextual, context, detector, state, false)
+        let next = update_non_positional_context(contextual, context, state, false)
             .unwrap_or_else(|| update_positional_context(contextual, context, cur_pos, state));
         let control_flow = if state.use_immediate_control_flow {
             ControlFlow::Immediate(next)
@@ -762,7 +755,6 @@ impl Contextual for Player {
 fn update_non_positional_context(
     contextual: Player,
     context: &Context,
-    detector: &impl Detector,
     state: &mut PlayerState,
     failed_to_detect_player: bool,
 ) -> Option<Player> {
@@ -772,7 +764,6 @@ fn update_non_positional_context(
         }
         Player::Unstucking(timeout, has_settings) => Some(update_unstucking_context(
             context,
-            detector,
             state,
             timeout,
             has_settings,
@@ -781,13 +772,13 @@ fn update_non_positional_context(
             (!failed_to_detect_player).then(|| update_stalling_context(state, timeout, max_timeout))
         }
         Player::SolvingRune(solving_rune) => (!failed_to_detect_player)
-            .then(|| update_solving_rune_context(context, detector, state, solving_rune)),
+            .then(|| update_solving_rune_context(context, state, solving_rune)),
         // TODO: Improve this?
         Player::CashShopThenExit(timeout, cash_shop) => {
             let next = match cash_shop {
                 CashShop::Entering => {
                     let _ = context.keys.send(state.config.cash_shop_key);
-                    let next = if detector.detect_player_in_cash_shop() {
+                    let next = if context.detector_unwrap().detect_player_in_cash_shop() {
                         CashShop::Entered
                     } else {
                         CashShop::Entering
@@ -804,7 +795,7 @@ fn update_non_positional_context(
                     )
                 }
                 CashShop::Exitting => {
-                    let next = if detector.detect_player_in_cash_shop() {
+                    let next = if context.detector_unwrap().detect_player_in_cash_shop() {
                         CashShop::Exitting
                     } else {
                         CashShop::Exitted
@@ -2128,7 +2119,6 @@ fn update_falling_context(
 /// state will enter GAMBA mode. And by definition, it means `random bullsh*t go`.
 fn update_unstucking_context(
     context: &Context,
-    detector: &impl Detector,
     state: &mut PlayerState,
     timeout: Timeout,
     has_settings: Option<bool>,
@@ -2145,9 +2135,8 @@ fn update_unstucking_context(
 
     if !timeout.started {
         if state.unstuck_consecutive_counter + 1 < GAMBA_MODE_COUNT && has_settings.is_none() {
-            let detector = detector.clone();
             let Update::Ok(has_settings) =
-                update_task_repeatable(0, &mut state.unstuck_task, move || {
+                update_detection_task(context, 0, &mut state.unstuck_task, move |detector| {
                     Ok(detector.detect_esc_settings())
                 })
             else {
@@ -2278,7 +2267,6 @@ fn update_stalling_context(state: &mut PlayerState, timeout: Timeout, max_timeou
 /// - On timeout end or rune is solved before timing out, transitions to `Player::Idle`
 fn update_solving_rune_context(
     context: &Context,
-    detector: &impl Detector,
     state: &mut PlayerState,
     solving_rune: SolvingRune,
 ) -> Player {
@@ -2304,9 +2292,8 @@ fn update_solving_rune_context(
         },
         |timeout| {
             if solving_rune.keys.is_none() {
-                let detector = detector.clone();
                 let Update::Ok(keys) =
-                    update_task_repeatable(500, &mut state.rune_task, move || {
+                    update_detection_task(context, 500, &mut state.rune_task, move |detector| {
                         detector.detect_rune_arrows()
                     })
                 else {
@@ -2657,7 +2644,7 @@ fn update_rune_validating_state(context: &Context, state: &mut PlayerState) {
 
 // TODO: This should be a PlayerAction?
 #[inline]
-fn update_health_state(context: &Context, detector: &impl Detector, state: &mut PlayerState) {
+fn update_health_state(context: &Context, state: &mut PlayerState) {
     if let Player::SolvingRune(_) = context.player {
         return;
     }
@@ -2666,21 +2653,22 @@ fn update_health_state(context: &Context, detector: &impl Detector, state: &mut 
         return;
     }
 
-    let detector = detector.clone();
     let Some(health_bar) = state.health_bar else {
-        let update = update_task_repeatable(1000, &mut state.health_bar_task, move || {
-            detector.detect_player_health_bar()
-        });
+        let update =
+            update_detection_task(context, 1000, &mut state.health_bar_task, move |detector| {
+                detector.detect_player_health_bar()
+            });
         if let Update::Ok(health_bar) = update {
             state.health_bar = Some(health_bar);
         }
         return;
     };
 
-    let Update::Ok(health) = update_task_repeatable(
+    let Update::Ok(health) = update_detection_task(
+        context,
         state.config.update_health_millis.unwrap_or(1000),
         &mut state.health_task,
-        move || {
+        move |detector| {
             let (current_bar, max_bar) =
                 detector.detect_player_current_max_health_bars(health_bar)?;
             let health = detector.detect_player_health(current_bar, max_bar)?;
@@ -2709,17 +2697,13 @@ fn update_health_state(context: &Context, detector: &impl Detector, state: &mut 
 /// - Delegates to `update_health_state` and `update_rune_validating_state`
 /// - Resets `state.unstuck_counter` and `state.unstuck_consecutive_counter` when position changed
 #[inline]
-fn update_state(
-    context: &Context,
-    detector: &impl Detector,
-    state: &mut PlayerState,
-) -> Option<Point> {
+fn update_state(context: &Context, state: &mut PlayerState) -> Option<Point> {
     let Minimap::Idle(idle) = &context.minimap else {
         reset_health(state);
         return None;
     };
     let minimap_bbox = idle.bbox;
-    let Ok(bbox) = detector.detect_player(minimap_bbox) else {
+    let Ok(bbox) = context.detector_unwrap().detect_player(minimap_bbox) else {
         reset_health(state);
         return None;
     };
@@ -2744,7 +2728,7 @@ fn update_state(
     state.is_stationary = is_stationary;
     state.is_stationary_timeout = is_stationary_timeout;
     state.last_known_pos = Some(pos);
-    update_health_state(context, detector, state);
+    update_health_state(context, state);
     update_rune_validating_state(context, state);
     Some(pos)
 }
@@ -2801,7 +2785,6 @@ mod tests {
     use crate::{
         ActionKeyDirection, ActionKeyWith, KeyBinding,
         context::{Context, MockKeySender},
-        detect::MockDetector,
         player::{Player, Timeout, update_non_positional_context},
     };
 
@@ -2846,7 +2829,7 @@ mod tests {
             ..Default::default()
         };
         let mut state = PlayerState::default();
-        let mut context = Context::default();
+        let mut context = Context::new(None, None);
         state.config.jump_key = KeyKind::Space;
 
         let mut keys = MockKeySender::new();
@@ -2907,7 +2890,7 @@ mod tests {
             ..Default::default()
         };
         let mut state = PlayerState::default();
-        let context = Context::default();
+        let context = Context::new(None, None);
 
         // up jumped because y changed > 5
         assert_matches!(
@@ -2938,10 +2921,7 @@ mod tests {
         keys.expect_send()
             .withf(|key| matches!(key, KeyKind::Space))
             .returning(|_| Ok(()));
-        let context = Context {
-            keys: Box::new(keys),
-            ..Default::default()
-        };
+        let context = Context::new(Some(keys), None);
         let pos = Point::new(5, 5);
         let moving = Moving {
             pos,
@@ -2957,10 +2937,7 @@ mod tests {
         let mut keys = MockKeySender::new();
         keys.expect_send_down().never();
         keys.expect_send().never();
-        let context = Context {
-            keys: Box::new(keys),
-            ..Default::default()
-        };
+        let context = Context::new(Some(keys), None);
         state.is_stationary = false;
         update_falling_context(&context, &mut state, pos, moving, Point::default());
     }
@@ -2972,10 +2949,7 @@ mod tests {
             .withf(|key| matches!(key, KeyKind::Down))
             .once()
             .returning(|_| Ok(()));
-        let context = Context {
-            keys: Box::new(keys),
-            ..Default::default()
-        };
+        let context = Context::new(Some(keys), None);
         let pos = Point::new(5, 5);
         let anchor = Point::new(6, 6);
         let dest = Point::new(2, 2);
@@ -3015,7 +2989,7 @@ mod tests {
     #[test]
     fn use_key_ensure_use_with() {
         let mut state = PlayerState::default();
-        let context = Context::default();
+        let context = Context::new(None, None);
         let use_key = UseKey {
             key: KeyBinding::A,
             link_key: None,
@@ -3030,14 +3004,7 @@ mod tests {
 
         // ensuring use with start
         let mut player = Player::UseKey(use_key);
-        player = update_non_positional_context(
-            player,
-            &context,
-            &MockDetector::new(),
-            &mut state,
-            false,
-        )
-        .unwrap();
+        player = update_non_positional_context(player, &context, &mut state, false).unwrap();
         assert_matches!(
             player,
             Player::UseKey(UseKey {
@@ -3048,14 +3015,7 @@ mod tests {
 
         // ensuring use with complete
         state.is_stationary = true;
-        player = update_non_positional_context(
-            player,
-            &context,
-            &MockDetector::new(),
-            &mut state,
-            false,
-        )
-        .unwrap();
+        player = update_non_positional_context(player, &context, &mut state, false).unwrap();
         assert_matches!(
             player,
             Player::UseKey(UseKey {
@@ -3075,10 +3035,7 @@ mod tests {
             .withf(|key| matches!(key, KeyKind::Left))
             .returning(|_| Ok(()));
         let mut state = PlayerState::default();
-        let context = Context {
-            keys: Box::new(keys),
-            ..Context::default()
-        };
+        let context = Context::new(Some(keys), None);
         let use_key = UseKey {
             key: KeyBinding::A,
             link_key: None,
@@ -3093,14 +3050,7 @@ mod tests {
 
         // changing direction
         let mut player = Player::UseKey(use_key);
-        player = update_non_positional_context(
-            player,
-            &context,
-            &MockDetector::new(),
-            &mut state,
-            false,
-        )
-        .unwrap();
+        player = update_non_positional_context(player, &context, &mut state, false).unwrap();
         assert_matches!(state.last_known_direction, ActionKeyDirection::Any);
         assert_matches!(
             player,
@@ -3111,14 +3061,7 @@ mod tests {
         );
 
         // changing direction start
-        player = update_non_positional_context(
-            player,
-            &context,
-            &MockDetector::new(),
-            &mut state,
-            false,
-        )
-        .unwrap();
+        player = update_non_positional_context(player, &context, &mut state, false).unwrap();
         assert_matches!(state.last_known_direction, ActionKeyDirection::Any);
         assert_matches!(
             player,
@@ -3137,14 +3080,7 @@ mod tests {
             }),
             ..use_key
         });
-        player = update_non_positional_context(
-            player,
-            &context,
-            &MockDetector::new(),
-            &mut state,
-            false,
-        )
-        .unwrap();
+        player = update_non_positional_context(player, &context, &mut state, false).unwrap();
         assert_matches!(state.last_known_direction, ActionKeyDirection::Left);
         assert_matches!(
             player,
@@ -3163,10 +3099,7 @@ mod tests {
             .withf(|key| matches!(key, KeyKind::A))
             .returning(|_| Ok(()));
         let mut state = PlayerState::default();
-        let context = Context {
-            keys: Box::new(keys),
-            ..Context::default()
-        };
+        let context = Context::new(Some(keys), None);
         let use_key = UseKey {
             key: KeyBinding::A,
             link_key: None,
@@ -3181,14 +3114,7 @@ mod tests {
 
         let mut player = Player::UseKey(use_key);
         for i in 0..100 {
-            player = update_non_positional_context(
-                player,
-                &context,
-                &MockDetector::new(),
-                &mut state,
-                false,
-            )
-            .unwrap();
+            player = update_non_positional_context(player, &context, &mut state, false).unwrap();
             assert_matches!(
                 player,
                 Player::UseKey(UseKey {
@@ -3196,14 +3122,7 @@ mod tests {
                     ..
                 })
             );
-            player = update_non_positional_context(
-                player,
-                &context,
-                &MockDetector::new(),
-                &mut state,
-                false,
-            )
-            .unwrap();
+            player = update_non_positional_context(player, &context, &mut state, false).unwrap();
             assert_matches!(
                 player,
                 Player::UseKey(UseKey {
@@ -3211,14 +3130,7 @@ mod tests {
                     ..
                 })
             );
-            player = update_non_positional_context(
-                player,
-                &context,
-                &MockDetector::new(),
-                &mut state,
-                false,
-            )
-            .unwrap();
+            player = update_non_positional_context(player, &context, &mut state, false).unwrap();
             if i == 99 {
                 assert_matches!(player, Player::Idle);
             } else {
@@ -3240,10 +3152,7 @@ mod tests {
             .withf(|key| matches!(key, KeyKind::A))
             .return_once(|_| Ok(()));
         let mut state = PlayerState::default();
-        let context = Context {
-            keys: Box::new(keys),
-            ..Context::default()
-        };
+        let context = Context::new(Some(keys), None);
         let use_key = UseKey {
             key: KeyBinding::A,
             link_key: None,
@@ -3275,7 +3184,6 @@ mod tests {
             update_non_positional_context(
                 state.stalling_timeout_state.take().unwrap(),
                 &context,
-                &MockDetector::new(),
                 &mut state,
                 false
             ),
@@ -3294,7 +3202,6 @@ mod tests {
             update_non_positional_context(
                 state.stalling_timeout_state.take().unwrap(),
                 &context,
-                &MockDetector::new(),
                 &mut state,
                 false
             ),

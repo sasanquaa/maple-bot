@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
+use dyn_clone::DynClone;
 use log::{debug, info};
 #[cfg(test)]
 use mockall::mock;
@@ -44,7 +45,7 @@ use platforms::windows::KeyKind;
 
 use crate::mat::OwnedMat;
 
-pub trait Detector: 'static + Send + Clone {
+pub trait Detector: 'static + Send + DynClone + Debug {
     fn mat(&self) -> &OwnedMat;
 
     /// Detects a list of mobs.
@@ -170,6 +171,10 @@ mock! {
         fn detect_player_extreme_gold_potion_buff(&self) -> bool;
         fn detect_rune_arrows(&self) -> Result<[KeyKind; 4]>;
         fn detect_erda_shower(&self) -> Result<Rect>;
+    }
+
+    impl Debug for Detector {
+        fn fmt<'a, 'b, 'c>(&'a self, f: &'b mut std::fmt::Formatter<'c> ) -> std::fmt::Result;
     }
 
     impl Clone for Detector {
