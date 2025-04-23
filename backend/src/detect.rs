@@ -56,7 +56,7 @@ pub trait Detector: 'static + Send + DynClone + Debug {
     /// Detects whether to press ESC for unstucking.
     fn detect_esc_settings(&self) -> bool;
 
-    /// Detects whether there is a elite boss bar.
+    /// Detects whether there is an elite boss bar.
     fn detect_elite_boss_bar(&self) -> bool;
 
     /// Detects the minimap.
@@ -79,6 +79,9 @@ pub trait Detector: 'static + Send + DynClone + Debug {
     ///
     /// Returns `Rect` relative to `minimap` coordinate.
     fn detect_player(&self, minimap: Rect) -> Result<Rect>;
+
+    /// Detects whether the player is dead.
+    fn detect_player_is_dead(&self) -> bool;
 
     /// Detects whether the player is in cash shop.
     fn detect_player_in_cash_shop(&self) -> bool;
@@ -115,6 +118,7 @@ mock! {
         fn detect_minimap_portals(&self, minimap: Rect) -> Result<Vec<Rect>>;
         fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect>;
         fn detect_player(&self, minimap: Rect) -> Result<Rect>;
+        fn detect_player_is_dead(&self) -> bool;
         fn detect_player_in_cash_shop(&self) -> bool;
         fn detect_player_health_bar(&self) -> Result<Rect>;
         fn detect_player_current_max_health_bars(&self, health_bar: Rect) -> Result<(Rect, Rect)>;
@@ -201,8 +205,12 @@ impl Detector for CachedDetector {
         detect_player(&minimap_grayscale)
     }
 
+    fn detect_player_is_dead(&self) -> bool {
+        detect_player_is_dead(&**self.grayscale)
+    }
+
     fn detect_player_in_cash_shop(&self) -> bool {
-        detect_cash_shop(&**self.grayscale)
+        detect_player_in_cash_shop(&**self.grayscale)
     }
 
     fn detect_player_health_bar(&self) -> Result<Rect> {
@@ -254,6 +262,301 @@ fn crop_to_buffs_region(mat: &impl MatTraitConst) -> BoxedRef<Mat> {
     mat.roi(crop_bbox).unwrap()
 }
 
+fn detect_mobs(
+    mat: &impl MatTraitConst,
+    minimap: Rect,
+    bound: Rect,
+    player: Point,
+) -> Result<Vec<Point>> {
+    static MOB_MODEL: LazyLock<Session> = LazyLock::new(|| {
+        Session::builder()
+            .and_then(|b| b.commit_from_memory(include_bytes!(env!("MOB_MODEL"))))
+            .expect("unable to build mob detection session")
+    });
+
+    /// This function approximates the delta (dx, dy) that the player needs to move
+    /// in relative to the minimap coordinate in order to reach the mob. And returns
+    /// the exact mob coordinate on the minimap.
+    ///
+    /// Note: It is not that accurate but that is that and this is this
+    #[inline]
+    fn to_minimap_coordinate(
+        bbox: Rect,
+        minimap: Rect,
+        bound: Rect,
+        player: Point,
+        size: Size,
+    ) -> Option<Point> {
+        // this is the linear transformation from screen coordinate
+        // to minimap coordinate that I cooked up using alchemy
+        // Is it correct? I don't know, tried others but only this sort of work
+        // [ A1 A2 ]
+        // [ B1 B2 ]
+        const A1: f32 = 0.065_789_476;
+        const A2: f32 = 0.120_621_44;
+        const A: Point2f = Point2f::new(A1, A2);
+        const B1: f32 = 0.0;
+        const B2: f32 = 0.072_635_14;
+        const B: Point2f = Point2f::new(B1, B2);
+
+        // the main idea is to calculate the offset of the detected mob
+        // from the middle of screen and use that distance as dx to move the player
+        // for dy, it is calculated as offset from the bottom of the screen
+        // minus some number
+        // point_x is relative to middle of the screen
+        let point_x = (bbox.x + bbox.width / 2) as f32;
+        let point_x = size.width as f32 / 2.0 - point_x;
+        let is_left = point_x > 0.0;
+        let point_x = Point2f::new(point_x.abs(), 0.0);
+
+        // point_y is relative to top of the screen
+        let point_y = (bbox.y + bbox.height) as f32;
+        let point_y = Point2f::new(0.0, size.height as f32 - point_y);
+
+        // transform to minimap coordinate
+        // 20.0 is a based random number
+        let point = Point2f::new(point_x.dot(A), point_y.dot(B) - 20.0)
+            .to::<i32>()
+            .unwrap();
+        let point = if is_left {
+            Point::new(player.x - point.x, player.y + point.y)
+        } else {
+            Point::new(player.x + point.x, player.y + point.y)
+        };
+        let point = Point::new(point.x, minimap.height - point.y);
+        if point.x < 0
+            || point.y < 0
+            || point.x < bound.x
+            || point.x > bound.x + bound.width
+            || point.y < bound.y
+            || point.y > bound.y + bound.height
+        {
+            None
+        } else {
+            debug!(target: "mob", "found mob {point:?} in bound {bound:?}");
+            Some(point)
+        }
+    }
+
+    let size = mat.size().unwrap();
+    let (mat_in, w_ratio, h_ratio) = preprocess_for_yolo(mat);
+    let result = MOB_MODEL.run([norm_rgb_to_input_value(&mat_in)]).unwrap();
+    let result = from_output_value(&result);
+    // SAFETY: 0..result.rows() is within Mat bounds
+    let points = (0..result.rows())
+        .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
+        .filter(|pred| pred[4] >= 0.5)
+        .map(|pred| remap_from_yolo(pred, size, w_ratio, h_ratio))
+        .filter_map(|bbox| to_minimap_coordinate(bbox, minimap, bound, player, size))
+        .collect::<Vec<_>>();
+    // let bboxes = (0..result.rows())
+    //     .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
+    //     .filter_map(|pred| if pred[4] > 0.5 { Some(pred) } else { None })
+    //     .map(|pred| remap_from_yolo(pred, size, w_ratio, h_ratio))
+    //     .collect::<Vec<_>>();
+    // let points = bboxes
+    //     .iter()
+    //     .copied()
+    //     .filter_map(|bbox| to_minimap_coordinate(bbox, minimap, bound, player, size))
+    //     .collect::<Vec<_>>();
+    // #[cfg(debug_assertions)]
+    // if !bboxes.is_empty() {
+    //     debug_mat(
+    //         "Test",
+    //         mat,
+    //         1,
+    //         &points
+    //             .clone()
+    //             .into_iter()
+    //             .map(|pt| minimap.tl() + Point::new(pt.x, pt.y))
+    //             .map(|pt| Rect::from_points(pt - Point::new(5, 5), pt))
+    //             .chain(bboxes)
+    //             .collect::<Vec<_>>(),
+    //         &vec![""; points.len() * 2],
+    //     );
+    // }
+    Ok(points)
+}
+
+fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
+    /// TODO: Support default ratio
+    static ESC_SETTINGS: LazyLock<[Mat; 7]> = LazyLock::new(|| {
+        [
+            imgcodecs::imdecode(
+                include_bytes!(env!("ESC_SETTING_TEMPLATE")),
+                IMREAD_GRAYSCALE,
+            )
+            .unwrap(),
+            imgcodecs::imdecode(include_bytes!(env!("ESC_MENU_TEMPLATE")), IMREAD_GRAYSCALE)
+                .unwrap(),
+            imgcodecs::imdecode(include_bytes!(env!("ESC_EVENT_TEMPLATE")), IMREAD_GRAYSCALE)
+                .unwrap(),
+            imgcodecs::imdecode(
+                include_bytes!(env!("ESC_COMMUNITY_TEMPLATE")),
+                IMREAD_GRAYSCALE,
+            )
+            .unwrap(),
+            imgcodecs::imdecode(
+                include_bytes!(env!("ESC_CHARACTER_TEMPLATE")),
+                IMREAD_GRAYSCALE,
+            )
+            .unwrap(),
+            imgcodecs::imdecode(include_bytes!(env!("ESC_OK_TEMPLATE")), IMREAD_GRAYSCALE).unwrap(),
+            imgcodecs::imdecode(
+                include_bytes!(env!("ESC_CANCEL_TEMPLATE")),
+                IMREAD_GRAYSCALE,
+            )
+            .unwrap(),
+        ]
+    });
+
+    for template in &*ESC_SETTINGS {
+        if detect_template(mat, template, Point::default(), 0.85, None).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {
+    /// TODO: Support default ratio
+    static ELITE_BOSS_BAR: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("ELITE_BOSS_BAR_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+
+    let size = mat.size().unwrap();
+    // crop to top part of the image for boss bar
+    let crop_y = size.height / 5;
+    let crop_bbox = Rect::new(0, 0, size.width, crop_y);
+    let boss_bar = mat.roi(crop_bbox).unwrap();
+    let template = &*ELITE_BOSS_BAR;
+    detect_template(&boss_bar, template, Point::default(), 0.9, None).is_ok()
+}
+
+fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect> {
+    static MINIMAP_MODEL: LazyLock<Session> = LazyLock::new(|| {
+        Session::builder()
+            .and_then(|b| b.commit_from_memory(include_bytes!(env!("MINIMAP_MODEL"))))
+            .expect("unable to build minimap detection session")
+    });
+    // expands out a few pixels to include the whole white border for thresholding
+    // after yolo detection
+    fn expand_bbox(bbox: &Rect) -> Rect {
+        let count = (bbox.width.max(bbox.height) as f32 * 0.008).ceil() as i32;
+        debug!(target: "minimap", "expand border by {count}");
+        let x = (bbox.x - count).max(0);
+        let y = (bbox.y - count).max(0);
+        let x_size = (bbox.x - x) * 2;
+        let y_size = (bbox.y - y) * 2;
+        Rect::new(x, y, bbox.width + x_size, bbox.height + y_size)
+    }
+
+    let size = mat.size().unwrap();
+    let (preprocessed, w_ratio, h_ratio) = preprocess_for_yolo(mat);
+    let result = MINIMAP_MODEL
+        .run([norm_rgb_to_input_value(&preprocessed)])
+        .unwrap();
+    let result = from_output_value(&result);
+    let pred = (0..result.rows())
+        // SAFETY: 0..result.rows() is within Mat bounds
+        .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
+        .max_by(|&a, &b| {
+            // a and b have shapes [bbox(4) + class(1)]
+            a[4].total_cmp(&b[4])
+        });
+    let bbox = pred.and_then(|pred| {
+        debug!(target: "minimap", "yolo detection: {pred:?}");
+        if pred[4] < 0.5 {
+            None
+        } else {
+            Some(remap_from_yolo(pred, size, w_ratio, h_ratio))
+        }
+    });
+    let minimap = bbox.map(|bbox| {
+        let bbox = expand_bbox(&bbox);
+        let mut minimap = to_grayscale(&mat.roi(bbox).unwrap(), false);
+        unsafe {
+            // SAFETY: threshold can be called in place.
+            minimap.modify_inplace(|mat, mat_mut| {
+                threshold(mat, mat_mut, 0.0, 255.0, THRESH_OTSU).unwrap()
+            });
+        }
+        minimap
+    });
+    // get only the outer contours
+    let contours = minimap.map(|mat| {
+        let mut vec = Vector::<Vector<Point>>::new();
+        find_contours_def(&mat, &mut vec, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE).unwrap();
+        vec
+    });
+    // pick the contour with maximum area
+    let contour = contours.and_then(|vec| {
+        debug!(target: "minimap", "contours detection: {vec:?}");
+        vec.into_iter()
+            .map(|contour| bounding_rect(&contour).unwrap())
+            .max_by(|a, b| a.area().cmp(&b.area()))
+    });
+    let contour = contour.and_then(|contour| {
+        let bbox = expand_bbox(&bbox.unwrap());
+        let contour = Rect::from_points(contour.tl() + bbox.tl(), contour.br() + bbox.tl());
+        debug!(
+            target: "minimap",
+            "yolo bbox and contour bbox areas: {:?} {:?}",
+            bbox.area(),
+            contour.area()
+        );
+        // the detected contour should be contained inside the detected yolo minimap when expanded
+        // <some value that i will probably change again the future> is a
+        // fixed value for ensuring the contour is tight to the minimap white border
+        if (bbox & contour) == contour && (bbox.area() - contour.area()) >= 1100 {
+            Some(contour)
+        } else {
+            None
+        }
+    });
+    // crop the white border
+    let crop = contour.and_then(|bound| {
+        // offset in by 10% to avoid the round border
+        // and use top border as basis
+        let range = (bound.width as f32 * 0.1) as i32;
+        let start = bound.x + range;
+        let end = bound.x + bound.width - range + 1;
+        let mut counts = HashMap::<i32, i32>::new();
+        for col in start..end {
+            let mut count = 0;
+            for row in bound.y..(bound.y + bound.height) {
+                if mat
+                    .at_2d::<Vec4b>(row, col)
+                    .unwrap()
+                    .iter()
+                    .all(|v| *v >= border_threshold)
+                {
+                    count += 1;
+                } else {
+                    break;
+                }
+            }
+            counts.entry(count).and_modify(|c| *c += 1).or_insert(1);
+        }
+        debug!(target: "minimap", "border pixel count {:?}", counts);
+        counts.into_iter().max_by(|a, b| a.1.cmp(&b.1)).map(|e| e.0)
+    });
+    crop.map(|count| {
+        let contour = contour.unwrap();
+        Rect::new(
+            contour.x + count,
+            contour.y + count,
+            contour.width - count * 2,
+            contour.height - count * 2,
+        )
+    })
+    .ok_or(anyhow!("minimap not found"))
+}
+
 fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Result<Vec<Rect>> {
     /// TODO: Support default ratio
     static PORTAL: LazyLock<Mat> = LazyLock::new(|| {
@@ -303,7 +606,53 @@ fn detect_minimap_rune(minimap: &impl ToInputArray) -> Result<Rect> {
     detect_template(minimap, &*RUNE, Point::default(), 0.6, None)
 }
 
-fn detect_cash_shop(mat: &impl ToInputArray) -> bool {
+fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
+    const PLAYER_IDEAL_RATIO_THRESHOLD: f64 = 0.8;
+    const PLAYER_DEFAULT_RATIO_THRESHOLD: f64 = 0.6;
+    static PLAYER_IDEAL_RATIO: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("PLAYER_IDEAL_RATIO_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static PLAYER_DEFAULT_RATIO: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("PLAYER_DEFAULT_RATIO_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static WAS_IDEAL_RATIO: AtomicBool = AtomicBool::new(false);
+
+    let was_ideal_ratio = WAS_IDEAL_RATIO.load(Ordering::Acquire);
+    let template = if was_ideal_ratio {
+        &*PLAYER_IDEAL_RATIO
+    } else {
+        &*PLAYER_DEFAULT_RATIO
+    };
+    let threshold = if was_ideal_ratio {
+        PLAYER_IDEAL_RATIO_THRESHOLD
+    } else {
+        PLAYER_DEFAULT_RATIO_THRESHOLD
+    };
+    let result = detect_template(mat, template, Point::default(), threshold, None);
+    if result.is_err() {
+        WAS_IDEAL_RATIO.store(!was_ideal_ratio, Ordering::Release);
+    }
+    result
+}
+
+fn detect_player_is_dead(mat: &impl ToInputArray) -> bool {
+    /// TODO: Support default ratio
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("TOMB_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
+
+    detect_template(mat, &*TEMPLATE, Point::default(), 0.8, None).is_ok()
+}
+
+fn detect_player_in_cash_shop(mat: &impl ToInputArray) -> bool {
     /// TODO: Support default ratio
     static CASH_SHOP: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("CASH_SHOP_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
@@ -567,273 +916,6 @@ fn detect_player_buff(mat: &impl ToInputArray, kind: BuffKind) -> bool {
     detect_template(mat, template, Point::default(), score, None).is_ok()
 }
 
-fn detect_erda_shower(mat: &impl MatTraitConst) -> Result<Rect> {
-    /// TODO: Support default ratio
-    static ERDA_SHOWER: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("ERDA_SHOWER_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-
-    let size = mat.size().unwrap();
-    // crop to bottom right of the image for skill bar
-    let crop_x = size.width / 2;
-    let crop_y = size.height / 5;
-    let crop_bbox = Rect::new(size.width - crop_x, size.height - crop_y, crop_x, crop_y);
-    let skill_bar = mat.roi(crop_bbox).unwrap();
-    detect_template(&skill_bar, &*ERDA_SHOWER, crop_bbox.tl(), 0.96, None)
-}
-
-fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
-    const PLAYER_IDEAL_RATIO_THRESHOLD: f64 = 0.8;
-    const PLAYER_DEFAULT_RATIO_THRESHOLD: f64 = 0.6;
-    static PLAYER_IDEAL_RATIO: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("PLAYER_IDEAL_RATIO_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-    static PLAYER_DEFAULT_RATIO: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("PLAYER_DEFAULT_RATIO_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-    static WAS_IDEAL_RATIO: AtomicBool = AtomicBool::new(false);
-
-    let was_ideal_ratio = WAS_IDEAL_RATIO.load(Ordering::Acquire);
-    let template = if was_ideal_ratio {
-        &*PLAYER_IDEAL_RATIO
-    } else {
-        &*PLAYER_DEFAULT_RATIO
-    };
-    let threshold = if was_ideal_ratio {
-        PLAYER_IDEAL_RATIO_THRESHOLD
-    } else {
-        PLAYER_DEFAULT_RATIO_THRESHOLD
-    };
-    let result = detect_template(mat, template, Point::default(), threshold, None);
-    if result.is_err() {
-        WAS_IDEAL_RATIO.store(!was_ideal_ratio, Ordering::Release);
-    }
-    result
-}
-
-fn detect_mobs(
-    mat: &impl MatTraitConst,
-    minimap: Rect,
-    bound: Rect,
-    player: Point,
-) -> Result<Vec<Point>> {
-    static MOB_MODEL: LazyLock<Session> = LazyLock::new(|| {
-        Session::builder()
-            .and_then(|b| b.commit_from_memory(include_bytes!(env!("MOB_MODEL"))))
-            .expect("unable to build mob detection session")
-    });
-
-    /// This function approximates the delta (dx, dy) that the player needs to move
-    /// in relative to the minimap coordinate in order to reach the mob. And returns
-    /// the exact mob coordinate on the minimap.
-    ///
-    /// Note: It is not that accurate but that is that and this is this
-    #[inline]
-    fn to_minimap_coordinate(
-        bbox: Rect,
-        minimap: Rect,
-        bound: Rect,
-        player: Point,
-        size: Size,
-    ) -> Option<Point> {
-        // this is the linear transformation from screen coordinate
-        // to minimap coordinate that I cooked up using alchemy
-        // Is it correct? I don't know, tried others but only this sort of work
-        // [ A1 A2 ]
-        // [ B1 B2 ]
-        const A1: f32 = 0.065_789_476;
-        const A2: f32 = 0.120_621_44;
-        const A: Point2f = Point2f::new(A1, A2);
-        const B1: f32 = 0.0;
-        const B2: f32 = 0.072_635_14;
-        const B: Point2f = Point2f::new(B1, B2);
-
-        // the main idea is to calculate the offset of the detected mob
-        // from the middle of screen and use that distance as dx to move the player
-        // for dy, it is calculated as offset from the bottom of the screen
-        // minus some number
-        // point_x is relative to middle of the screen
-        let point_x = (bbox.x + bbox.width / 2) as f32;
-        let point_x = size.width as f32 / 2.0 - point_x;
-        let is_left = point_x > 0.0;
-        let point_x = Point2f::new(point_x.abs(), 0.0);
-
-        // point_y is relative to top of the screen
-        let point_y = (bbox.y + bbox.height) as f32;
-        let point_y = Point2f::new(0.0, size.height as f32 - point_y);
-
-        // transform to minimap coordinate
-        // 20.0 is a based random number
-        let point = Point2f::new(point_x.dot(A), point_y.dot(B) - 20.0)
-            .to::<i32>()
-            .unwrap();
-        let point = if is_left {
-            Point::new(player.x - point.x, player.y + point.y)
-        } else {
-            Point::new(player.x + point.x, player.y + point.y)
-        };
-        let point = Point::new(point.x, minimap.height - point.y);
-        if point.x < 0
-            || point.y < 0
-            || point.x < bound.x
-            || point.x > bound.x + bound.width
-            || point.y < bound.y
-            || point.y > bound.y + bound.height
-        {
-            None
-        } else {
-            debug!(target: "mob", "found mob {point:?} in bound {bound:?}");
-            Some(point)
-        }
-    }
-
-    let size = mat.size().unwrap();
-    let (mat_in, w_ratio, h_ratio) = preprocess_for_yolo(mat);
-    let result = MOB_MODEL.run([norm_rgb_to_input_value(&mat_in)]).unwrap();
-    let result = from_output_value(&result);
-    // SAFETY: 0..result.rows() is within Mat bounds
-    let points = (0..result.rows())
-        .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
-        .filter(|pred| pred[4] >= 0.5)
-        .map(|pred| remap_from_yolo(pred, size, w_ratio, h_ratio))
-        .filter_map(|bbox| to_minimap_coordinate(bbox, minimap, bound, player, size))
-        .collect::<Vec<_>>();
-    // let bboxes = (0..result.rows())
-    //     .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
-    //     .filter_map(|pred| if pred[4] > 0.5 { Some(pred) } else { None })
-    //     .map(|pred| remap_from_yolo(pred, size, w_ratio, h_ratio))
-    //     .collect::<Vec<_>>();
-    // let points = bboxes
-    //     .iter()
-    //     .copied()
-    //     .filter_map(|bbox| to_minimap_coordinate(bbox, minimap, bound, player, size))
-    //     .collect::<Vec<_>>();
-    // #[cfg(debug_assertions)]
-    // if !bboxes.is_empty() {
-    //     debug_mat(
-    //         "Test",
-    //         mat,
-    //         1,
-    //         &points
-    //             .clone()
-    //             .into_iter()
-    //             .map(|pt| minimap.tl() + Point::new(pt.x, pt.y))
-    //             .map(|pt| Rect::from_points(pt - Point::new(5, 5), pt))
-    //             .chain(bboxes)
-    //             .collect::<Vec<_>>(),
-    //         &vec![""; points.len() * 2],
-    //     );
-    // }
-    Ok(points)
-}
-
-fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
-    /// TODO: Support default ratio
-    static ESC_SETTINGS: LazyLock<[Mat; 7]> = LazyLock::new(|| {
-        [
-            imgcodecs::imdecode(
-                include_bytes!(env!("ESC_SETTING_TEMPLATE")),
-                IMREAD_GRAYSCALE,
-            )
-            .unwrap(),
-            imgcodecs::imdecode(include_bytes!(env!("ESC_MENU_TEMPLATE")), IMREAD_GRAYSCALE)
-                .unwrap(),
-            imgcodecs::imdecode(include_bytes!(env!("ESC_EVENT_TEMPLATE")), IMREAD_GRAYSCALE)
-                .unwrap(),
-            imgcodecs::imdecode(
-                include_bytes!(env!("ESC_COMMUNITY_TEMPLATE")),
-                IMREAD_GRAYSCALE,
-            )
-            .unwrap(),
-            imgcodecs::imdecode(
-                include_bytes!(env!("ESC_CHARACTER_TEMPLATE")),
-                IMREAD_GRAYSCALE,
-            )
-            .unwrap(),
-            imgcodecs::imdecode(include_bytes!(env!("ESC_OK_TEMPLATE")), IMREAD_GRAYSCALE).unwrap(),
-            imgcodecs::imdecode(
-                include_bytes!(env!("ESC_CANCEL_TEMPLATE")),
-                IMREAD_GRAYSCALE,
-            )
-            .unwrap(),
-        ]
-    });
-
-    for template in &*ESC_SETTINGS {
-        if detect_template(mat, template, Point::default(), 0.85, None).is_ok() {
-            return true;
-        }
-    }
-    false
-}
-
-fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {
-    /// TODO: Support default ratio
-    static ELITE_BOSS_BAR: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("ELITE_BOSS_BAR_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-
-    let size = mat.size().unwrap();
-    // crop to top part of the image for boss bar
-    let crop_y = size.height / 5;
-    let crop_bbox = Rect::new(0, 0, size.width, crop_y);
-    let boss_bar = mat.roi(crop_bbox).unwrap();
-    let template = &*ELITE_BOSS_BAR;
-    detect_template(&boss_bar, template, Point::default(), 0.9, None).is_ok()
-}
-
-/// Detects the `template` from the given BGR image `Mat`.
-#[inline]
-fn detect_template<T: ToInputArray + MatTraitConst>(
-    mat: &impl ToInputArray,
-    template: &T,
-    offset: Point,
-    threshold: f64,
-    log: Option<&str>,
-) -> Result<Rect> {
-    let mut result = Mat::default();
-    let mut score = 0f64;
-    let mut loc = Point::default();
-
-    match_template(mat, template, &mut result, TM_CCOEFF_NORMED, &no_array()).unwrap();
-    min_max_loc(
-        &result,
-        None,
-        Some(&mut score),
-        None,
-        Some(&mut loc),
-        &no_array(),
-    )
-    .unwrap();
-
-    let tl = loc + offset;
-    let br = tl + Point::from_size(template.size().unwrap());
-    if let Some(target) = log {
-        debug!(target: target, "detected with score: {} / {}", score, threshold);
-    }
-    if score >= threshold {
-        Ok(Rect::from_points(tl, br))
-    } else {
-        Err(anyhow!("template not found").context(score))
-    }
-}
-
 fn detect_rune_arrows(mat: &impl MatTraitConst) -> Result<[KeyKind; 4]> {
     static RUNE_MODEL: LazyLock<Session> = LazyLock::new(|| {
         Session::builder()
@@ -884,124 +966,59 @@ fn detect_rune_arrows(mat: &impl MatTraitConst) -> Result<[KeyKind; 4]> {
     Ok([first, second, third, fourth])
 }
 
-fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect> {
-    static MINIMAP_MODEL: LazyLock<Session> = LazyLock::new(|| {
-        Session::builder()
-            .and_then(|b| b.commit_from_memory(include_bytes!(env!("MINIMAP_MODEL"))))
-            .expect("unable to build minimap detection session")
+fn detect_erda_shower(mat: &impl MatTraitConst) -> Result<Rect> {
+    /// TODO: Support default ratio
+    static ERDA_SHOWER: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("ERDA_SHOWER_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
     });
-    // expands out a few pixels to include the whole white border for thresholding
-    // after yolo detection
-    fn expand_bbox(bbox: &Rect) -> Rect {
-        let count = (bbox.width.max(bbox.height) as f32 * 0.008).ceil() as i32;
-        debug!(target: "minimap", "expand border by {count}");
-        let x = (bbox.x - count).max(0);
-        let y = (bbox.y - count).max(0);
-        let x_size = (bbox.x - x) * 2;
-        let y_size = (bbox.y - y) * 2;
-        Rect::new(x, y, bbox.width + x_size, bbox.height + y_size)
-    }
 
     let size = mat.size().unwrap();
-    let (preprocessed, w_ratio, h_ratio) = preprocess_for_yolo(mat);
-    let result = MINIMAP_MODEL
-        .run([norm_rgb_to_input_value(&preprocessed)])
-        .unwrap();
-    let result = from_output_value(&result);
-    let pred = (0..result.rows())
-        // SAFETY: 0..result.rows() is within Mat bounds
-        .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
-        .max_by(|&a, &b| {
-            // a and b have shapes [bbox(4) + class(1)]
-            a[4].total_cmp(&b[4])
-        });
-    let bbox = pred.and_then(|pred| {
-        debug!(target: "minimap", "yolo detection: {pred:?}");
-        if pred[4] < 0.5 {
-            None
-        } else {
-            Some(remap_from_yolo(pred, size, w_ratio, h_ratio))
-        }
-    });
-    let minimap = bbox.map(|bbox| {
-        let bbox = expand_bbox(&bbox);
-        let mut minimap = to_grayscale(&mat.roi(bbox).unwrap(), false);
-        unsafe {
-            // SAFETY: threshold can be called in place.
-            minimap.modify_inplace(|mat, mat_mut| {
-                threshold(mat, mat_mut, 0.0, 255.0, THRESH_OTSU).unwrap()
-            });
-        }
-        minimap
-    });
-    // get only the outer contours
-    let contours = minimap.map(|mat| {
-        let mut vec = Vector::<Vector<Point>>::new();
-        find_contours_def(&mat, &mut vec, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE).unwrap();
-        vec
-    });
-    // pick the contour with maximum area
-    let contour = contours.and_then(|vec| {
-        debug!(target: "minimap", "contours detection: {vec:?}");
-        vec.into_iter()
-            .map(|contour| bounding_rect(&contour).unwrap())
-            .max_by(|a, b| a.area().cmp(&b.area()))
-    });
-    let contour = contour.and_then(|contour| {
-        let bbox = expand_bbox(&bbox.unwrap());
-        let contour = Rect::from_points(contour.tl() + bbox.tl(), contour.br() + bbox.tl());
-        debug!(
-            target: "minimap",
-            "yolo bbox and contour bbox areas: {:?} {:?}",
-            bbox.area(),
-            contour.area()
-        );
-        // the detected contour should be contained inside the detected yolo minimap when expanded
-        // <some value that i will probably change again the future> is a
-        // fixed value for ensuring the contour is tight to the minimap white border
-        if (bbox & contour) == contour && (bbox.area() - contour.area()) >= 1100 {
-            Some(contour)
-        } else {
-            None
-        }
-    });
-    // crop the white border
-    let crop = contour.and_then(|bound| {
-        // offset in by 10% to avoid the round border
-        // and use top border as basis
-        let range = (bound.width as f32 * 0.1) as i32;
-        let start = bound.x + range;
-        let end = bound.x + bound.width - range + 1;
-        let mut counts = HashMap::<i32, i32>::new();
-        for col in start..end {
-            let mut count = 0;
-            for row in bound.y..(bound.y + bound.height) {
-                if mat
-                    .at_2d::<Vec4b>(row, col)
-                    .unwrap()
-                    .iter()
-                    .all(|v| *v >= border_threshold)
-                {
-                    count += 1;
-                } else {
-                    break;
-                }
-            }
-            counts.entry(count).and_modify(|c| *c += 1).or_insert(1);
-        }
-        debug!(target: "minimap", "border pixel count {:?}", counts);
-        counts.into_iter().max_by(|a, b| a.1.cmp(&b.1)).map(|e| e.0)
-    });
-    crop.map(|count| {
-        let contour = contour.unwrap();
-        Rect::new(
-            contour.x + count,
-            contour.y + count,
-            contour.width - count * 2,
-            contour.height - count * 2,
-        )
-    })
-    .ok_or(anyhow!("minimap not found"))
+    // crop to bottom right of the image for skill bar
+    let crop_x = size.width / 2;
+    let crop_y = size.height / 5;
+    let crop_bbox = Rect::new(size.width - crop_x, size.height - crop_y, crop_x, crop_y);
+    let skill_bar = mat.roi(crop_bbox).unwrap();
+    detect_template(&skill_bar, &*ERDA_SHOWER, crop_bbox.tl(), 0.96, None)
+}
+
+/// Detects the `template` from the given BGR image `Mat`.
+#[inline]
+fn detect_template<T: ToInputArray + MatTraitConst>(
+    mat: &impl ToInputArray,
+    template: &T,
+    offset: Point,
+    threshold: f64,
+    log: Option<&str>,
+) -> Result<Rect> {
+    let mut result = Mat::default();
+    let mut score = 0f64;
+    let mut loc = Point::default();
+
+    match_template(mat, template, &mut result, TM_CCOEFF_NORMED, &no_array()).unwrap();
+    min_max_loc(
+        &result,
+        None,
+        Some(&mut score),
+        None,
+        Some(&mut loc),
+        &no_array(),
+    )
+    .unwrap();
+
+    let tl = loc + offset;
+    let br = tl + Point::from_size(template.size().unwrap());
+    if let Some(target) = log {
+        debug!(target: target, "detected with score: {} / {}", score, threshold);
+    }
+    if score >= threshold {
+        Ok(Rect::from_points(tl, br))
+    } else {
+        Err(anyhow!("template not found").context(score))
+    }
 }
 
 /// Extracts texts from the non-preprocessed `Mat` and detected text bounding boxes.

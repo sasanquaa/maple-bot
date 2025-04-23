@@ -63,6 +63,7 @@ pub struct Notifications {
     pub discord_user_id: String,
     pub notify_on_fail_or_change_map: bool,
     pub notify_on_rune_appear: bool,
+    pub notify_on_player_die: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

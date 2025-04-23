@@ -30,6 +30,7 @@ static FALSE: bool = false;
 pub enum NotificationKind {
     FailOrMapChanged,
     RuneAppear,
+    PlayerIsDead,
 }
 
 impl From<NotificationKind> for usize {
@@ -97,6 +98,7 @@ impl DiscordNotification {
                 settings.notifications.notify_on_fail_or_change_map
             }
             NotificationKind::RuneAppear => settings.notifications.notify_on_rune_appear,
+            NotificationKind::PlayerIsDead => settings.notifications.notify_on_player_die,
         };
         if !is_enabled {
             bail!("notification not enabled");
@@ -135,6 +137,9 @@ impl DiscordNotification {
             NotificationKind::RuneAppear => {
                 format!("{user_id}Bot has detected a rune on map")
             }
+            NotificationKind::PlayerIsDead => {
+                format!("{user_id}The player is dead")
+            }
         };
         let body = DiscordWebhookBody {
             content,
@@ -142,8 +147,12 @@ impl DiscordNotification {
             attachments: vec![],
         };
         let frames = match kind {
-            NotificationKind::FailOrMapChanged => vec![(None, 3), (None, 6)],
-            NotificationKind::RuneAppear => vec![(None, 3)],
+            NotificationKind::FailOrMapChanged => vec![(None, 2), (None, 4)],
+            NotificationKind::PlayerIsDead | NotificationKind::RuneAppear => vec![(None, 2)],
+        };
+        let delay = match kind {
+            NotificationKind::FailOrMapChanged => 5,
+            NotificationKind::PlayerIsDead | NotificationKind::RuneAppear => 3,
         };
 
         let mut scheduled = self.scheduled.lock().unwrap();
@@ -160,7 +169,7 @@ impl DiscordNotification {
         let pending = self.pending.clone();
         let scheduled = self.scheduled.clone();
         spawn(async move {
-            sleep(Duration::from_secs(5)).await;
+            sleep(Duration::from_secs(delay)).await;
 
             let notification = scheduled
                 .lock()

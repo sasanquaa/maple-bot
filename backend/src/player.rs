@@ -14,6 +14,7 @@ use crate::{
     context::{Context, Contextual, ControlFlow},
     database::{ActionKeyDirection, ActionKeyWith, KeyBinding, LinkKeyBinding},
     minimap::Minimap,
+    network::NotificationKind,
     pathing::{PlatformWithNeighbors, find_points_with},
     player_actions::{PlayerAction, PlayerActionAutoMob, PlayerActionKey, PlayerActionMove},
     task::{Task, Update, update_detection_task},
@@ -141,6 +142,10 @@ pub struct PlayerState {
     is_stationary_timeout: Timeout,
     /// Whether the player is stationary
     is_stationary: bool,
+    /// Whether the player is dead
+    pub is_dead: bool,
+    /// The task for detecting if player is dead
+    is_dead_task: Option<Task<Result<bool>>>,
     /// Approximates the player direction for using key
     last_known_direction: ActionKeyDirection,
     /// Tracks last destination points for displaying to UI
@@ -2689,12 +2694,29 @@ fn update_health_state(context: &Context, state: &mut PlayerState) {
     }
 }
 
+#[inline]
+fn update_is_dead_state(context: &Context, state: &mut PlayerState) {
+    let Update::Ok(is_dead) =
+        update_detection_task(context, 5000, &mut state.is_dead_task, |detector| {
+            Ok(detector.detect_player_is_dead())
+        })
+    else {
+        return;
+    };
+    if is_dead && !state.is_dead {
+        let _ = context
+            .notification
+            .schedule_notification(NotificationKind::PlayerIsDead);
+    }
+    state.is_dead = is_dead;
+}
+
 /// Updates the [`PlayerState`]
 ///
 /// This function:
 /// - Returns the player current position or `None` when the minimap or player cannot be detected
 /// - Updates the stationary check via `state.is_stationary_timeout`
-/// - Delegates to `update_health_state` and `update_rune_validating_state`
+/// - Delegates to `update_health_state`, `update_rune_validating_state` and `update_is_dead_state`
 /// - Resets `state.unstuck_counter` and `state.unstuck_consecutive_counter` when position changed
 #[inline]
 fn update_state(context: &Context, state: &mut PlayerState) -> Option<Point> {
@@ -2718,6 +2740,7 @@ fn update_state(context: &Context, state: &mut PlayerState) -> Option<Point> {
         state.unstuck_consecutive_counter = 0;
         state.is_stationary_timeout = Timeout::default();
     }
+
     let (is_stationary, is_stationary_timeout) = update_with_timeout(
         state.is_stationary_timeout,
         MOVE_TIMEOUT,
@@ -2728,8 +2751,10 @@ fn update_state(context: &Context, state: &mut PlayerState) -> Option<Point> {
     state.is_stationary = is_stationary;
     state.is_stationary_timeout = is_stationary_timeout;
     state.last_known_pos = Some(pos);
+
     update_health_state(context, state);
     update_rune_validating_state(context, state);
+    update_is_dead_state(context, state);
     Some(pos)
 }
 
