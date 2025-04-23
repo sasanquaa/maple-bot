@@ -47,6 +47,7 @@ pub enum Buff {
 }
 
 #[derive(Clone, Copy, Debug, EnumIter)]
+#[cfg_attr(test, derive(PartialEq))]
 #[repr(usize)]
 pub enum BuffKind {
     /// NOTE: Upon failing to solving rune, there is a cooldown
@@ -102,25 +103,7 @@ fn update_context(contextual: Buff, context: &Context, state: &mut BuffState) ->
     let kind = state.kind;
     let Update::Ok(has_buff) =
         update_detection_task(context, 5000, &mut state.task, move |detector| {
-            Ok(match kind {
-                BuffKind::Rune => detector.detect_player_rune_buff(),
-                BuffKind::SayramElixir => detector.detect_player_sayram_elixir_buff(),
-                BuffKind::AureliaElixir => detector.detect_player_aurelia_elixir_buff(),
-                BuffKind::ExpCouponX3 => detector.detect_player_exp_coupon_x3_buff(),
-                BuffKind::BonusExpCoupon => detector.detect_player_bonus_exp_coupon_buff(),
-                BuffKind::LegionWealth => detector.detect_player_legion_wealth_buff(),
-                BuffKind::LegionLuck => detector.detect_player_legion_luck_buff(),
-                BuffKind::WealthAcquisitionPotion => {
-                    detector.detect_player_wealth_acquisition_potion_buff()
-                }
-                BuffKind::ExpAccumulationPotion => {
-                    detector.detect_player_exp_accumulation_potion_buff()
-                }
-                BuffKind::ExtremeRedPotion => detector.detect_player_extreme_red_potion_buff(),
-                BuffKind::ExtremeBluePotion => detector.detect_player_extreme_blue_potion_buff(),
-                BuffKind::ExtremeGreenPotion => detector.detect_player_extreme_green_potion_buff(),
-                BuffKind::ExtremeGoldPotion => detector.detect_player_extreme_gold_potion_buff(),
-            })
+            Ok(detector.detect_player_buff(kind))
         })
     else {
         return contextual;
@@ -147,8 +130,9 @@ fn update_context(contextual: Buff, context: &Context, state: &mut BuffState) ->
 mod tests {
     use std::{assert_matches::assert_matches, time::Duration};
 
+    use mockall::predicate::eq;
     use strum::IntoEnumIterator;
-    use tokio::time;
+    use tokio::time::advance;
 
     use super::*;
     use crate::detect::MockDetector;
@@ -156,83 +140,20 @@ mod tests {
     fn detector_with_kind(kind: BuffKind, result: bool) -> MockDetector {
         let mut detector = MockDetector::new();
         detector
+            .expect_detect_player_buff()
+            .with(eq(kind))
+            .return_const(result);
+        detector
             .expect_clone()
             .returning(move || detector_with_kind(kind, result));
-        match kind {
-            BuffKind::Rune => {
-                detector
-                    .expect_detect_player_rune_buff()
-                    .return_const(result);
-            }
-            BuffKind::SayramElixir => {
-                detector
-                    .expect_detect_player_sayram_elixir_buff()
-                    .return_const(result);
-            }
-            BuffKind::AureliaElixir => {
-                detector
-                    .expect_detect_player_aurelia_elixir_buff()
-                    .return_const(result);
-            }
-            BuffKind::ExpCouponX3 => {
-                detector
-                    .expect_detect_player_exp_coupon_x3_buff()
-                    .return_const(result);
-            }
-            BuffKind::BonusExpCoupon => {
-                detector
-                    .expect_detect_player_bonus_exp_coupon_buff()
-                    .return_const(result);
-            }
-            BuffKind::LegionWealth => {
-                detector
-                    .expect_detect_player_legion_wealth_buff()
-                    .return_const(result);
-            }
-            BuffKind::LegionLuck => {
-                detector
-                    .expect_detect_player_legion_luck_buff()
-                    .return_const(result);
-            }
-            BuffKind::WealthAcquisitionPotion => {
-                detector
-                    .expect_detect_player_wealth_acquisition_potion_buff()
-                    .return_const(result);
-            }
-            BuffKind::ExpAccumulationPotion => {
-                detector
-                    .expect_detect_player_exp_accumulation_potion_buff()
-                    .return_const(result);
-            }
-            BuffKind::ExtremeRedPotion => {
-                detector
-                    .expect_detect_player_extreme_red_potion_buff()
-                    .return_const(result);
-            }
-            BuffKind::ExtremeBluePotion => {
-                detector
-                    .expect_detect_player_extreme_blue_potion_buff()
-                    .return_const(result);
-            }
-            BuffKind::ExtremeGreenPotion => {
-                detector
-                    .expect_detect_player_extreme_green_potion_buff()
-                    .return_const(result);
-            }
-            BuffKind::ExtremeGoldPotion => {
-                detector
-                    .expect_detect_player_extreme_gold_potion_buff()
-                    .return_const(result);
-            }
-        }
         detector
     }
 
     async fn advance_task(contextual: Buff, context: &Context, state: &mut BuffState) -> Buff {
         let mut buff = update_context(contextual, context, state);
         while !state.task.as_ref().unwrap().completed() {
-            buff = update_context(buff, &context, state);
-            time::advance(Duration::from_millis(1000)).await;
+            buff = update_context(buff, context, state);
+            advance(Duration::from_millis(1000)).await;
         }
         buff
     }
