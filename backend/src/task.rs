@@ -8,6 +8,8 @@ use tokio::{
     time::sleep,
 };
 
+use crate::{context::Context, detect::Detector};
+
 /// An asynchronous task.
 ///
 /// The task is a wrapper around `tokio::task::spawn` mainly for using
@@ -58,14 +60,16 @@ pub enum Update<T> {
 }
 
 #[inline]
-pub fn update_task_repeatable<F, T>(
-    repeat_millis: u64,
+pub fn update_task<F, T, A>(
+    repeat_delay_millis: u64,
     task: &mut Option<Task<Result<T>>>,
+    task_fn_args: impl FnOnce() -> A,
     task_fn: F,
 ) -> Update<T>
 where
-    F: FnOnce() -> Result<T> + Send + 'static,
+    F: FnOnce(A) -> Result<T> + Send + 'static,
     T: fmt::Debug + Send + 'static,
+    A: Send + 'static,
 {
     let update = match task.as_mut().and_then(|task| task.poll_inner()) {
         Some(Ok(value)) => Update::Ok(value),
@@ -74,15 +78,35 @@ where
     };
     if matches!(update, Update::Pending) && task.as_ref().is_none_or(|task| task.completed) {
         let has_delay = task.as_ref().is_some_and(|task| task.completed);
+        let args = task_fn_args();
         let spawned = Task::spawn(async move {
             if has_delay {
-                sleep(Duration::from_millis(repeat_millis)).await;
+                sleep(Duration::from_millis(repeat_delay_millis)).await;
             }
-            spawn_blocking(task_fn).await.unwrap()
+            spawn_blocking(move || task_fn(args)).await.unwrap()
         });
         *task = Some(spawned);
     }
     update
+}
+
+#[inline]
+pub fn update_detection_task<F, T>(
+    context: &Context,
+    repeat_delay_millis: u64,
+    task: &mut Option<Task<Result<T>>>,
+    task_fn: F,
+) -> Update<T>
+where
+    F: FnOnce(Box<dyn Detector>) -> Result<T> + Send + 'static,
+    T: fmt::Debug + Send + 'static,
+{
+    update_task(
+        repeat_delay_millis,
+        task,
+        || context.detector_cloned_unwrap(),
+        task_fn,
+    )
 }
 
 #[cfg(test)]
@@ -92,7 +116,7 @@ mod tests {
     use anyhow::Result;
     use tokio::task::yield_now;
 
-    use crate::task::{Task, Update, update_task_repeatable};
+    use crate::task::{Task, Update, update_task};
 
     #[tokio::test(start_paused = true)]
     async fn spawn_state() {
@@ -115,13 +139,13 @@ mod tests {
         assert!(task.is_none());
 
         assert_matches!(
-            update_task_repeatable(1000, &mut task, || Ok(0)),
+            update_task(1000, &mut task, || (), |_| Ok(0)),
             Update::Pending
         );
         assert!(task.is_some());
 
         while !task.as_ref().unwrap().completed() {
-            match update_task_repeatable(1000, &mut task, || Ok(0)) {
+            match update_task(1000, &mut task, || (), |_| Ok(0)) {
                 Update::Ok(value) => assert!(value == 0),
                 Update::Pending => yield_now().await,
                 Update::Err(_) => unreachable!(),
@@ -131,7 +155,7 @@ mod tests {
         assert!(task.as_ref().unwrap().completed());
 
         assert_matches!(
-            update_task_repeatable(1000, &mut task, || Ok(0)),
+            update_task(1000, &mut task, || (), |_| Ok(0)),
             Update::Pending
         );
         assert!(!task.as_ref().unwrap().completed());

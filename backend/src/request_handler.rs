@@ -10,7 +10,6 @@ use crate::{
     buff::BuffKind,
     context::{Context, KeySenderKind},
     database::InputMethod,
-    mat::OwnedMat,
     minimap::{Minimap, MinimapState},
     player::PlayerState,
     poll_request,
@@ -25,7 +24,6 @@ pub struct DefaultRequestHandler<'a> {
     pub buffs: &'a mut Vec<(BuffKind, KeyBinding)>,
     pub actions: &'a mut Vec<Action>,
     pub rotator: &'a mut Rotator,
-    pub mat: Option<&'a OwnedMat>,
     pub player: &'a mut PlayerState,
     pub minimap: &'a mut MinimapState,
     pub key_sender: &'a broadcast::Sender<KeyBinding>,
@@ -199,7 +197,11 @@ impl RequestHandler for DefaultRequestHandler<'_> {
 
     #[inline]
     fn on_minimap_frame(&self) -> Option<(Vec<u8>, usize, usize)> {
-        self.mat.and_then(|mat| extract_minimap(self.context, mat))
+        self.context
+            .detector
+            .as_ref()
+            .map(|detector| detector.mat())
+            .and_then(|mat| extract_minimap(self.context, mat))
     }
 
     fn on_minimap_platforms_bound(&self) -> Option<Bound> {

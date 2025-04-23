@@ -6,13 +6,12 @@ use crate::{
     array::Array,
     context::{Context, Contextual, ControlFlow},
     database::Minimap as MinimapData,
-    detect::Detector,
     network::NotificationKind,
     pathing::{
         MAX_PLATFORMS_COUNT, Platform, PlatformWithNeighbors, find_neighbors, find_platforms_bound,
     },
     player::{DOUBLE_JUMP_THRESHOLD, GRAPPLING_MAX_THRESHOLD, JUMP_THRESHOLD, Player},
-    task::{Task, Update, update_task_repeatable},
+    task::{Task, Update, update_detection_task},
 };
 
 const MINIMAP_BORDER_WHITENESS_THRESHOLD: u8 = 170;
@@ -85,35 +84,24 @@ pub enum Minimap {
 impl Contextual for Minimap {
     type Persistent = MinimapState;
 
-    fn update(
-        self,
-        context: &Context,
-        detector: &impl Detector,
-        state: &mut MinimapState,
-    ) -> ControlFlow<Self> {
-        ControlFlow::Next(update_context(self, context, detector, state))
+    fn update(self, context: &Context, state: &mut MinimapState) -> ControlFlow<Self> {
+        ControlFlow::Next(update_context(self, context, state))
     }
 }
 
 #[inline]
-fn update_context(
-    contextual: Minimap,
-    context: &Context,
-    detector: &impl Detector,
-    state: &mut MinimapState,
-) -> Minimap {
+fn update_context(contextual: Minimap, context: &Context, state: &mut MinimapState) -> Minimap {
     match contextual {
-        Minimap::Detecting => update_detecting_context(detector, state),
+        Minimap::Detecting => update_detecting_context(context, state),
         Minimap::Idle(idle) => {
-            update_idle_context(context, detector, state, idle).unwrap_or(Minimap::Detecting)
+            update_idle_context(context, state, idle).unwrap_or(Minimap::Detecting)
         }
     }
 }
 
-fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) -> Minimap {
-    let detector = detector.clone();
+fn update_detecting_context(context: &Context, state: &mut MinimapState) -> Minimap {
     let Update::Ok((anchors, bbox)) =
-        update_task_repeatable(2000, &mut state.data_task, move || {
+        update_detection_task(context, 2000, &mut state.data_task, move |detector| {
             let bbox = detector.detect_minimap(MINIMAP_BORDER_WHITENESS_THRESHOLD)?;
             let size = bbox.width.min(bbox.height) as usize;
             let tl = anchor_at(detector.mat(), bbox.tl(), size, 1)?;
@@ -149,7 +137,6 @@ fn update_detecting_context(detector: &impl Detector, state: &mut MinimapState) 
 
 fn update_idle_context(
     context: &Context,
-    detector: &impl Detector,
     state: &mut MinimapState,
     idle: MinimapIdle,
 ) -> Option<Minimap> {
@@ -166,8 +153,8 @@ fn update_idle_context(
         mut platforms_bound,
         ..
     } = idle;
-    let tl_pixel = pixel_at(detector.mat(), anchors.tl.0)?;
-    let br_pixel = pixel_at(detector.mat(), anchors.br.0)?;
+    let tl_pixel = pixel_at(context.detector_unwrap().mat(), anchors.tl.0)?;
+    let br_pixel = pixel_at(context.detector_unwrap().mat(), anchors.br.0)?;
     let tl_match = tl_pixel == anchors.tl.1;
     let br_match = br_pixel == anchors.br.1;
     if !tl_match && !br_match {
@@ -180,10 +167,10 @@ fn update_idle_context(
         return None;
     }
     let partially_overlapping = (tl_match && !br_match) || (!tl_match && br_match);
-    let rune = update_rune_task(context, &mut state.rune_task, detector, bbox, rune);
+    let rune = update_rune_task(context, &mut state.rune_task, bbox, rune);
     let has_elite_boss =
-        update_elite_boss_task(&mut state.has_elite_boss_task, detector, has_elite_boss);
-    let portals = update_portals_task(&mut state.portals_task, detector, portals, bbox);
+        update_elite_boss_task(context, &mut state.has_elite_boss_task, has_elite_boss);
+    let portals = update_portals_task(context, &mut state.portals_task, portals, bbox);
     // TODO: any better way to read persistent state in other contextual?
     if state.update_platforms {
         let (updated_platforms, updated_bound) =
@@ -208,16 +195,14 @@ fn update_idle_context(
 fn update_rune_task(
     context: &Context,
     task: &mut Option<Task<Result<Point>>>,
-    detector: &impl Detector,
     minimap: Rect,
     rune: Option<Point>,
 ) -> Option<Point> {
     let was_none = rune.is_none();
-    let detector = detector.clone();
     let update = if matches!(context.player, Player::SolvingRune(_)) && rune.is_some() {
         Update::Pending
     } else {
-        update_task_repeatable(10000, task, move || {
+        update_detection_task(context, 10000, task, move |detector| {
             detector
                 .detect_minimap_rune(minimap)
                 .map(|rune| center_of_bbox(rune, minimap))
@@ -238,12 +223,13 @@ fn update_rune_task(
 
 #[inline]
 fn update_elite_boss_task(
+    context: &Context,
     task: &mut Option<Task<Result<bool>>>,
-    detector: &impl Detector,
     has_elite_boss: bool,
 ) -> bool {
-    let detector = detector.clone();
-    let update = update_task_repeatable(10000, task, move || Ok(detector.detect_elite_boss_bar()));
+    let update = update_detection_task(context, 10000, task, move |detector| {
+        Ok(detector.detect_elite_boss_bar())
+    });
     match update {
         Update::Ok(has_elite_boss) => has_elite_boss,
         Update::Pending => has_elite_boss,
@@ -253,14 +239,14 @@ fn update_elite_boss_task(
 
 #[inline]
 fn update_portals_task(
+    context: &Context,
     task: &mut Option<Task<Result<Vec<Rect>>>>,
-    detector: &impl Detector,
     portals: Array<Rect, 16>,
     minimap: Rect,
 ) -> Array<Rect, 16> {
-    let detector = detector.clone();
-    let update =
-        update_task_repeatable(5000, task, move || detector.detect_minimap_portals(minimap));
+    let update = update_detection_task(context, 5000, task, move |detector| {
+        detector.detect_minimap_portals(minimap)
+    });
     match update {
         Update::Ok(vec) if portals.len() < vec.len() => {
             Array::from_iter(vec.into_iter().map(|portal| {
@@ -385,10 +371,10 @@ mod tests {
 
     async fn advance_task(
         contextual: Minimap,
-        detector: &impl Detector,
+        detector: MockDetector,
         state: &mut MinimapState,
     ) -> Minimap {
-        let context = Context::default();
+        let context = Context::new(None, Some(detector));
         let completed = |state: &MinimapState| {
             if matches!(contextual, Minimap::Idle(_)) {
                 state.rune_task.as_ref().unwrap().completed()
@@ -396,9 +382,9 @@ mod tests {
                 state.data_task.as_ref().unwrap().completed()
             }
         };
-        let mut minimap = update_context(contextual, &context, detector, state);
+        let mut minimap = update_context(contextual, &context, state);
         while !completed(state) {
-            minimap = update_context(minimap, &context, detector, state);
+            minimap = update_context(minimap, &context, state);
             time::advance(Duration::from_millis(1000)).await;
         }
         minimap
@@ -409,7 +395,7 @@ mod tests {
         let mut state = MinimapState::default();
         let (detector, bbox, anchors, _) = create_mock_detector();
 
-        let minimap = advance_task(Minimap::Detecting, &detector, &mut state).await;
+        let minimap = advance_task(Minimap::Detecting, detector, &mut state).await;
         assert_matches!(minimap, Minimap::Idle(_));
         match minimap {
             Minimap::Idle(idle) => {
@@ -440,7 +426,7 @@ mod tests {
             platforms_bound: None,
         };
 
-        let minimap = advance_task(Minimap::Idle(idle), &detector, &mut state).await;
+        let minimap = advance_task(Minimap::Idle(idle), detector, &mut state).await;
         assert_matches!(minimap, Minimap::Idle(_));
         match minimap {
             Minimap::Idle(idle) => {

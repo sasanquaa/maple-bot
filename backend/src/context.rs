@@ -12,6 +12,7 @@ use std::{
 };
 
 use anyhow::{Error, anyhow};
+use dyn_clone::clone_box;
 use log::info;
 #[cfg(test)]
 use mockall::automock;
@@ -26,8 +27,6 @@ use platforms::windows::{
 use strum::IntoEnumIterator;
 use tokio::sync::broadcast;
 
-#[cfg(test)]
-use crate::Settings;
 use crate::{
     Action, RequestHandler,
     buff::{Buff, BuffKind, BuffState},
@@ -43,6 +42,8 @@ use crate::{
     rpc::KeysService,
     skill::{Skill, SkillKind, SkillState},
 };
+#[cfg(test)]
+use crate::{Settings, detect::MockDetector};
 
 const FPS: u32 = 30;
 pub const MS_PER_TICK: u64 = 1000 / FPS as u64;
@@ -67,12 +68,7 @@ pub trait Contextual {
     /// Updating is performed on each tick and the behavior whether to continue
     /// updating in the same tick or next is decided by `ControlFlow`. The state
     /// can transition or stay the same.
-    fn update(
-        self,
-        context: &Context,
-        detector: &impl Detector,
-        persistent: &mut Self::Persistent,
-    ) -> ControlFlow<Self>
+    fn update(self, context: &Context, persistent: &mut Self::Persistent) -> ControlFlow<Self>
     where
         Self: Sized;
 }
@@ -199,9 +195,10 @@ impl KeySender for DefaultKeySender {
 #[derive(Debug)]
 pub struct Context {
     /// The `MapleStory` class game handle
-    pub handle: Handle, // FIXME: This shoulnd't be pub, it is pub for tests
+    pub handle: Handle,
     pub keys: Box<dyn KeySender>,
     pub notification: DiscordNotification,
+    pub detector: Option<Box<dyn Detector>>,
     pub minimap: Minimap,
     pub player: Player,
     pub skills: [Skill; SkillKind::COUNT],
@@ -209,19 +206,33 @@ pub struct Context {
     pub halting: bool,
 }
 
-#[cfg(test)]
-impl Default for Context {
-    fn default() -> Self {
-        Self {
+impl Context {
+    #[cfg(test)]
+    pub fn new(keys: Option<MockKeySender>, detector: Option<MockDetector>) -> Self {
+        Context {
             handle: Handle::new(""),
-            keys: Box::new(MockKeySender::new()),
+            keys: Box::new(keys.unwrap_or_default()),
             notification: DiscordNotification::new(Rc::new(RefCell::new(Settings::default()))),
+            detector: detector.map(|detector| Box::new(detector) as Box<dyn Detector>),
             minimap: Minimap::Detecting,
             player: Player::Detecting,
             skills: [Skill::Detecting; SkillKind::COUNT],
             buffs: [Buff::NoBuff; BuffKind::COUNT],
             halting: false,
         }
+    }
+
+    #[inline]
+    pub fn detector_unwrap(&self) -> &dyn Detector {
+        self.detector
+            .as_ref()
+            .expect("detector is not available because no frame has ever been captured")
+            .as_ref()
+    }
+
+    #[inline]
+    pub fn detector_cloned_unwrap(&self) -> Box<dyn Detector> {
+        clone_box(self.detector_unwrap())
     }
 }
 
@@ -309,6 +320,7 @@ fn update_loop() {
         handle,
         keys: Box::new(keys),
         notification: DiscordNotification::new(settings.clone()),
+        detector: None,
         minimap: Minimap::Detecting,
         player: Player::Idle,
         skills: [Skill::Detecting],
@@ -337,21 +349,22 @@ fn update_loop() {
         let was_minimap_idle = matches!(context.minimap, Minimap::Idle(_));
         let detector = mat.map(CachedDetector::new);
 
-        if let Some(ref detector) = detector {
-            context.minimap = fold_context(&context, detector, context.minimap, &mut minimap_state);
-            context.player = fold_context(&context, detector, context.player, &mut player_state);
+        if let Some(detector) = detector {
+            context.detector = Some(Box::new(detector));
+            context.minimap = fold_context(&context, context.minimap, &mut minimap_state);
+            context.player = fold_context(&context, context.player, &mut player_state);
             for (i, state) in skill_states
                 .iter_mut()
                 .enumerate()
                 .take(context.skills.len())
             {
-                context.skills[i] = fold_context(&context, detector, context.skills[i], state);
+                context.skills[i] = fold_context(&context, context.skills[i], state);
             }
             for (i, state) in buff_states.iter_mut().enumerate().take(context.buffs.len()) {
-                context.buffs[i] = fold_context(&context, detector, context.buffs[i], state);
+                context.buffs[i] = fold_context(&context, context.buffs[i], state);
             }
             // Rotating action must always be done last
-            rotator.rotate_action(&context, detector, &mut player_state);
+            rotator.rotate_action(&context, &mut player_state);
         }
 
         // Poll requests, keys and update scheduled notifications frames
@@ -364,7 +377,6 @@ fn update_loop() {
             buffs: &mut buffs,
             actions: &mut actions,
             rotator: &mut rotator,
-            mat: detector.as_ref().map(|detector| detector.mat()),
             player: &mut player_state,
             minimap: &mut minimap_state,
             key_sender: &key_sender,
@@ -374,10 +386,15 @@ fn update_loop() {
         };
         handler.poll_request();
         handler.poll_key();
-        handler
-            .context
-            .notification
-            .update_scheduled_frames(|| to_png(handler.mat));
+        handler.context.notification.update_scheduled_frames(|| {
+            to_png(
+                handler
+                    .context
+                    .detector
+                    .as_ref()
+                    .map(|detector| detector.mat()),
+            )
+        });
         // Upon accidental or white roomed causing map to change,
         // abort actions and send notification
         if handler.minimap.data().is_some()
@@ -399,18 +416,17 @@ fn update_loop() {
 #[inline]
 fn fold_context<C>(
     context: &Context,
-    detector: &impl Detector,
     contextual: C,
     persistent: &mut <C as Contextual>::Persistent,
 ) -> C
 where
     C: Contextual,
 {
-    let mut control_flow = contextual.update(context, detector, persistent);
+    let mut control_flow = contextual.update(context, persistent);
     loop {
         match control_flow {
             ControlFlow::Immediate(contextual) => {
-                control_flow = contextual.update(context, detector, persistent);
+                control_flow = contextual.update(context, persistent);
             }
             ControlFlow::Next(contextual) => return contextual,
         }
