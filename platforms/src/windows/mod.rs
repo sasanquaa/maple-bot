@@ -6,9 +6,8 @@ use std::{
     thread,
 };
 
-use windows::Win32::UI::{
-    HiDpi::{PROCESS_PER_MONITOR_DPI_AWARE, SetProcessDpiAwareness},
-    WindowsAndMessaging::{DispatchMessageW, GetMessageW, MSG, TranslateMessage},
+use windows::Win32::UI::WindowsAndMessaging::{
+    DispatchMessageW, GetMessageW, MSG, TranslateMessage,
 };
 
 mod bitblt;
@@ -35,10 +34,6 @@ pub fn init() {
         .is_ok()
     {
         let barrier = Arc::new(Barrier::new(2));
-        // I really don't get it
-        unsafe {
-            SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE).unwrap();
-        }
         let keys_barrier = barrier.clone();
         thread::spawn(move || {
             let _hook = keys::init();

@@ -1,3 +1,4 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![feature(variant_count)]
 #![feature(map_try_insert)]
 
