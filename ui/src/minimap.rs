@@ -344,7 +344,7 @@ pub fn Minimap(
                 p {
                     {
                         detected_minimap_size()
-                            .map(|(width, height)| { format!("Detected: {}px x {}px", width, height) })
+                            .map(|(width, height)| { format!("Detected: {width}px x {height}px") })
                             .unwrap_or("Detected: Width, Height".to_string())
                     }
                 }
@@ -361,7 +361,7 @@ pub fn Minimap(
                         {
                             state()
                                 .and_then(|state| state.position)
-                                .map(|(x, y)| { format!("Position: {}, {}", x, y) })
+                                .map(|(x, y)| { format!("Position: {x}, {y}") })
                                 .unwrap_or("Position: X, Y".to_string())
                         }
                     }
@@ -377,7 +377,7 @@ pub fn Minimap(
                             state()
                                 .and_then(|state| state.health)
                                 .map(|(current_health, max_health)| {
-                                    format!("Health: {} / {}", current_health, max_health)
+                                    format!("Health: {current_health} / {max_health}")
                                 })
                                 .unwrap_or("Health: Unknown".to_string())
                         }

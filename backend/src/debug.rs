@@ -227,7 +227,7 @@ fn to_yolo_format(label: u32, size: Size, bbox: Rect) -> String {
     let y_center = y_center as f32 / size.height as f32;
     let width = bbox.width as f32 / size.width as f32;
     let height = bbox.height as f32 / size.height as f32;
-    format!("{} {} {} {} {}", label, x_center, y_center, width, height)
+    format!("{label} {x_center} {y_center} {width} {height}")
 }
 
 fn to_grayscale(mat: &impl MatTraitConst) -> Mat {

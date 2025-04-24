@@ -1036,37 +1036,37 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
                 ..
             }) => Some((Player::UseKey(UseKey::from_action(action)), false)),
             PlayerAction::SolveRune => {
-                if let Minimap::Idle(idle) = context.minimap {
-                    if let Some(rune) = idle.rune {
-                        if state.config.rune_platforms_pathing {
-                            if !state.is_stationary {
-                                return Some((Player::Idle, false));
-                            }
-                            let intermediates = find_points(
-                                &idle.platforms,
-                                cur_pos,
-                                rune,
-                                true,
-                                state.config.rune_platforms_pathing_up_jump_only,
-                            );
-                            if let Some(mut intermediates) = intermediates {
-                                state.last_destinations = Some(
-                                    intermediates
-                                        .inner
-                                        .into_iter()
-                                        .map(|(point, _)| point)
-                                        .collect(),
-                                );
-                                let (point, exact) = intermediates.next().unwrap();
-                                return Some((
-                                    Player::Moving(point, exact, Some(intermediates)),
-                                    false,
-                                ));
-                            }
+                if let Minimap::Idle(idle) = context.minimap
+                    && let Some(rune) = idle.rune
+                {
+                    if state.config.rune_platforms_pathing {
+                        if !state.is_stationary {
+                            return Some((Player::Idle, false));
                         }
-                        state.last_destinations = Some(vec![rune]);
-                        return Some((Player::Moving(rune, true, None), false));
+                        let intermediates = find_points(
+                            &idle.platforms,
+                            cur_pos,
+                            rune,
+                            true,
+                            state.config.rune_platforms_pathing_up_jump_only,
+                        );
+                        if let Some(mut intermediates) = intermediates {
+                            state.last_destinations = Some(
+                                intermediates
+                                    .inner
+                                    .into_iter()
+                                    .map(|(point, _)| point)
+                                    .collect(),
+                            );
+                            let (point, exact) = intermediates.next().unwrap();
+                            return Some((
+                                Player::Moving(point, exact, Some(intermediates)),
+                                false,
+                            ));
+                        }
                     }
+                    state.last_destinations = Some(vec![rune]);
+                    return Some((Player::Moving(rune, true, None), false));
                 }
                 Some((Player::Idle, true))
             }
@@ -1544,16 +1544,16 @@ fn update_moving_context(
                 dest, cur_pos
             );
             state.last_movement = None;
-            if let Some(mut intermediates) = intermediates {
-                if let Some((dest, exact)) = intermediates.next() {
-                    state.unstuck_counter = 0;
-                    if state.has_priority_action() {
-                        state.last_movement_priority_map.clear();
-                    } else {
-                        state.last_movement_normal_map.clear();
-                    }
-                    return Player::Moving(dest, exact, Some(intermediates));
+            if let Some(mut intermediates) = intermediates
+                && let Some((dest, exact)) = intermediates.next()
+            {
+                state.unstuck_counter = 0;
+                if state.has_priority_action() {
+                    state.last_movement_priority_map.clear();
+                } else {
+                    state.last_movement_normal_map.clear();
                 }
+                return Player::Moving(dest, exact, Some(intermediates));
             }
             state.last_destinations = None;
             let last_known_direction = state.last_known_direction;
@@ -2468,28 +2468,28 @@ fn on_action_state_mut(
     on_action_context: impl FnOnce(&mut PlayerState, PlayerAction) -> Option<(Player, bool)>,
     on_default_context: impl FnOnce() -> Player,
 ) -> Player {
-    if let Some(action) = state.priority_action.or(state.normal_action) {
-        if let Some((next, is_terminal)) = on_action_context(state, action) {
-            debug_assert!(state.has_normal_action() || state.has_priority_action());
-            if is_terminal {
-                match action {
-                    PlayerAction::AutoMob(_)
-                    | PlayerAction::SolveRune
-                    | PlayerAction::Move(_)
-                    | PlayerAction::Key(PlayerActionKey {
-                        position: Some(Position { .. }),
-                        ..
-                    }) => {
-                        state.unstuck_counter = 0;
-                        state.unstuck_consecutive_counter = 0;
-                    }
-                    PlayerAction::Key(PlayerActionKey { position: None, .. }) => (),
+    if let Some(action) = state.priority_action.or(state.normal_action)
+        && let Some((next, is_terminal)) = on_action_context(state, action)
+    {
+        debug_assert!(state.has_normal_action() || state.has_priority_action());
+        if is_terminal {
+            match action {
+                PlayerAction::AutoMob(_)
+                | PlayerAction::SolveRune
+                | PlayerAction::Move(_)
+                | PlayerAction::Key(PlayerActionKey {
+                    position: Some(Position { .. }),
+                    ..
+                }) => {
+                    state.unstuck_counter = 0;
+                    state.unstuck_consecutive_counter = 0;
                 }
-                // FIXME: clear only when has position?
-                state.clear_action_and_movement();
+                PlayerAction::Key(PlayerActionKey { position: None, .. }) => (),
             }
-            return next;
+            // FIXME: clear only when has position?
+            state.clear_action_and_movement();
         }
+        return next;
     }
     on_default_context()
 }

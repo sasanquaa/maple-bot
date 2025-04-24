@@ -793,7 +793,7 @@ where
     T: DeserializeOwned + Identifiable + Default,
 {
     let conn = CONNECTION.lock().unwrap();
-    let stmt = format!("SELECT id, data FROM {}", table);
+    let stmt = format!("SELECT id, data FROM {table}");
     let stmt = conn.prepare(&stmt).unwrap();
     map_data(stmt, [])
 }
@@ -805,8 +805,7 @@ where
     let json = serde_json::to_string(&data).unwrap();
     let conn = CONNECTION.lock().unwrap();
     let stmt = format!(
-        "INSERT INTO {} (id, data) VALUES (?1, ?2) ON CONFLICT (id) DO UPDATE SET data = ?2;",
-        table
+        "INSERT INTO {table} (id, data) VALUES (?1, ?2) ON CONFLICT (id) DO UPDATE SET data = ?2;",
     );
     match data.id() {
         Some(id) => {
@@ -825,7 +824,7 @@ fn delete_from_table<T: Identifiable>(table: &str, data: &T) -> Result<()> {
     fn inner(table: &str, id: Option<i64>) -> Result<()> {
         if id.is_some() {
             let conn = CONNECTION.lock().unwrap();
-            let stmt = format!("DELETE FROM {} WHERE id = ?1;", table);
+            let stmt = format!("DELETE FROM {table} WHERE id = ?1;");
             conn.execute(&stmt, [id.unwrap()])?;
         }
         Ok(())
