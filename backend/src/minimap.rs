@@ -231,7 +231,14 @@ fn update_elite_boss_task(
         Ok(detector.detect_elite_boss_bar())
     });
     match update {
-        Update::Ok(has_elite_boss) => has_elite_boss,
+        Update::Ok(current_has_elite_boss) => {
+            if !has_elite_boss && current_has_elite_boss && !context.halting {
+                let _ = context
+                    .notification
+                    .schedule_notification(NotificationKind::EliteBossAppear);
+            }
+            current_has_elite_boss
+        }
         Update::Pending => has_elite_boss,
         Update::Err(_) => unreachable!(),
     }

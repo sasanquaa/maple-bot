@@ -9,7 +9,9 @@ fn main() {
     let esc_character = dir.join("esc_character_ideal_ratio.png");
     let esc_ok = dir.join("esc_ok_ideal_ratio.png");
     let esc_cancel = dir.join("esc_ok_ideal_ratio.png");
-    let elite_boss_bar = dir.join("elite_boss_bar_ideal_ratio.png");
+    let tomb = dir.join("tomb_ideal_ratio.png");
+    let elite_boss_bar_1 = dir.join("elite_boss_bar_1_ideal_ratio.png");
+    let elite_boss_bar_2 = dir.join("elite_boss_bar_2_ideal_ratio.png");
     let player_ideal_ratio = dir.join("player_ideal_ratio.png");
     let player_default_ratio = dir.join("player_default_ratio.png");
     let erda_shower = dir.join("erda_shower_ideal_ratio.png");
@@ -23,6 +25,7 @@ fn main() {
     let legion_wealth_buff = dir.join("legion_wealth_buff_ideal_ratio.png");
     let legion_luck_buff = dir.join("legion_luck_buff_ideal_ratio.png");
     let wealth_acquisition_potion_buff = dir.join("wealth_acquisition_potion_ideal_ratio.png");
+    let wealth_exp_potion_mask = dir.join("wealth_exp_potion_mask_ideal_ratio.png");
     let exp_accumulation_potion_buff = dir.join("exp_accumulation_potion_ideal_ratio.png");
     let extreme_red_potion_buff = dir.join("extreme_red_potion_ideal_ratio.png");
     let extreme_blue_potion_buff = dir.join("extreme_blue_potion_ideal_ratio.png");
@@ -72,9 +75,14 @@ fn main() {
         "cargo:rustc-env=ESC_CANCEL_TEMPLATE={}",
         esc_cancel.to_str().unwrap()
     );
+    println!("cargo:rustc-env=TOMB_TEMPLATE={}", tomb.to_str().unwrap());
     println!(
-        "cargo:rustc-env=ELITE_BOSS_BAR_TEMPLATE={}",
-        elite_boss_bar.to_str().unwrap()
+        "cargo:rustc-env=ELITE_BOSS_BAR_1_TEMPLATE={}",
+        elite_boss_bar_1.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=ELITE_BOSS_BAR_2_TEMPLATE={}",
+        elite_boss_bar_2.to_str().unwrap()
     );
     println!(
         "cargo:rustc-env=PLAYER_DEFAULT_RATIO_TEMPLATE={}",
@@ -124,6 +132,10 @@ fn main() {
     println!(
         "cargo:rustc-env=WEALTH_ACQUISITION_POTION_BUFF_TEMPLATE={}",
         wealth_acquisition_potion_buff.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=WEALTH_EXP_POTION_MASK_TEMPLATE={}",
+        wealth_exp_potion_mask.to_str().unwrap()
     );
     println!(
         "cargo:rustc-env=EXP_ACCUMULATION_POTION_BUFF_TEMPLATE={}",

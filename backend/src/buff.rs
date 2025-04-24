@@ -7,12 +7,15 @@ use anyhow::Result;
 use strum::EnumIter;
 
 use crate::{
+    Configuration, Settings,
     context::{Context, Contextual, ControlFlow},
     player::Player,
     task::{Task, Update, update_detection_task},
 };
 
-const BUFF_FAIL_MAX_COUNT: u32 = 5;
+const BUFF_FAIL_NORMAL_MAX_COUNT: u32 = 5;
+// TODO: Test to see if this is reasonable
+const BUFF_FAIL_HIGH_MAX_COUNT: u32 = 7; // Meant for WAP / EAP
 
 #[derive(Debug)]
 pub struct BuffState {
@@ -20,9 +23,13 @@ pub struct BuffState {
     kind: BuffKind,
     /// Task for detecting buff
     task: Option<Task<Result<bool>>>,
-    /// The count `Buff::HasBuff` has failed to detect
+    /// The count [`Buff::HasBuff`] has failed to detect
     fail_count: u32,
+    /// The maximum number of time [`Buff::HasBuff`] can fail before transitioning
+    /// to [`Buff:NoBuff`]
     max_fail_count: u32,
+    /// Whether a buff is enabled
+    enabled: bool,
 }
 
 impl BuffState {
@@ -31,11 +38,46 @@ impl BuffState {
             kind,
             task: None,
             fail_count: 0,
-            max_fail_count: if matches!(kind, BuffKind::Rune) {
-                1
-            } else {
-                BUFF_FAIL_MAX_COUNT
+            max_fail_count: match kind {
+                BuffKind::Rune => 1,
+                BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => {
+                    BUFF_FAIL_HIGH_MAX_COUNT
+                }
+                BuffKind::SayramElixir
+                | BuffKind::AureliaElixir
+                | BuffKind::ExpCouponX3
+                | BuffKind::BonusExpCoupon
+                | BuffKind::LegionWealth
+                | BuffKind::LegionLuck
+                | BuffKind::ExtremeRedPotion
+                | BuffKind::ExtremeBluePotion
+                | BuffKind::ExtremeGreenPotion
+                | BuffKind::ExtremeGoldPotion => BUFF_FAIL_NORMAL_MAX_COUNT,
             },
+            enabled: true,
+        }
+    }
+
+    /// Update the enabled state of buff to only detect if enabled
+    pub fn update_enabled_state(&mut self, config: &Configuration, settings: &Settings) {
+        self.enabled = match self.kind {
+            BuffKind::Rune => settings.enable_rune_solving,
+            BuffKind::SayramElixir => config.sayram_elixir_key.enabled,
+            BuffKind::AureliaElixir => config.aurelia_elixir_key.enabled,
+            BuffKind::ExpCouponX3 => config.exp_x3_key.enabled,
+            BuffKind::BonusExpCoupon => config.bonus_exp_key.enabled,
+            BuffKind::LegionWealth => config.legion_wealth_key.enabled,
+            BuffKind::LegionLuck => config.legion_luck_key.enabled,
+            BuffKind::WealthAcquisitionPotion => config.wealth_acquisition_potion_key.enabled,
+            BuffKind::ExpAccumulationPotion => config.exp_accumulation_potion_key.enabled,
+            BuffKind::ExtremeRedPotion => config.extreme_red_potion_key.enabled,
+            BuffKind::ExtremeBluePotion => config.extreme_blue_potion_key.enabled,
+            BuffKind::ExtremeGreenPotion => config.extreme_green_potion_key.enabled,
+            BuffKind::ExtremeGoldPotion => config.extreme_gold_potion_key.enabled,
+        };
+        if !self.enabled {
+            self.fail_count = 0;
+            self.task = None;
         }
     }
 }
@@ -89,6 +131,9 @@ impl Contextual for Buff {
     type Persistent = BuffState;
 
     fn update(self, context: &Context, state: &mut BuffState) -> ControlFlow<Self> {
+        if !state.enabled {
+            return ControlFlow::Next(Buff::NoBuff);
+        }
         let next = if matches!(context.player, Player::CashShopThenExit(_, _)) {
             self
         } else {
@@ -178,7 +223,7 @@ mod tests {
             let detector = detector_with_kind(kind, false);
             let context = Context::new(None, Some(detector));
             let mut state = BuffState::new(kind);
-            state.max_fail_count = BUFF_FAIL_MAX_COUNT;
+            state.max_fail_count = BUFF_FAIL_NORMAL_MAX_COUNT;
             state.fail_count = state.max_fail_count - 1;
 
             let buff = advance_task(Buff::HasBuff, &context, &mut state).await;

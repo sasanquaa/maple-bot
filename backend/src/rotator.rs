@@ -389,10 +389,10 @@ impl Rotator {
                 }
             }
             RotatorAction::Linked(linked) => {
-                if action.queue_to_front {
-                    if let Some(id) = player.take_priority_action() {
-                        self.priority_actions_queue.push_front(id);
-                    }
+                if action.queue_to_front
+                    && let Some(id) = player.take_priority_action()
+                {
+                    self.priority_actions_queue.push_front(id);
                 }
                 self.priority_queuing_linked_action = Some((id, Box::new(linked)));
                 self.rotate_queuing_linked_action(player, true);

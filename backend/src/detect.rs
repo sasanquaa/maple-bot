@@ -17,10 +17,10 @@ use mockall::mock;
 use opencv::{
     boxed_ref::BoxedRef,
     core::{
-        CMP_EQ, CMP_GT, CV_8U, CV_32FC3, CV_32S, Mat, MatExprTraitConst, MatTrait, MatTraitConst,
-        MatTraitConstManual, ModifyInplace, Point, Point2f, Range, Rect, Scalar, Size,
-        ToInputArray, Vec4b, Vector, add, add_weighted_def, bitwise_and_def, compare, divide2_def,
-        find_non_zero, min_max_loc, no_array, subtract_def, transpose_nd,
+        CMP_EQ, CMP_GT, CV_8U, CV_32FC1, CV_32FC3, CV_32S, Mat, MatExprTraitConst, MatTrait,
+        MatTraitConst, MatTraitConstManual, ModifyInplace, Point, Point2f, Range, Rect, Scalar,
+        Size, ToInputArray, Vec4b, Vector, add, add_weighted_def, bitwise_and_def, compare,
+        divide2_def, find_non_zero, min_max_loc, no_array, subtract_def, transpose_nd,
     },
     dnn::{
         ModelTrait, TextRecognitionModel, TextRecognitionModelTrait,
@@ -56,7 +56,7 @@ pub trait Detector: 'static + Send + DynClone + Debug {
     /// Detects whether to press ESC for unstucking.
     fn detect_esc_settings(&self) -> bool;
 
-    /// Detects whether there is a elite boss bar.
+    /// Detects whether there is an elite boss bar.
     fn detect_elite_boss_bar(&self) -> bool;
 
     /// Detects the minimap.
@@ -79,6 +79,9 @@ pub trait Detector: 'static + Send + DynClone + Debug {
     ///
     /// Returns `Rect` relative to `minimap` coordinate.
     fn detect_player(&self, minimap: Rect) -> Result<Rect>;
+
+    /// Detects whether the player is dead.
+    fn detect_player_is_dead(&self) -> bool;
 
     /// Detects whether the player is in cash shop.
     fn detect_player_in_cash_shop(&self) -> bool;
@@ -115,6 +118,7 @@ mock! {
         fn detect_minimap_portals(&self, minimap: Rect) -> Result<Vec<Rect>>;
         fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect>;
         fn detect_player(&self, minimap: Rect) -> Result<Rect>;
+        fn detect_player_is_dead(&self) -> bool;
         fn detect_player_in_cash_shop(&self) -> bool;
         fn detect_player_health_bar(&self) -> Result<Rect>;
         fn detect_player_current_max_health_bars(&self, health_bar: Rect) -> Result<(Rect, Rect)>;
@@ -139,6 +143,8 @@ type MatFn = Box<dyn FnOnce() -> Mat + Send>;
 ///
 /// It is useful when there are multiple detections in a single tick that
 /// rely on grayscale (e.g. buffs).
+///
+/// TODO: Is it really useful?
 #[derive(Clone, Debug)]
 pub struct CachedDetector {
     mat: Arc<OwnedMat>,
@@ -201,8 +207,12 @@ impl Detector for CachedDetector {
         detect_player(&minimap_grayscale)
     }
 
+    fn detect_player_is_dead(&self) -> bool {
+        detect_player_is_dead(&**self.grayscale)
+    }
+
     fn detect_player_in_cash_shop(&self) -> bool {
-        detect_cash_shop(&**self.grayscale)
+        detect_player_in_cash_shop(&**self.grayscale)
     }
 
     fn detect_player_health_bar(&self) -> Result<Rect> {
@@ -252,375 +262,6 @@ fn crop_to_buffs_region(mat: &impl MatTraitConst) -> BoxedRef<Mat> {
     let crop_y = size.height / 4;
     let crop_bbox = Rect::new(size.width - crop_x, 0, crop_x, crop_y);
     mat.roi(crop_bbox).unwrap()
-}
-
-fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Result<Vec<Rect>> {
-    /// TODO: Support default ratio
-    static PORTAL: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(include_bytes!(env!("PORTAL_TEMPLATE")), IMREAD_COLOR).unwrap()
-    });
-
-    let template = &*PORTAL;
-    let mut result = Mat::default();
-    let mut points = Vector::<Point>::new();
-    match_template(
-        &minimap,
-        template,
-        &mut result,
-        TM_CCOEFF_NORMED,
-        &no_array(),
-    )
-    .unwrap();
-    // SAFETY: threshold can be called inplace
-    unsafe {
-        result.modify_inplace(|mat, mat_mut| {
-            threshold(mat, mat_mut, 0.8, 1.0, THRESH_BINARY).unwrap();
-        });
-    }
-    find_non_zero(&result, &mut points).unwrap();
-    let portals = points
-        .into_iter()
-        .map(|point| {
-            let size = 5;
-            let x = (point.x - size).max(0);
-            let xd = point.x - x;
-            let y = (point.y - size).max(0);
-            let yd = point.y - y;
-            let width = template.cols() + xd * 2 + (size - xd);
-            let height = template.rows() + yd * 2 + (size - yd);
-            Rect::new(x, y, width, height)
-        })
-        .collect::<Vec<_>>();
-    Ok(portals)
-}
-
-fn detect_minimap_rune(minimap: &impl ToInputArray) -> Result<Rect> {
-    /// TODO: Support default ratio
-    static RUNE: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(include_bytes!(env!("RUNE_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
-    });
-
-    detect_template(minimap, &*RUNE, Point::default(), 0.6, None)
-}
-
-fn detect_cash_shop(mat: &impl ToInputArray) -> bool {
-    /// TODO: Support default ratio
-    static CASH_SHOP: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(include_bytes!(env!("CASH_SHOP_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
-    });
-
-    detect_template(mat, &*CASH_SHOP, Point::default(), 0.7, Some("cash shop")).is_ok()
-}
-
-fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
-    /// TODO: Support default ratio
-    static HP_START: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(include_bytes!(env!("HP_START_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
-    });
-    static HP_END: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(include_bytes!(env!("HP_END_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
-    });
-
-    let hp_start = detect_template(mat, &*HP_START, Point::default(), 0.8, None)?;
-    let hp_start_to_edge_x = hp_start.x + hp_start.width;
-    let hp_end = detect_template(mat, &*HP_END, Point::default(), 0.8, None)?;
-    Ok(Rect::new(
-        hp_start_to_edge_x,
-        hp_start.y,
-        hp_end.x - hp_start_to_edge_x,
-        hp_start.height,
-    ))
-}
-
-fn detect_player_health_bars(
-    mat: &impl MatTraitConst,
-    grayscale: &impl MatTraitConst,
-    hp_bar: Rect,
-) -> Result<(Rect, Rect)> {
-    /// TODO: Support default ratio
-    static HP_SEPARATOR_1: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("HP_SEPARATOR_1_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-    static HP_SEPARATOR_2: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("HP_SEPARATOR_2_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-    static HP_SHIELD: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(include_bytes!(env!("HP_SHIELD_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
-    });
-    static HP_SEPARATOR_TYPE_1: AtomicBool = AtomicBool::new(true);
-
-    let hp_separator_type_1 = HP_SEPARATOR_TYPE_1.load(Ordering::Relaxed);
-    let hp_separator_template = if hp_separator_type_1 {
-        &*HP_SEPARATOR_1
-    } else {
-        &*HP_SEPARATOR_2
-    };
-    let hp_separator = detect_template(
-        &grayscale.roi(hp_bar).unwrap(),
-        hp_separator_template,
-        hp_bar.tl(),
-        0.7,
-        None,
-    )
-    .inspect_err(|_| {
-        HP_SEPARATOR_TYPE_1.store(!hp_separator_type_1, Ordering::Release);
-    })?;
-    let hp_shield = detect_template(
-        &grayscale.roi(hp_bar).unwrap(),
-        &*HP_SHIELD,
-        hp_bar.tl(),
-        0.8,
-        None,
-    )
-    .ok();
-    let left = mat
-        .roi(Rect::new(
-            hp_bar.x,
-            hp_bar.y,
-            hp_separator.x - hp_bar.x,
-            hp_bar.height,
-        ))
-        .unwrap();
-    let (left_in, left_w_ratio, left_h_ratio) = preprocess_for_text_bboxes(&left);
-    let left_bbox = extract_text_bboxes(&left_in, left_w_ratio, left_h_ratio, hp_bar.x, hp_bar.y)
-        .into_iter()
-        .min_by_key(|bbox| ((bbox.x + bbox.width) - hp_separator.x).abs())
-        .ok_or(anyhow!("failed to detect current health bar"))?;
-    let left_bbox_x = hp_shield
-        .map(|bbox| bbox.x + bbox.width)
-        .unwrap_or(left_bbox.x); // When there is shield, skips past it
-    let left_bbox = Rect::new(
-        left_bbox_x,
-        left_bbox.y - 1, // Add some space so the bound is not too tight
-        hp_separator.x - left_bbox_x + 1, // Help thin character like '1' detectable
-        left_bbox.height + 2,
-    );
-    let right = mat
-        .roi(Rect::new(
-            hp_separator.x + hp_separator.width,
-            hp_bar.y,
-            (hp_bar.x + hp_bar.width) - (hp_separator.x + hp_separator.width),
-            hp_bar.height,
-        ))
-        .unwrap();
-    let (right_in, right_w_ratio, right_h_ratio) = preprocess_for_text_bboxes(&right);
-    let right_bbox = extract_text_bboxes(
-        &right_in,
-        right_w_ratio,
-        right_h_ratio,
-        hp_separator.x + hp_separator.width,
-        hp_bar.y,
-    )
-    .into_iter()
-    .reduce(|acc, cur| acc | cur)
-    .ok_or(anyhow!("failed to detect max health bar"))?;
-    Ok((left_bbox, right_bbox))
-}
-
-fn detect_player_health(
-    mat: &impl MatTraitConst,
-    current_bar: Rect,
-    max_bar: Rect,
-) -> Result<(u32, u32)> {
-    let current_health = extract_texts(mat, &[current_bar]);
-    let current_health = current_health
-        .first()
-        .and_then(|value| value.parse::<u32>().ok())
-        .ok_or(anyhow!("cannot detect current health"))?;
-    let max_health = extract_texts(mat, &[max_bar]);
-    let max_health = max_health
-        .first()
-        .and_then(|value| value.parse::<u32>().ok())
-        .ok_or(anyhow!("cannot detect max health"))?;
-    Ok((current_health.min(max_health), max_health))
-}
-
-fn detect_player_buff(mat: &impl ToInputArray, kind: BuffKind) -> bool {
-    /// TODO: Support default ratio
-    static RUNE_BUFF: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(include_bytes!(env!("RUNE_BUFF_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
-    });
-    static SAYRAM_ELIXIR_BUFF: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("SAYRAM_ELIXIR_BUFF_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-    static AURELIA_ELIXIR_BUFF: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("AURELIA_ELIXIR_BUFF_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-    static EXP_COUPON_X3_BUFF: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("EXP_COUPON_X3_BUFF_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-    static BONUS_EXP_COUPON_BUFF: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("BONUS_EXP_COUPON_BUFF_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-    static LEGION_WEALTH_BUFF: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("LEGION_WEALTH_BUFF_TEMPLATE")),
-            IMREAD_COLOR,
-        )
-        .unwrap()
-    });
-    static LEGION_LUCK_BUFF: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("LEGION_LUCK_BUFF_TEMPLATE")),
-            IMREAD_COLOR,
-        )
-        .unwrap()
-    });
-    static WEALTH_ACQUISITION_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("WEALTH_ACQUISITION_POTION_BUFF_TEMPLATE")),
-            IMREAD_COLOR,
-        )
-        .unwrap()
-    });
-    static EXP_ACCUMULATION_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("EXP_ACCUMULATION_POTION_BUFF_TEMPLATE")),
-            IMREAD_COLOR,
-        )
-        .unwrap()
-    });
-    static EXTREME_RED_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("EXTREME_RED_POTION_BUFF_TEMPLATE")),
-            IMREAD_COLOR,
-        )
-        .unwrap()
-    });
-    static EXTREME_BLUE_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("EXTREME_BLUE_POTION_BUFF_TEMPLATE")),
-            IMREAD_COLOR,
-        )
-        .unwrap()
-    });
-    static EXTREME_GREEN_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("EXTREME_GREEN_POTION_BUFF_TEMPLATE")),
-            IMREAD_COLOR,
-        )
-        .unwrap()
-    });
-    static EXTREME_GOLD_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("EXTREME_GOLD_POTION_BUFF_TEMPLATE")),
-            IMREAD_COLOR,
-        )
-        .unwrap()
-    });
-
-    let score = match kind {
-        BuffKind::AureliaElixir => 0.9,
-        BuffKind::LegionWealth => 0.73,
-        BuffKind::Rune
-        | BuffKind::SayramElixir
-        | BuffKind::ExpCouponX3
-        | BuffKind::BonusExpCoupon
-        | BuffKind::LegionLuck
-        | BuffKind::WealthAcquisitionPotion
-        | BuffKind::ExpAccumulationPotion
-        | BuffKind::ExtremeRedPotion
-        | BuffKind::ExtremeBluePotion
-        | BuffKind::ExtremeGreenPotion
-        | BuffKind::ExtremeGoldPotion => 0.75,
-    };
-    let template = match kind {
-        BuffKind::Rune => &*RUNE_BUFF,
-        BuffKind::SayramElixir => &*SAYRAM_ELIXIR_BUFF,
-        BuffKind::AureliaElixir => &*AURELIA_ELIXIR_BUFF,
-        BuffKind::ExpCouponX3 => &*EXP_COUPON_X3_BUFF,
-        BuffKind::BonusExpCoupon => &*BONUS_EXP_COUPON_BUFF,
-        BuffKind::LegionWealth => &*LEGION_WEALTH_BUFF,
-        BuffKind::LegionLuck => &*LEGION_LUCK_BUFF,
-        BuffKind::WealthAcquisitionPotion => &*WEALTH_ACQUISITION_POTION_BUFF,
-        BuffKind::ExpAccumulationPotion => &*EXP_ACCUMULATION_POTION_BUFF,
-        BuffKind::ExtremeRedPotion => &*EXTREME_RED_POTION_BUFF,
-        BuffKind::ExtremeBluePotion => &*EXTREME_BLUE_POTION_BUFF,
-        BuffKind::ExtremeGreenPotion => &*EXTREME_GREEN_POTION_BUFF,
-        BuffKind::ExtremeGoldPotion => &*EXTREME_GOLD_POTION_BUFF,
-    };
-
-    detect_template(mat, template, Point::default(), score, None).is_ok()
-}
-
-fn detect_erda_shower(mat: &impl MatTraitConst) -> Result<Rect> {
-    /// TODO: Support default ratio
-    static ERDA_SHOWER: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("ERDA_SHOWER_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-
-    let size = mat.size().unwrap();
-    // crop to bottom right of the image for skill bar
-    let crop_x = size.width / 2;
-    let crop_y = size.height / 5;
-    let crop_bbox = Rect::new(size.width - crop_x, size.height - crop_y, crop_x, crop_y);
-    let skill_bar = mat.roi(crop_bbox).unwrap();
-    detect_template(&skill_bar, &*ERDA_SHOWER, crop_bbox.tl(), 0.96, None)
-}
-
-fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
-    const PLAYER_IDEAL_RATIO_THRESHOLD: f64 = 0.8;
-    const PLAYER_DEFAULT_RATIO_THRESHOLD: f64 = 0.6;
-    static PLAYER_IDEAL_RATIO: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("PLAYER_IDEAL_RATIO_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-    static PLAYER_DEFAULT_RATIO: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("PLAYER_DEFAULT_RATIO_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-    static WAS_IDEAL_RATIO: AtomicBool = AtomicBool::new(false);
-
-    let was_ideal_ratio = WAS_IDEAL_RATIO.load(Ordering::Acquire);
-    let template = if was_ideal_ratio {
-        &*PLAYER_IDEAL_RATIO
-    } else {
-        &*PLAYER_DEFAULT_RATIO
-    };
-    let threshold = if was_ideal_ratio {
-        PLAYER_IDEAL_RATIO_THRESHOLD
-    } else {
-        PLAYER_DEFAULT_RATIO_THRESHOLD
-    };
-    let result = detect_template(mat, template, Point::default(), threshold, None);
-    if result.is_err() {
-        WAS_IDEAL_RATIO.store(!was_ideal_ratio, Ordering::Release);
-    }
-    result
 }
 
 fn detect_mobs(
@@ -772,7 +413,7 @@ fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
     });
 
     for template in &*ESC_SETTINGS {
-        if detect_template(mat, template, Point::default(), 0.85, None).is_ok() {
+        if detect_template(mat, template, Point::default(), 0.85).is_ok() {
             return true;
         }
     }
@@ -781,9 +422,16 @@ fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
 
 fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {
     /// TODO: Support default ratio
-    static ELITE_BOSS_BAR: LazyLock<Mat> = LazyLock::new(|| {
+    static ELITE_BOSS_BAR_1: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
-            include_bytes!(env!("ELITE_BOSS_BAR_TEMPLATE")),
+            include_bytes!(env!("ELITE_BOSS_BAR_1_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static ELITE_BOSS_BAR_2: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("ELITE_BOSS_BAR_2_TEMPLATE")),
             IMREAD_GRAYSCALE,
         )
         .unwrap()
@@ -794,94 +442,10 @@ fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {
     let crop_y = size.height / 5;
     let crop_bbox = Rect::new(0, 0, size.width, crop_y);
     let boss_bar = mat.roi(crop_bbox).unwrap();
-    let template = &*ELITE_BOSS_BAR;
-    detect_template(&boss_bar, template, Point::default(), 0.9, None).is_ok()
-}
-
-/// Detects the `template` from the given BGR image `Mat`.
-#[inline]
-fn detect_template<T: ToInputArray + MatTraitConst>(
-    mat: &impl ToInputArray,
-    template: &T,
-    offset: Point,
-    threshold: f64,
-    log: Option<&str>,
-) -> Result<Rect> {
-    let mut result = Mat::default();
-    let mut score = 0f64;
-    let mut loc = Point::default();
-
-    match_template(mat, template, &mut result, TM_CCOEFF_NORMED, &no_array()).unwrap();
-    min_max_loc(
-        &result,
-        None,
-        Some(&mut score),
-        None,
-        Some(&mut loc),
-        &no_array(),
-    )
-    .unwrap();
-
-    let tl = loc + offset;
-    let br = tl + Point::from_size(template.size().unwrap());
-    if let Some(target) = log {
-        debug!(target: target, "detected with score: {} / {}", score, threshold);
-    }
-    if score >= threshold {
-        Ok(Rect::from_points(tl, br))
-    } else {
-        Err(anyhow!("template not found").context(score))
-    }
-}
-
-fn detect_rune_arrows(mat: &impl MatTraitConst) -> Result<[KeyKind; 4]> {
-    static RUNE_MODEL: LazyLock<Session> = LazyLock::new(|| {
-        Session::builder()
-            .and_then(|b| b.commit_from_memory(include_bytes!(env!("RUNE_MODEL"))))
-            .expect("unable to build rune detection session")
-    });
-
-    fn map_arrow(pred: &[f32]) -> KeyKind {
-        match pred[5] as i32 {
-            0 => KeyKind::Up,
-            1 => KeyKind::Down,
-            2 => KeyKind::Left,
-            3 => KeyKind::Right,
-            _ => unreachable!(),
-        }
-    }
-
-    let (mat_in, _, _) = preprocess_for_yolo(mat);
-    let result = RUNE_MODEL.run([norm_rgb_to_input_value(&mat_in)]).unwrap();
-    let mat_out = from_output_value(&result);
-    let mut preds = (0..mat_out.rows())
-        // SAFETY: 0..outputs.rows() is within Mat bounds
-        .map(|i| unsafe { mat_out.at_row_unchecked::<f32>(i).unwrap() })
-        .filter(|&pred| {
-            // pred has shapes [bbox(4) + conf + class]
-            pred[4] >= 0.8
-        })
-        .collect::<Vec<_>>();
-    if preds.len() != 4 {
-        info!(target: "player", "failed to detect rune arrows {preds:?}");
-        return Err(anyhow!("failed to detect rune arrows"));
-    }
-    // sort by x for arrow order
-    preds.sort_by(|&a, &b| a[0].total_cmp(&b[0]));
-
-    let first = map_arrow(preds[0]);
-    let second = map_arrow(preds[1]);
-    let third = map_arrow(preds[2]);
-    let fourth = map_arrow(preds[3]);
-    info!(
-        target: "player",
-        "solving rune result {first:?} ({}), {second:?} ({}), {third:?} ({}), {fourth:?} ({})",
-        preds[0][4],
-        preds[1][4],
-        preds[2][4],
-        preds[3][4]
-    );
-    Ok([first, second, third, fourth])
+    let template_1 = &*ELITE_BOSS_BAR_1;
+    let template_2 = &*ELITE_BOSS_BAR_2;
+    detect_template(&boss_bar, template_1, Point::default(), 0.9).is_ok()
+        || detect_template(&boss_bar, template_2, Point::default(), 0.9).is_ok()
 }
 
 fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect> {
@@ -1002,6 +566,574 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
         )
     })
     .ok_or(anyhow!("minimap not found"))
+}
+
+fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Result<Vec<Rect>> {
+    /// TODO: Support default ratio
+    static PORTAL: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("PORTAL_TEMPLATE")), IMREAD_COLOR).unwrap()
+    });
+
+    let template = &*PORTAL;
+    let mut result = Mat::default();
+    let mut points = Vector::<Point>::new();
+    match_template(
+        &minimap,
+        template,
+        &mut result,
+        TM_CCOEFF_NORMED,
+        &no_array(),
+    )
+    .unwrap();
+    // SAFETY: threshold can be called inplace
+    unsafe {
+        result.modify_inplace(|mat, mat_mut| {
+            threshold(mat, mat_mut, 0.8, 1.0, THRESH_BINARY).unwrap();
+        });
+    }
+    find_non_zero(&result, &mut points).unwrap();
+    let portals = points
+        .into_iter()
+        .map(|point| {
+            let size = 5;
+            let x = (point.x - size).max(0);
+            let xd = point.x - x;
+            let y = (point.y - size).max(0);
+            let yd = point.y - y;
+            let width = template.cols() + xd * 2 + (size - xd);
+            let height = template.rows() + yd * 2 + (size - yd);
+            Rect::new(x, y, width, height)
+        })
+        .collect::<Vec<_>>();
+    Ok(portals)
+}
+
+fn detect_minimap_rune(minimap: &impl ToInputArray) -> Result<Rect> {
+    /// TODO: Support default ratio
+    static RUNE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("RUNE_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
+
+    detect_template(minimap, &*RUNE, Point::default(), 0.6)
+}
+
+fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
+    const PLAYER_IDEAL_RATIO_THRESHOLD: f64 = 0.8;
+    const PLAYER_DEFAULT_RATIO_THRESHOLD: f64 = 0.6;
+    static PLAYER_IDEAL_RATIO: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("PLAYER_IDEAL_RATIO_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static PLAYER_DEFAULT_RATIO: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("PLAYER_DEFAULT_RATIO_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static WAS_IDEAL_RATIO: AtomicBool = AtomicBool::new(false);
+
+    let was_ideal_ratio = WAS_IDEAL_RATIO.load(Ordering::Acquire);
+    let template = if was_ideal_ratio {
+        &*PLAYER_IDEAL_RATIO
+    } else {
+        &*PLAYER_DEFAULT_RATIO
+    };
+    let threshold = if was_ideal_ratio {
+        PLAYER_IDEAL_RATIO_THRESHOLD
+    } else {
+        PLAYER_DEFAULT_RATIO_THRESHOLD
+    };
+    let result = detect_template(mat, template, Point::default(), threshold);
+    if result.is_err() {
+        WAS_IDEAL_RATIO.store(!was_ideal_ratio, Ordering::Release);
+    }
+    result
+}
+
+fn detect_player_is_dead(mat: &impl ToInputArray) -> bool {
+    /// TODO: Support default ratio
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("TOMB_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
+
+    detect_template(mat, &*TEMPLATE, Point::default(), 0.8).is_ok()
+}
+
+fn detect_player_in_cash_shop(mat: &impl ToInputArray) -> bool {
+    /// TODO: Support default ratio
+    static CASH_SHOP: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("CASH_SHOP_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
+
+    detect_template(mat, &*CASH_SHOP, Point::default(), 0.7).is_ok()
+}
+
+fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
+    /// TODO: Support default ratio
+    static HP_START: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("HP_START_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
+    static HP_END: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("HP_END_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
+
+    let hp_start = detect_template(mat, &*HP_START, Point::default(), 0.8)?;
+    let hp_start_to_edge_x = hp_start.x + hp_start.width;
+    let hp_end = detect_template(mat, &*HP_END, Point::default(), 0.8)?;
+    Ok(Rect::new(
+        hp_start_to_edge_x,
+        hp_start.y,
+        hp_end.x - hp_start_to_edge_x,
+        hp_start.height,
+    ))
+}
+
+fn detect_player_health_bars(
+    mat: &impl MatTraitConst,
+    grayscale: &impl MatTraitConst,
+    hp_bar: Rect,
+) -> Result<(Rect, Rect)> {
+    /// TODO: Support default ratio
+    static HP_SEPARATOR_1: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("HP_SEPARATOR_1_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static HP_SEPARATOR_2: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("HP_SEPARATOR_2_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static HP_SHIELD: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("HP_SHIELD_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
+    static HP_SEPARATOR_TYPE_1: AtomicBool = AtomicBool::new(true);
+
+    let hp_separator_type_1 = HP_SEPARATOR_TYPE_1.load(Ordering::Relaxed);
+    let hp_separator_template = if hp_separator_type_1 {
+        &*HP_SEPARATOR_1
+    } else {
+        &*HP_SEPARATOR_2
+    };
+    let hp_separator = detect_template(
+        &grayscale.roi(hp_bar).unwrap(),
+        hp_separator_template,
+        hp_bar.tl(),
+        0.7,
+    )
+    .inspect_err(|_| {
+        HP_SEPARATOR_TYPE_1.store(!hp_separator_type_1, Ordering::Release);
+    })?;
+    let hp_shield = detect_template(
+        &grayscale.roi(hp_bar).unwrap(),
+        &*HP_SHIELD,
+        hp_bar.tl(),
+        0.8,
+    )
+    .ok();
+    let left = mat
+        .roi(Rect::new(
+            hp_bar.x,
+            hp_bar.y,
+            hp_separator.x - hp_bar.x,
+            hp_bar.height,
+        ))
+        .unwrap();
+    let (left_in, left_w_ratio, left_h_ratio) = preprocess_for_text_bboxes(&left);
+    let left_bbox = extract_text_bboxes(&left_in, left_w_ratio, left_h_ratio, hp_bar.x, hp_bar.y)
+        .into_iter()
+        .min_by_key(|bbox| ((bbox.x + bbox.width) - hp_separator.x).abs())
+        .ok_or(anyhow!("failed to detect current health bar"))?;
+    let left_bbox_x = hp_shield
+        .map(|bbox| bbox.x + bbox.width)
+        .unwrap_or(left_bbox.x); // When there is shield, skips past it
+    let left_bbox = Rect::new(
+        left_bbox_x,
+        left_bbox.y - 1, // Add some space so the bound is not too tight
+        hp_separator.x - left_bbox_x + 1, // Help thin character like '1' detectable
+        left_bbox.height + 2,
+    );
+    let right = mat
+        .roi(Rect::new(
+            hp_separator.x + hp_separator.width,
+            hp_bar.y,
+            (hp_bar.x + hp_bar.width) - (hp_separator.x + hp_separator.width),
+            hp_bar.height,
+        ))
+        .unwrap();
+    let (right_in, right_w_ratio, right_h_ratio) = preprocess_for_text_bboxes(&right);
+    let right_bbox = extract_text_bboxes(
+        &right_in,
+        right_w_ratio,
+        right_h_ratio,
+        hp_separator.x + hp_separator.width,
+        hp_bar.y,
+    )
+    .into_iter()
+    .reduce(|acc, cur| acc | cur)
+    .ok_or(anyhow!("failed to detect max health bar"))?;
+    Ok((left_bbox, right_bbox))
+}
+
+fn detect_player_health(
+    mat: &impl MatTraitConst,
+    current_bar: Rect,
+    max_bar: Rect,
+) -> Result<(u32, u32)> {
+    let current_health = extract_texts(mat, &[current_bar]);
+    let current_health = current_health
+        .first()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or(anyhow!("cannot detect current health"))?;
+    let max_health = extract_texts(mat, &[max_bar]);
+    let max_health = max_health
+        .first()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or(anyhow!("cannot detect max health"))?;
+    Ok((current_health.min(max_health), max_health))
+}
+
+fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) -> bool {
+    /// TODO: Support default ratio
+    static RUNE_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("RUNE_BUFF_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
+    static SAYRAM_ELIXIR_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("SAYRAM_ELIXIR_BUFF_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static AURELIA_ELIXIR_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("AURELIA_ELIXIR_BUFF_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static EXP_COUPON_X3_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("EXP_COUPON_X3_BUFF_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static BONUS_EXP_COUPON_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("BONUS_EXP_COUPON_BUFF_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static LEGION_WEALTH_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("LEGION_WEALTH_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static LEGION_LUCK_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("LEGION_LUCK_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static WEALTH_EXP_POTION_MASK: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("WEALTH_EXP_POTION_MASK_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static WEALTH_ACQUISITION_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("WEALTH_ACQUISITION_POTION_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static EXP_ACCUMULATION_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("EXP_ACCUMULATION_POTION_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static EXTREME_RED_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("EXTREME_RED_POTION_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static EXTREME_BLUE_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("EXTREME_BLUE_POTION_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static EXTREME_GREEN_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("EXTREME_GREEN_POTION_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static EXTREME_GOLD_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("EXTREME_GOLD_POTION_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+
+    let threshold = match kind {
+        BuffKind::AureliaElixir => 0.9,
+        BuffKind::LegionWealth => 0.76,
+        BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => 0.85,
+        BuffKind::Rune
+        | BuffKind::SayramElixir
+        | BuffKind::ExpCouponX3
+        | BuffKind::BonusExpCoupon
+        | BuffKind::LegionLuck
+        | BuffKind::ExtremeRedPotion
+        | BuffKind::ExtremeBluePotion
+        | BuffKind::ExtremeGreenPotion
+        | BuffKind::ExtremeGoldPotion => 0.75,
+    };
+    let template = match kind {
+        BuffKind::Rune => &*RUNE_BUFF,
+        BuffKind::SayramElixir => &*SAYRAM_ELIXIR_BUFF,
+        BuffKind::AureliaElixir => &*AURELIA_ELIXIR_BUFF,
+        BuffKind::ExpCouponX3 => &*EXP_COUPON_X3_BUFF,
+        BuffKind::BonusExpCoupon => &*BONUS_EXP_COUPON_BUFF,
+        BuffKind::LegionWealth => &*LEGION_WEALTH_BUFF,
+        BuffKind::LegionLuck => &*LEGION_LUCK_BUFF,
+        BuffKind::WealthAcquisitionPotion => &*WEALTH_ACQUISITION_POTION_BUFF,
+        BuffKind::ExpAccumulationPotion => &*EXP_ACCUMULATION_POTION_BUFF,
+        BuffKind::ExtremeRedPotion => &*EXTREME_RED_POTION_BUFF,
+        BuffKind::ExtremeBluePotion => &*EXTREME_BLUE_POTION_BUFF,
+        BuffKind::ExtremeGreenPotion => &*EXTREME_GREEN_POTION_BUFF,
+        BuffKind::ExtremeGoldPotion => &*EXTREME_GOLD_POTION_BUFF,
+    };
+
+    if matches!(
+        kind,
+        BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion
+    ) {
+        // Because the two potions are really similar, detecting one may mis-detect for the other.
+        // Can't really think of a better way to do this.... But this seems working just fine.
+        // Also tested with the who-use-this? Invicibility Potion and Resistance Potion. Those two
+        // doesn't match at all so this should be fine.
+        let matches = detect_template_multiple(
+            mat,
+            template,
+            &*WEALTH_EXP_POTION_MASK,
+            Point::default(),
+            2,
+            threshold,
+        )
+        .into_iter()
+        .filter_map(|result| result.ok())
+        .collect::<Vec<_>>();
+        if matches.is_empty() {
+            return false;
+        }
+        // Likely both potions are active
+        if matches.len() == 2 {
+            return true;
+        }
+        let template_other = if matches!(kind, BuffKind::WealthAcquisitionPotion) {
+            &*EXP_ACCUMULATION_POTION_BUFF
+        } else {
+            &*WEALTH_ACQUISITION_POTION_BUFF
+        };
+        let match_current = matches.into_iter().next().unwrap();
+        let match_other = detect_template_single(
+            mat,
+            template_other,
+            &*WEALTH_EXP_POTION_MASK,
+            Point::default(),
+            threshold,
+        );
+        if match_other.is_err() || match_other.unwrap().1 < match_current.1 {
+            return true;
+        }
+        false
+    } else {
+        detect_template(mat, template, Point::default(), threshold).is_ok()
+    }
+}
+
+fn detect_rune_arrows(mat: &impl MatTraitConst) -> Result<[KeyKind; 4]> {
+    static RUNE_MODEL: LazyLock<Session> = LazyLock::new(|| {
+        Session::builder()
+            .and_then(|b| b.commit_from_memory(include_bytes!(env!("RUNE_MODEL"))))
+            .expect("unable to build rune detection session")
+    });
+
+    fn map_arrow(pred: &[f32]) -> KeyKind {
+        match pred[5] as i32 {
+            0 => KeyKind::Up,
+            1 => KeyKind::Down,
+            2 => KeyKind::Left,
+            3 => KeyKind::Right,
+            _ => unreachable!(),
+        }
+    }
+
+    let (mat_in, _, _) = preprocess_for_yolo(mat);
+    let result = RUNE_MODEL.run([norm_rgb_to_input_value(&mat_in)]).unwrap();
+    let mat_out = from_output_value(&result);
+    let mut preds = (0..mat_out.rows())
+        // SAFETY: 0..outputs.rows() is within Mat bounds
+        .map(|i| unsafe { mat_out.at_row_unchecked::<f32>(i).unwrap() })
+        .filter(|&pred| {
+            // pred has shapes [bbox(4) + conf + class]
+            pred[4] >= 0.8
+        })
+        .collect::<Vec<_>>();
+    if preds.len() != 4 {
+        info!(target: "player", "failed to detect rune arrows {preds:?}");
+        return Err(anyhow!("failed to detect rune arrows"));
+    }
+    // sort by x for arrow order
+    preds.sort_by(|&a, &b| a[0].total_cmp(&b[0]));
+
+    let first = map_arrow(preds[0]);
+    let second = map_arrow(preds[1]);
+    let third = map_arrow(preds[2]);
+    let fourth = map_arrow(preds[3]);
+    info!(
+        target: "player",
+        "solving rune result {first:?} ({}), {second:?} ({}), {third:?} ({}), {fourth:?} ({})",
+        preds[0][4],
+        preds[1][4],
+        preds[2][4],
+        preds[3][4]
+    );
+    Ok([first, second, third, fourth])
+}
+
+fn detect_erda_shower(mat: &impl MatTraitConst) -> Result<Rect> {
+    /// TODO: Support default ratio
+    static ERDA_SHOWER: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("ERDA_SHOWER_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+
+    let size = mat.size().unwrap();
+    // crop to bottom right of the image for skill bar
+    let crop_x = size.width / 2;
+    let crop_y = size.height / 5;
+    let crop_bbox = Rect::new(size.width - crop_x, size.height - crop_y, crop_x, crop_y);
+    let skill_bar = mat.roi(crop_bbox).unwrap();
+    detect_template(&skill_bar, &*ERDA_SHOWER, crop_bbox.tl(), 0.96)
+}
+
+/// Detects a single match from `template` with the given BGR image `Mat`.
+#[inline]
+fn detect_template<T: ToInputArray + MatTraitConst>(
+    mat: &impl ToInputArray,
+    template: &T,
+    offset: Point,
+    threshold: f64,
+) -> Result<Rect> {
+    detect_template_single(mat, template, no_array(), offset, threshold).map(|(bbox, _)| bbox)
+}
+
+/// Detects a single match with `mask` from `template` with the given BGR image `Mat`.
+#[inline]
+fn detect_template_single<T: ToInputArray + MatTraitConst>(
+    mat: &impl ToInputArray,
+    template: &T,
+    mask: impl ToInputArray,
+    offset: Point,
+    threshold: f64,
+) -> Result<(Rect, f64)> {
+    detect_template_multiple(mat, template, mask, offset, 1, threshold)
+        .into_iter()
+        .next()
+        .unwrap()
+}
+
+/// Detects multiple matches from `template` with the given BGR image `Mat`.
+#[inline]
+fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
+    mat: &impl ToInputArray,
+    template: &T,
+    mask: impl ToInputArray,
+    offset: Point,
+    max_matches: usize,
+    threshold: f64,
+) -> Vec<Result<(Rect, f64)>> {
+    #[inline]
+    fn match_one(
+        result: &Mat,
+        offset: Point,
+        template_size: Size,
+        threshold: f64,
+    ) -> Result<(Rect, f64)> {
+        let mut score = 0f64;
+        let mut loc = Point::default();
+        min_max_loc(
+            &result,
+            None,
+            Some(&mut score),
+            None,
+            Some(&mut loc),
+            &no_array(),
+        )
+        .unwrap();
+        if score < threshold {
+            return Err(anyhow!("template not found").context(score));
+        }
+        let tl = loc + offset;
+        let br = tl + Point::from_size(template_size);
+        let rect = Rect::from_points(tl, br);
+        Ok((rect, score))
+    }
+
+    let mut result = Mat::default();
+    match_template(mat, template, &mut result, TM_CCOEFF_NORMED, &mask).unwrap();
+
+    let template_size = template.size().unwrap();
+    let max_matches = max_matches.max(1);
+    if max_matches == 1 {
+        return vec![match_one(&result, offset, template_size, threshold)];
+    }
+
+    let mut filter = Vec::new();
+    let zeros = Mat::zeros(template_size.height, template_size.width, CV_32FC1)
+        .unwrap()
+        .to_mat()
+        .unwrap();
+    for _ in 0..max_matches {
+        let match_result = match_one(&result, offset, template_size, threshold);
+        if match_result.is_err() {
+            filter.push(match_result);
+            continue;
+        }
+        let (rect, score) = match_result.unwrap();
+        let mut roi = result.roi_mut(rect).unwrap();
+        zeros.copy_to(&mut roi).unwrap();
+        filter.push(Ok((rect, score)));
+    }
+    filter
 }
 
 /// Extracts texts from the non-preprocessed `Mat` and detected text bounding boxes.

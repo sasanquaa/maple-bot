@@ -31,9 +31,7 @@ const EXP_X3: &str = "3x EXP Coupon";
 const BONUS_EXP: &str = "50% Bonus EXP Coupon";
 const LEGION_WEALTH: &str = "Legion's Wealth";
 const LEGION_LUCK: &str = "Legion's Luck";
-#[cfg(feature = "wealth_exp_pots")]
 const WEALTH_ACQUISITION_POTION: &str = "Wealth Acquisition Potion";
-#[cfg(feature = "wealth_exp_pots")]
 const EXP_ACCUMULATION_POTION: &str = "Exp Accumulation Potion";
 const EXTREME_RED_POTION: &str = "Extreme Red Potion";
 const EXTREME_BLUE_POTION: &str = "Extreme Blue Potion";
@@ -403,36 +401,31 @@ fn ConfigBuffKeyBindings(
             },
             value: Some(config_view().legion_luck_key),
         }
-        {
-            #[cfg(feature = "wealth_exp_pots")]
-            rsx! {
-                KeyBindingConfigurationInput {
-                    label: WEALTH_ACQUISITION_POTION,
-                    label_active: active,
-                    is_disabled: is_disabled(),
-                    is_toggleable: true,
-                    on_input: move |key: Option<KeyBindingConfiguration>| {
-                        on_config(ConfigurationData {
-                            wealth_acquisition_potion_key: key.unwrap(),
-                            ..config_view.peek().clone()
-                        });
-                    },
-                    value: Some(config_view().wealth_acquisition_potion_key),
-                }
-                KeyBindingConfigurationInput {
-                    label: EXP_ACCUMULATION_POTION,
-                    label_active: active,
-                    is_disabled: is_disabled(),
-                    is_toggleable: true,
-                    on_input: move |key: Option<KeyBindingConfiguration>| {
-                        on_config(ConfigurationData {
-                            exp_accumulation_potion_key: key.unwrap(),
-                            ..config_view.peek().clone()
-                        });
-                    },
-                    value: Some(config_view().exp_accumulation_potion_key),
-                }
-            }
+        KeyBindingConfigurationInput {
+            label: WEALTH_ACQUISITION_POTION,
+            label_active: active,
+            is_disabled: is_disabled(),
+            is_toggleable: true,
+            on_input: move |key: Option<KeyBindingConfiguration>| {
+                on_config(ConfigurationData {
+                    wealth_acquisition_potion_key: key.unwrap(),
+                    ..config_view.peek().clone()
+                });
+            },
+            value: Some(config_view().wealth_acquisition_potion_key),
+        }
+        KeyBindingConfigurationInput {
+            label: EXP_ACCUMULATION_POTION,
+            label_active: active,
+            is_disabled: is_disabled(),
+            is_toggleable: true,
+            on_input: move |key: Option<KeyBindingConfiguration>| {
+                on_config(ConfigurationData {
+                    exp_accumulation_potion_key: key.unwrap(),
+                    ..config_view.peek().clone()
+                });
+            },
+            value: Some(config_view().exp_accumulation_potion_key),
         }
         KeyBindingConfigurationInput {
             label: EXTREME_RED_POTION,

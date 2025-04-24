@@ -222,10 +222,10 @@ impl WgcCapture {
     }
 
     pub fn grab(&mut self) -> Result<Frame, Error> {
-        if self.inner.is_none() {
-            if let Some(handle) = self.handle.as_inner() {
-                self.start_capture(handle)?;
-            }
+        if self.inner.is_none()
+            && let Some(handle) = self.handle.as_inner()
+        {
+            self.start_capture(handle)?;
         }
 
         if let Some(inner) = self.inner.as_mut() {

@@ -63,6 +63,8 @@ pub struct Notifications {
     pub discord_user_id: String,
     pub notify_on_fail_or_change_map: bool,
     pub notify_on_rune_appear: bool,
+    pub notify_on_elite_boss_appear: bool,
+    pub notify_on_player_die: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -407,6 +409,7 @@ pub enum LinkKeyBinding {
     Before(KeyBinding),
     AtTheSame(KeyBinding),
     After(KeyBinding),
+    Along(KeyBinding),
 }
 
 impl LinkKeyBinding {
@@ -414,7 +417,8 @@ impl LinkKeyBinding {
         match self {
             LinkKeyBinding::Before(key)
             | LinkKeyBinding::AtTheSame(key)
-            | LinkKeyBinding::After(key) => *key,
+            | LinkKeyBinding::After(key)
+            | LinkKeyBinding::Along(key) => *key,
         }
     }
 
@@ -423,6 +427,7 @@ impl LinkKeyBinding {
             LinkKeyBinding::Before(_) => LinkKeyBinding::Before(key),
             LinkKeyBinding::AtTheSame(_) => LinkKeyBinding::AtTheSame(key),
             LinkKeyBinding::After(_) => LinkKeyBinding::After(key),
+            LinkKeyBinding::Along(_) => LinkKeyBinding::Along(key),
         }
     }
 }
@@ -788,7 +793,7 @@ where
     T: DeserializeOwned + Identifiable + Default,
 {
     let conn = CONNECTION.lock().unwrap();
-    let stmt = format!("SELECT id, data FROM {}", table);
+    let stmt = format!("SELECT id, data FROM {table}");
     let stmt = conn.prepare(&stmt).unwrap();
     map_data(stmt, [])
 }
@@ -800,8 +805,7 @@ where
     let json = serde_json::to_string(&data).unwrap();
     let conn = CONNECTION.lock().unwrap();
     let stmt = format!(
-        "INSERT INTO {} (id, data) VALUES (?1, ?2) ON CONFLICT (id) DO UPDATE SET data = ?2;",
-        table
+        "INSERT INTO {table} (id, data) VALUES (?1, ?2) ON CONFLICT (id) DO UPDATE SET data = ?2;",
     );
     match data.id() {
         Some(id) => {
@@ -820,7 +824,7 @@ fn delete_from_table<T: Identifiable>(table: &str, data: &T) -> Result<()> {
     fn inner(table: &str, id: Option<i64>) -> Result<()> {
         if id.is_some() {
             let conn = CONNECTION.lock().unwrap();
-            let stmt = format!("DELETE FROM {} WHERE id = ?1;", table);
+            let stmt = format!("DELETE FROM {table} WHERE id = ?1;");
             conn.execute(&stmt, [id.unwrap()])?;
         }
         Ok(())

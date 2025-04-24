@@ -335,6 +335,9 @@ fn update_loop() {
     let mut buff_states = BuffKind::iter()
         .map(BuffState::new)
         .collect::<Vec<BuffState>>();
+    buff_states.iter_mut().for_each(|state| {
+        state.update_enabled_state(&config, &settings.borrow());
+    });
 
     loop_with_fps(FPS, || {
         let mat = match settings.borrow().capture_mode {
@@ -346,6 +349,7 @@ fn update_loop() {
                 .map(OwnedMat::new),
             CaptureMode::BitBltArea => window_box_capture.grab().ok().map(OwnedMat::new),
         };
+        let was_player_alive = !player_state.is_dead;
         let was_minimap_idle = matches!(context.minimap, Minimap::Idle(_));
         let detector = mat.map(CachedDetector::new);
 
@@ -375,6 +379,7 @@ fn update_loop() {
             config: &mut config,
             settings: &mut settings_borrow_mut,
             buffs: &mut buffs,
+            buff_states: &mut buff_states,
             actions: &mut actions,
             rotator: &mut rotator,
             player: &mut player_state,
@@ -397,18 +402,20 @@ fn update_loop() {
         });
         // Upon accidental or white roomed causing map to change,
         // abort actions and send notification
-        if handler.minimap.data().is_some()
-            && matches!(handler.context.minimap, Minimap::Detecting)
-            && was_minimap_idle
-            && !handler.context.halting
-        {
-            if handler.settings.stop_on_fail_or_change_map {
+        let minimap_changed =
+            was_minimap_idle && matches!(handler.context.minimap, Minimap::Detecting);
+        let player_died = was_player_alive && handler.player.is_dead;
+        if handler.minimap.data().is_some() && !handler.context.halting {
+            if (minimap_changed || player_died) && handler.settings.stop_on_fail_or_change_map {
                 handler.on_rotate_actions(true);
             }
-            drop(settings_borrow_mut); // For notification to borrow immutably
-            let _ = context
-                .notification
-                .schedule_notification(NotificationKind::FailOrMapChanged);
+
+            if minimap_changed {
+                drop(settings_borrow_mut); // For notification to borrow immutably
+                let _ = context
+                    .notification
+                    .schedule_notification(NotificationKind::FailOrMapChange);
+            }
         }
     });
 }

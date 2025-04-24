@@ -33,14 +33,13 @@ pub fn use_auto_numeric(
             tokio::time::sleep(Duration::from_millis(80)).await;
             let js = format!(
                 r#"
-                const element = document.getElementById("{}");
+                const element = document.getElementById("{id}");
                 element.dispatchEvent(new CustomEvent("autoNumeric:set", {{
                     detail: {{
-                        value: {}
+                        value: {value}
                     }}
                 }}));
                 "#,
-                id, value
             );
             document::eval(js.as_str());
         })));

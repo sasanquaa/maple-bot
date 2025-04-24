@@ -7,7 +7,7 @@ use crate::{
     Action, ActionCondition, ActionKey, Bound, CaptureMode, Configuration, GameState, KeyBinding,
     KeyBindingConfiguration, Minimap as MinimapData, PotionMode, RequestHandler, RotatorMode,
     Settings,
-    buff::BuffKind,
+    buff::{BuffKind, BuffState},
     context::{Context, KeySenderKind},
     database::InputMethod,
     minimap::{Minimap, MinimapState},
@@ -22,6 +22,7 @@ pub struct DefaultRequestHandler<'a> {
     pub config: &'a mut Configuration,
     pub settings: &'a mut Settings,
     pub buffs: &'a mut Vec<(BuffKind, KeyBinding)>,
+    pub buff_states: &'a mut Vec<BuffState>,
     pub actions: &'a mut Vec<Action>,
     pub rotator: &'a mut Rotator,
     pub player: &'a mut PlayerState,
@@ -120,6 +121,9 @@ impl RequestHandler for DefaultRequestHandler<'_> {
                 (_, PotionMode::Percentage(percent)) => Some(percent / 100.0),
             };
         self.player.config.update_health_millis = Some(self.config.health_update_millis);
+        self.buff_states.iter_mut().for_each(|state| {
+            state.update_enabled_state(self.config, self.settings);
+        });
         self.update_rotator_actions(
             self.minimap
                 .data()
@@ -130,10 +134,10 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_update_settings(&mut self, settings: Settings) {
-        if !matches!(settings.capture_mode, CaptureMode::WindowsGraphicsCapture) {
-            if let Some(ref mut wgc_capture) = self.wgc_capture {
-                wgc_capture.stop_capture();
-            }
+        if !matches!(settings.capture_mode, CaptureMode::WindowsGraphicsCapture)
+            && let Some(ref mut wgc_capture) = self.wgc_capture
+        {
+            wgc_capture.stop_capture();
         }
         if !matches!(settings.capture_mode, CaptureMode::BitBltArea) {
             self.window_box_capture.hide();
@@ -158,6 +162,9 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             ));
         }
         *self.settings = settings;
+        self.buff_states.iter_mut().for_each(|state| {
+            state.update_enabled_state(self.config, self.settings);
+        });
         self.update_rotator_actions(
             self.minimap
                 .data()
@@ -225,10 +232,10 @@ fn poll_key(handler: &mut DefaultRequestHandler) {
         return;
     };
     debug!(target: "handler", "received key {received_key:?}");
-    if let KeyBindingConfiguration { key, enabled: true } = handler.settings.toggle_actions_key {
-        if KeyKind::from(key) == received_key {
-            handler.on_rotate_actions(!handler.context.halting);
-        }
+    if let KeyBindingConfiguration { key, enabled: true } = handler.settings.toggle_actions_key
+        && KeyKind::from(key) == received_key
+    {
+        handler.on_rotate_actions(!handler.context.halting);
     }
     let _ = handler.key_sender.send(received_key.into());
 }
@@ -289,17 +296,17 @@ fn config_actions(config: &Configuration) -> Vec<Action> {
         vec.push(feed_pet_action);
         vec.push(feed_pet_action);
     }
-    if let KeyBindingConfiguration { key, enabled: true } = config.potion_key {
-        if let PotionMode::EveryMillis(millis) = config.potion_mode {
-            vec.push(Action::Key(ActionKey {
-                key,
-                count: 1,
-                condition: ActionCondition::EveryMillis(millis),
-                wait_before_use_millis: 350,
-                wait_after_use_millis: 350,
-                ..ActionKey::default()
-            }));
-        }
+    if let KeyBindingConfiguration { key, enabled: true } = config.potion_key
+        && let PotionMode::EveryMillis(millis) = config.potion_mode
+    {
+        vec.push(Action::Key(ActionKey {
+            key,
+            count: 1,
+            condition: ActionCondition::EveryMillis(millis),
+            wait_before_use_millis: 350,
+            wait_after_use_millis: 350,
+            ..ActionKey::default()
+        }));
     }
     vec
 }

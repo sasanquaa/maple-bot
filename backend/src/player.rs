@@ -14,6 +14,7 @@ use crate::{
     context::{Context, Contextual, ControlFlow},
     database::{ActionKeyDirection, ActionKeyWith, KeyBinding, LinkKeyBinding},
     minimap::Minimap,
+    network::NotificationKind,
     pathing::{PlatformWithNeighbors, find_points_with},
     player_actions::{PlayerAction, PlayerActionAutoMob, PlayerActionKey, PlayerActionMove},
     task::{Task, Update, update_detection_task},
@@ -141,6 +142,10 @@ pub struct PlayerState {
     is_stationary_timeout: Timeout,
     /// Whether the player is stationary
     is_stationary: bool,
+    /// Whether the player is dead
+    pub is_dead: bool,
+    /// The task for detecting if player is dead
+    is_dead_task: Option<Task<Result<bool>>>,
     /// Approximates the player direction for using key
     last_known_direction: ActionKeyDirection,
     /// Tracks last destination points for displaying to UI
@@ -1031,37 +1036,37 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
                 ..
             }) => Some((Player::UseKey(UseKey::from_action(action)), false)),
             PlayerAction::SolveRune => {
-                if let Minimap::Idle(idle) = context.minimap {
-                    if let Some(rune) = idle.rune {
-                        if state.config.rune_platforms_pathing {
-                            if !state.is_stationary {
-                                return Some((Player::Idle, false));
-                            }
-                            let intermediates = find_points(
-                                &idle.platforms,
-                                cur_pos,
-                                rune,
-                                true,
-                                state.config.rune_platforms_pathing_up_jump_only,
-                            );
-                            if let Some(mut intermediates) = intermediates {
-                                state.last_destinations = Some(
-                                    intermediates
-                                        .inner
-                                        .into_iter()
-                                        .map(|(point, _)| point)
-                                        .collect(),
-                                );
-                                let (point, exact) = intermediates.next().unwrap();
-                                return Some((
-                                    Player::Moving(point, exact, Some(intermediates)),
-                                    false,
-                                ));
-                            }
+                if let Minimap::Idle(idle) = context.minimap
+                    && let Some(rune) = idle.rune
+                {
+                    if state.config.rune_platforms_pathing {
+                        if !state.is_stationary {
+                            return Some((Player::Idle, false));
                         }
-                        state.last_destinations = Some(vec![rune]);
-                        return Some((Player::Moving(rune, true, None), false));
+                        let intermediates = find_points(
+                            &idle.platforms,
+                            cur_pos,
+                            rune,
+                            true,
+                            state.config.rune_platforms_pathing_up_jump_only,
+                        );
+                        if let Some(mut intermediates) = intermediates {
+                            state.last_destinations = Some(
+                                intermediates
+                                    .inner
+                                    .into_iter()
+                                    .map(|(point, _)| point)
+                                    .collect(),
+                            );
+                            let (point, exact) = intermediates.next().unwrap();
+                            return Some((
+                                Player::Moving(point, exact, Some(intermediates)),
+                                false,
+                            ));
+                        }
                     }
+                    state.last_destinations = Some(vec![rune]);
+                    return Some((Player::Moving(rune, true, None), false));
                 }
                 Some((Player::Idle, true))
             }
@@ -1085,6 +1090,7 @@ fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Poin
 
 fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: UseKey) -> Player {
     const CHANGE_DIRECTION_TIMEOUT: u32 = 2;
+    const LINK_ALONG_PRESS_TICK: u32 = 2;
 
     fn populate_auto_mob_pathing_points(context: &Context, state: &mut PlayerState) {
         if state.auto_mob_pathing_points.len() >= AUTO_MOB_MAX_PATHING_POINTS
@@ -1147,11 +1153,15 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
     ) -> Player {
         debug_assert!(!timeout.started || !completed);
         let link_key = use_key.link_key.unwrap();
-        let link_key_timeout = match class {
-            Class::Cadena => 4,
-            Class::Blaster => 8,
-            Class::Ark => 10,
-            Class::Generic => 5,
+        let link_key_timeout = if matches!(link_key, LinkKeyBinding::Along(_)) {
+            4
+        } else {
+            match class {
+                Class::Cadena => 4,
+                Class::Blaster => 8,
+                Class::Ark => 10,
+                Class::Generic => 5,
+            }
         };
         update_with_timeout(
             timeout,
@@ -1159,6 +1169,8 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
             |timeout| {
                 if let LinkKeyBinding::Before(key) = link_key {
                     let _ = context.keys.send(key.into());
+                } else if let LinkKeyBinding::Along(key) = link_key {
+                    let _ = context.keys.send_down(key.into());
                 }
                 Player::UseKey(UseKey {
                     stage: UseKeyStage::Using(timeout, completed),
@@ -1171,6 +1183,8 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
                     if matches!(class, Class::Blaster) && KeyKind::from(key) != jump_key {
                         let _ = context.keys.send(jump_key);
                     }
+                } else if let LinkKeyBinding::Along(key) = link_key {
+                    let _ = context.keys.send_up(key.into());
                 }
                 Player::UseKey(UseKey {
                     stage: UseKeyStage::Using(timeout, true),
@@ -1178,6 +1192,11 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
                 })
             },
             |timeout| {
+                if matches!(link_key, LinkKeyBinding::Along(_))
+                    && timeout.total == LINK_ALONG_PRESS_TICK
+                {
+                    let _ = context.keys.send(use_key.key.into());
+                }
                 Player::UseKey(UseKey {
                     stage: UseKeyStage::Using(timeout, completed),
                     ..use_key
@@ -1293,6 +1312,18 @@ fn update_use_key_context(context: &Context, state: &mut PlayerState, use_key: U
                 Some(LinkKeyBinding::AtTheSame(key)) => {
                     let _ = context.keys.send(key.into());
                     let _ = context.keys.send(use_key.key.into());
+                }
+                Some(LinkKeyBinding::Along(_)) => {
+                    if !completed {
+                        return update_link_key(
+                            context,
+                            state.config.class,
+                            state.config.jump_key,
+                            use_key,
+                            timeout,
+                            completed,
+                        );
+                    }
                 }
                 Some(LinkKeyBinding::Before(_)) | None => {
                     if use_key.link_key.is_some() && !completed {
@@ -1513,16 +1544,16 @@ fn update_moving_context(
                 dest, cur_pos
             );
             state.last_movement = None;
-            if let Some(mut intermediates) = intermediates {
-                if let Some((dest, exact)) = intermediates.next() {
-                    state.unstuck_counter = 0;
-                    if state.has_priority_action() {
-                        state.last_movement_priority_map.clear();
-                    } else {
-                        state.last_movement_normal_map.clear();
-                    }
-                    return Player::Moving(dest, exact, Some(intermediates));
+            if let Some(mut intermediates) = intermediates
+                && let Some((dest, exact)) = intermediates.next()
+            {
+                state.unstuck_counter = 0;
+                if state.has_priority_action() {
+                    state.last_movement_priority_map.clear();
+                } else {
+                    state.last_movement_normal_map.clear();
                 }
+                return Player::Moving(dest, exact, Some(intermediates));
             }
             state.last_destinations = None;
             let last_known_direction = state.last_known_direction;
@@ -2437,28 +2468,28 @@ fn on_action_state_mut(
     on_action_context: impl FnOnce(&mut PlayerState, PlayerAction) -> Option<(Player, bool)>,
     on_default_context: impl FnOnce() -> Player,
 ) -> Player {
-    if let Some(action) = state.priority_action.or(state.normal_action) {
-        if let Some((next, is_terminal)) = on_action_context(state, action) {
-            debug_assert!(state.has_normal_action() || state.has_priority_action());
-            if is_terminal {
-                match action {
-                    PlayerAction::AutoMob(_)
-                    | PlayerAction::SolveRune
-                    | PlayerAction::Move(_)
-                    | PlayerAction::Key(PlayerActionKey {
-                        position: Some(Position { .. }),
-                        ..
-                    }) => {
-                        state.unstuck_counter = 0;
-                        state.unstuck_consecutive_counter = 0;
-                    }
-                    PlayerAction::Key(PlayerActionKey { position: None, .. }) => (),
+    if let Some(action) = state.priority_action.or(state.normal_action)
+        && let Some((next, is_terminal)) = on_action_context(state, action)
+    {
+        debug_assert!(state.has_normal_action() || state.has_priority_action());
+        if is_terminal {
+            match action {
+                PlayerAction::AutoMob(_)
+                | PlayerAction::SolveRune
+                | PlayerAction::Move(_)
+                | PlayerAction::Key(PlayerActionKey {
+                    position: Some(Position { .. }),
+                    ..
+                }) => {
+                    state.unstuck_counter = 0;
+                    state.unstuck_consecutive_counter = 0;
                 }
-                // FIXME: clear only when has position?
-                state.clear_action_and_movement();
+                PlayerAction::Key(PlayerActionKey { position: None, .. }) => (),
             }
-            return next;
+            // FIXME: clear only when has position?
+            state.clear_action_and_movement();
         }
+        return next;
     }
     on_default_context()
 }
@@ -2689,12 +2720,29 @@ fn update_health_state(context: &Context, state: &mut PlayerState) {
     }
 }
 
+#[inline]
+fn update_is_dead_state(context: &Context, state: &mut PlayerState) {
+    let Update::Ok(is_dead) =
+        update_detection_task(context, 5000, &mut state.is_dead_task, |detector| {
+            Ok(detector.detect_player_is_dead())
+        })
+    else {
+        return;
+    };
+    if is_dead && !state.is_dead {
+        let _ = context
+            .notification
+            .schedule_notification(NotificationKind::PlayerIsDead);
+    }
+    state.is_dead = is_dead;
+}
+
 /// Updates the [`PlayerState`]
 ///
 /// This function:
 /// - Returns the player current position or `None` when the minimap or player cannot be detected
 /// - Updates the stationary check via `state.is_stationary_timeout`
-/// - Delegates to `update_health_state` and `update_rune_validating_state`
+/// - Delegates to `update_health_state`, `update_rune_validating_state` and `update_is_dead_state`
 /// - Resets `state.unstuck_counter` and `state.unstuck_consecutive_counter` when position changed
 #[inline]
 fn update_state(context: &Context, state: &mut PlayerState) -> Option<Point> {
@@ -2718,6 +2766,7 @@ fn update_state(context: &Context, state: &mut PlayerState) -> Option<Point> {
         state.unstuck_consecutive_counter = 0;
         state.is_stationary_timeout = Timeout::default();
     }
+
     let (is_stationary, is_stationary_timeout) = update_with_timeout(
         state.is_stationary_timeout,
         MOVE_TIMEOUT,
@@ -2728,8 +2777,10 @@ fn update_state(context: &Context, state: &mut PlayerState) -> Option<Point> {
     state.is_stationary = is_stationary;
     state.is_stationary_timeout = is_stationary_timeout;
     state.last_known_pos = Some(pos);
+
     update_health_state(context, state);
     update_rune_validating_state(context, state);
+    update_is_dead_state(context, state);
     Some(pos)
 }
 
@@ -2783,7 +2834,7 @@ mod tests {
         update_up_jumping_context, update_use_key_context,
     };
     use crate::{
-        ActionKeyDirection, ActionKeyWith, KeyBinding,
+        ActionKeyDirection, ActionKeyWith, KeyBinding, LinkKeyBinding,
         context::{Context, MockKeySender},
         player::{Player, Timeout, update_non_positional_context},
     };
@@ -3207,5 +3258,94 @@ mod tests {
             ),
             Some(Player::Idle)
         );
+    }
+
+    #[test]
+    fn use_key_link_along() {
+        let mut state = PlayerState::default();
+        let mut context = Context::new(None, None);
+        let mut use_key = UseKey {
+            key: KeyBinding::A,
+            link_key: Some(LinkKeyBinding::Along(KeyBinding::Alt)),
+            count: 1,
+            current_count: 0,
+            direction: ActionKeyDirection::Any,
+            with: ActionKeyWith::Any,
+            wait_before_use_ticks: 0,
+            wait_after_use_ticks: 0,
+            stage: UseKeyStage::Using(Timeout::default(), false),
+        };
+
+        // Starts by holding down Alt key
+        let mut keys = MockKeySender::new();
+        keys.expect_send_down()
+            .withf(|key| matches!(key, KeyKind::Alt))
+            .once()
+            .return_once(|_| Ok(()));
+        context.keys = Box::new(keys);
+        update_use_key_context(&context, &mut state, use_key);
+        let _ = context.keys; // test check point by dropping
+
+        // Sends A at tick 2
+        let mut keys = MockKeySender::new();
+        keys.expect_send()
+            .withf(|key| matches!(key, KeyKind::A))
+            .once()
+            .return_once(|_| Ok(()));
+        context.keys = Box::new(keys);
+        use_key.stage = UseKeyStage::Using(
+            Timeout {
+                started: true,
+                total: 1,
+                current: 1,
+            },
+            false,
+        );
+        assert_matches!(
+            update_use_key_context(&context, &mut state, use_key),
+            Player::UseKey(UseKey {
+                stage: UseKeyStage::Using(
+                    Timeout {
+                        total: 2,
+                        current: 2,
+                        ..
+                    },
+                    false
+                ),
+                ..
+            })
+        );
+        let _ = context.keys; // test check point by dropping
+
+        // Ends by releasing Alt
+        let mut keys = MockKeySender::new();
+        keys.expect_send_up()
+            .withf(|key| matches!(key, KeyKind::Alt))
+            .once()
+            .return_once(|_| Ok(()));
+        context.keys = Box::new(keys);
+        use_key.stage = UseKeyStage::Using(
+            Timeout {
+                started: true,
+                total: 4,
+                current: 4,
+            },
+            false,
+        );
+        assert_matches!(
+            update_use_key_context(&context, &mut state, use_key),
+            Player::UseKey(UseKey {
+                stage: UseKeyStage::Using(
+                    Timeout {
+                        total: 4,
+                        current: 4,
+                        ..
+                    },
+                    true
+                ),
+                ..
+            })
+        );
+        // test check point by dropping here
     }
 }
