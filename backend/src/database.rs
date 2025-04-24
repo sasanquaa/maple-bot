@@ -409,6 +409,7 @@ pub enum LinkKeyBinding {
     Before(KeyBinding),
     AtTheSame(KeyBinding),
     After(KeyBinding),
+    Along(KeyBinding),
 }
 
 impl LinkKeyBinding {
@@ -416,7 +417,8 @@ impl LinkKeyBinding {
         match self {
             LinkKeyBinding::Before(key)
             | LinkKeyBinding::AtTheSame(key)
-            | LinkKeyBinding::After(key) => *key,
+            | LinkKeyBinding::After(key)
+            | LinkKeyBinding::Along(key) => *key,
         }
     }
 
@@ -425,6 +427,7 @@ impl LinkKeyBinding {
             LinkKeyBinding::Before(_) => LinkKeyBinding::Before(key),
             LinkKeyBinding::AtTheSame(_) => LinkKeyBinding::AtTheSame(key),
             LinkKeyBinding::After(_) => LinkKeyBinding::After(key),
+            LinkKeyBinding::Along(_) => LinkKeyBinding::Along(key),
         }
     }
 }
