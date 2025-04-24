@@ -414,7 +414,7 @@ fn update_loop() {
                 drop(settings_borrow_mut); // For notification to borrow immutably
                 let _ = context
                     .notification
-                    .schedule_notification(NotificationKind::FailOrMapChanged);
+                    .schedule_notification(NotificationKind::FailOrMapChange);
             }
         }
     });

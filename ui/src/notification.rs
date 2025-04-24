@@ -63,6 +63,16 @@ pub fn Notifications(
                 value: notifications_view().notify_on_rune_appear,
             }
             SettingsCheckbox {
+                label: "Notify If Elite Boss Appears",
+                on_input: move |notify_on_elite_boss_appear| {
+                    on_notifications(NotificationsData {
+                        notify_on_elite_boss_appear,
+                        ..notifications_view.peek().clone()
+                    });
+                },
+                value: notifications_view().notify_on_elite_boss_appear,
+            }
+            SettingsCheckbox {
                 label: "Notify If Player Dies",
                 on_input: move |notify_on_player_die| {
                     on_notifications(NotificationsData {

@@ -1,6 +1,4 @@
 use core::slice::SlicePattern;
-#[cfg(debug_assertions)]
-use std::sync::RwLock;
 use std::{
     collections::HashMap,
     env,
@@ -46,9 +44,6 @@ use ort::{
 use platforms::windows::KeyKind;
 
 use crate::{buff::BuffKind, mat::OwnedMat};
-
-#[cfg(debug_assertions)]
-static TEMPLATE_LOG: LazyLock<RwLock<Option<&'static str>>> = LazyLock::new(|| RwLock::new(None));
 
 pub trait Detector: 'static + Send + DynClone + Debug {
     fn mat(&self) -> &OwnedMat;
@@ -427,9 +422,16 @@ fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
 
 fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {
     /// TODO: Support default ratio
-    static ELITE_BOSS_BAR: LazyLock<Mat> = LazyLock::new(|| {
+    static ELITE_BOSS_BAR_1: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
-            include_bytes!(env!("ELITE_BOSS_BAR_TEMPLATE")),
+            include_bytes!(env!("ELITE_BOSS_BAR_1_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static ELITE_BOSS_BAR_2: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("ELITE_BOSS_BAR_2_TEMPLATE")),
             IMREAD_GRAYSCALE,
         )
         .unwrap()
@@ -440,8 +442,10 @@ fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {
     let crop_y = size.height / 5;
     let crop_bbox = Rect::new(0, 0, size.width, crop_y);
     let boss_bar = mat.roi(crop_bbox).unwrap();
-    let template = &*ELITE_BOSS_BAR;
-    detect_template(&boss_bar, template, Point::default(), 0.9).is_ok()
+    let template_1 = &*ELITE_BOSS_BAR_1;
+    let template_2 = &*ELITE_BOSS_BAR_2;
+    detect_template(&boss_bar, template_1, Point::default(), 0.9).is_ok()
+        || detect_template(&boss_bar, template_2, Point::default(), 0.9).is_ok()
 }
 
 fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect> {
@@ -1110,13 +1114,7 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
     let template_size = template.size().unwrap();
     let max_matches = max_matches.max(1);
     if max_matches == 1 {
-        let result = match_one(&result, offset, template_size, threshold);
-        if cfg!(debug_assertions) && result.is_ok() {
-            if let Some(target) = *TEMPLATE_LOG.read().unwrap() {
-                debug!(target: target, "detected single with threshold: {} / {:?}", threshold, result);
-            }
-        }
-        return vec![result];
+        return vec![match_one(&result, offset, template_size, threshold)];
     }
 
     let mut filter = Vec::new();
@@ -1134,15 +1132,6 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
         let mut roi = result.roi_mut(rect).unwrap();
         zeros.copy_to(&mut roi).unwrap();
         filter.push(Ok((rect, score)));
-    }
-    if cfg!(debug_assertions) {
-        if let Some(target) = *TEMPLATE_LOG.read().unwrap() {
-            let filter = filter
-                .iter()
-                .filter_map(|result| result.as_ref().cloned().ok())
-                .collect::<Vec<_>>();
-            debug!(target: target, "detected multiple with threshold: {} / {:?}", threshold, filter);
-        }
     }
     filter
 }

@@ -28,8 +28,9 @@ static FALSE: bool = false;
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 #[repr(usize)]
 pub enum NotificationKind {
-    FailOrMapChanged,
+    FailOrMapChange,
     RuneAppear,
+    EliteBossAppear,
     PlayerIsDead,
 }
 
@@ -94,10 +95,11 @@ impl DiscordNotification {
     pub fn schedule_notification(&self, kind: NotificationKind) -> Result<(), Error> {
         let settings = self.settings.borrow();
         let is_enabled = match kind {
-            NotificationKind::FailOrMapChanged => {
+            NotificationKind::FailOrMapChange => {
                 settings.notifications.notify_on_fail_or_change_map
             }
             NotificationKind::RuneAppear => settings.notifications.notify_on_rune_appear,
+            NotificationKind::EliteBossAppear => settings.notifications.notify_on_elite_boss_appear,
             NotificationKind::PlayerIsDead => settings.notifications.notify_on_player_die,
         };
         if !is_enabled {
@@ -125,7 +127,7 @@ impl DiscordNotification {
             .then_some(format!("<@{}> ", settings.notifications.discord_user_id))
             .unwrap_or_default();
         let content = match kind {
-            NotificationKind::FailOrMapChanged => {
+            NotificationKind::FailOrMapChange => {
                 if self.settings.borrow().stop_on_fail_or_change_map {
                     format!(
                         "{user_id}Bot stopped because it has failed to detect or the map has changed"
@@ -137,6 +139,9 @@ impl DiscordNotification {
             NotificationKind::RuneAppear => {
                 format!("{user_id}Bot has detected a rune on map")
             }
+            NotificationKind::EliteBossAppear => {
+                format!("{user_id}Elite boss spawned")
+            }
             NotificationKind::PlayerIsDead => {
                 format!("{user_id}The player is dead")
             }
@@ -147,12 +152,16 @@ impl DiscordNotification {
             attachments: vec![],
         };
         let frames = match kind {
-            NotificationKind::FailOrMapChanged => vec![(None, 2), (None, 4)],
-            NotificationKind::PlayerIsDead | NotificationKind::RuneAppear => vec![(None, 2)],
+            NotificationKind::FailOrMapChange => vec![(None, 2), (None, 4)],
+            NotificationKind::EliteBossAppear
+            | NotificationKind::PlayerIsDead
+            | NotificationKind::RuneAppear => vec![(None, 2)],
         };
         let delay = match kind {
-            NotificationKind::FailOrMapChanged => 5,
-            NotificationKind::PlayerIsDead | NotificationKind::RuneAppear => 3,
+            NotificationKind::FailOrMapChange => 5,
+            NotificationKind::EliteBossAppear
+            | NotificationKind::PlayerIsDead
+            | NotificationKind::RuneAppear => 3,
         };
 
         let mut scheduled = self.scheduled.lock().unwrap();
@@ -301,7 +310,7 @@ mod test {
         })));
 
         assert!(
-            noti.schedule_notification(NotificationKind::FailOrMapChanged)
+            noti.schedule_notification(NotificationKind::FailOrMapChange)
                 .is_ok()
         );
         assert!(noti.scheduled.lock().unwrap().len() == 1);
@@ -309,11 +318,11 @@ mod test {
             noti.pending
                 .lock()
                 .unwrap()
-                .get(NotificationKind::FailOrMapChanged.into())
+                .get(NotificationKind::FailOrMapChange.into())
                 .unwrap()
         );
         assert!(
-            noti.schedule_notification(NotificationKind::FailOrMapChanged)
+            noti.schedule_notification(NotificationKind::FailOrMapChange)
                 .is_err()
         );
         assert!(
@@ -333,7 +342,7 @@ mod test {
         })));
 
         assert!(
-            noti.schedule_notification(NotificationKind::FailOrMapChanged)
+            noti.schedule_notification(NotificationKind::FailOrMapChange)
                 .is_err()
         );
     }
@@ -344,7 +353,7 @@ mod test {
         let noti = DiscordNotification::new(Rc::new(RefCell::new(Settings::default())));
         noti.scheduled.lock().unwrap().push(ScheduledNotification {
             instant: Instant::now(),
-            kind: NotificationKind::FailOrMapChanged,
+            kind: NotificationKind::FailOrMapChange,
             url: "https://example.com".into(),
             frames: vec![(None, 3), (None, 6), (None, 9)],
             body: DiscordWebhookBody {
