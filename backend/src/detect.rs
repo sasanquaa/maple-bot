@@ -1,4 +1,6 @@
 use core::slice::SlicePattern;
+#[cfg(debug_assertions)]
+use std::sync::RwLock;
 use std::{
     collections::HashMap,
     env,
@@ -17,10 +19,10 @@ use mockall::mock;
 use opencv::{
     boxed_ref::BoxedRef,
     core::{
-        CMP_EQ, CMP_GT, CV_8U, CV_32FC3, CV_32S, Mat, MatExprTraitConst, MatTrait, MatTraitConst,
-        MatTraitConstManual, ModifyInplace, Point, Point2f, Range, Rect, Scalar, Size,
-        ToInputArray, Vec4b, Vector, add, add_weighted_def, bitwise_and_def, compare, divide2_def,
-        find_non_zero, min_max_loc, no_array, subtract_def, transpose_nd,
+        CMP_EQ, CMP_GT, CV_8U, CV_32FC1, CV_32FC3, CV_32S, Mat, MatExprTraitConst, MatTrait,
+        MatTraitConst, MatTraitConstManual, ModifyInplace, Point, Point2f, Range, Rect, Scalar,
+        Size, ToInputArray, Vec4b, Vector, add, add_weighted_def, bitwise_and_def, compare,
+        divide2_def, find_non_zero, min_max_loc, no_array, subtract_def, transpose_nd,
     },
     dnn::{
         ModelTrait, TextRecognitionModel, TextRecognitionModelTrait,
@@ -44,6 +46,9 @@ use ort::{
 use platforms::windows::KeyKind;
 
 use crate::{buff::BuffKind, mat::OwnedMat};
+
+#[cfg(debug_assertions)]
+static TEMPLATE_LOG: LazyLock<RwLock<Option<&'static str>>> = LazyLock::new(|| RwLock::new(None));
 
 pub trait Detector: 'static + Send + DynClone + Debug {
     fn mat(&self) -> &OwnedMat;
@@ -143,6 +148,8 @@ type MatFn = Box<dyn FnOnce() -> Mat + Send>;
 ///
 /// It is useful when there are multiple detections in a single tick that
 /// rely on grayscale (e.g. buffs).
+///
+/// TODO: Is it really useful?
 #[derive(Clone, Debug)]
 pub struct CachedDetector {
     mat: Arc<OwnedMat>,
@@ -411,7 +418,7 @@ fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
     });
 
     for template in &*ESC_SETTINGS {
-        if detect_template(mat, template, Point::default(), 0.85, None).is_ok() {
+        if detect_template(mat, template, Point::default(), 0.85).is_ok() {
             return true;
         }
     }
@@ -434,7 +441,7 @@ fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {
     let crop_bbox = Rect::new(0, 0, size.width, crop_y);
     let boss_bar = mat.roi(crop_bbox).unwrap();
     let template = &*ELITE_BOSS_BAR;
-    detect_template(&boss_bar, template, Point::default(), 0.9, None).is_ok()
+    detect_template(&boss_bar, template, Point::default(), 0.9).is_ok()
 }
 
 fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect> {
@@ -603,7 +610,7 @@ fn detect_minimap_rune(minimap: &impl ToInputArray) -> Result<Rect> {
         imgcodecs::imdecode(include_bytes!(env!("RUNE_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    detect_template(minimap, &*RUNE, Point::default(), 0.6, None)
+    detect_template(minimap, &*RUNE, Point::default(), 0.6)
 }
 
 fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
@@ -636,7 +643,7 @@ fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
     } else {
         PLAYER_DEFAULT_RATIO_THRESHOLD
     };
-    let result = detect_template(mat, template, Point::default(), threshold, None);
+    let result = detect_template(mat, template, Point::default(), threshold);
     if result.is_err() {
         WAS_IDEAL_RATIO.store(!was_ideal_ratio, Ordering::Release);
     }
@@ -649,7 +656,7 @@ fn detect_player_is_dead(mat: &impl ToInputArray) -> bool {
         imgcodecs::imdecode(include_bytes!(env!("TOMB_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    detect_template(mat, &*TEMPLATE, Point::default(), 0.8, None).is_ok()
+    detect_template(mat, &*TEMPLATE, Point::default(), 0.8).is_ok()
 }
 
 fn detect_player_in_cash_shop(mat: &impl ToInputArray) -> bool {
@@ -658,7 +665,7 @@ fn detect_player_in_cash_shop(mat: &impl ToInputArray) -> bool {
         imgcodecs::imdecode(include_bytes!(env!("CASH_SHOP_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    detect_template(mat, &*CASH_SHOP, Point::default(), 0.7, Some("cash shop")).is_ok()
+    detect_template(mat, &*CASH_SHOP, Point::default(), 0.7).is_ok()
 }
 
 fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
@@ -670,9 +677,9 @@ fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
         imgcodecs::imdecode(include_bytes!(env!("HP_END_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    let hp_start = detect_template(mat, &*HP_START, Point::default(), 0.8, None)?;
+    let hp_start = detect_template(mat, &*HP_START, Point::default(), 0.8)?;
     let hp_start_to_edge_x = hp_start.x + hp_start.width;
-    let hp_end = detect_template(mat, &*HP_END, Point::default(), 0.8, None)?;
+    let hp_end = detect_template(mat, &*HP_END, Point::default(), 0.8)?;
     Ok(Rect::new(
         hp_start_to_edge_x,
         hp_start.y,
@@ -717,7 +724,6 @@ fn detect_player_health_bars(
         hp_separator_template,
         hp_bar.tl(),
         0.7,
-        None,
     )
     .inspect_err(|_| {
         HP_SEPARATOR_TYPE_1.store(!hp_separator_type_1, Ordering::Release);
@@ -727,7 +733,6 @@ fn detect_player_health_bars(
         &*HP_SHIELD,
         hp_bar.tl(),
         0.8,
-        None,
     )
     .ok();
     let left = mat
@@ -792,7 +797,7 @@ fn detect_player_health(
     Ok((current_health.min(max_health), max_health))
 }
 
-fn detect_player_buff(mat: &impl ToInputArray, kind: BuffKind) -> bool {
+fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) -> bool {
     /// TODO: Support default ratio
     static RUNE_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("RUNE_BUFF_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
@@ -839,6 +844,13 @@ fn detect_player_buff(mat: &impl ToInputArray, kind: BuffKind) -> bool {
         )
         .unwrap()
     });
+    static WEALTH_EXP_POTION_MASK: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("WEALTH_EXP_POTION_MASK_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
     static WEALTH_ACQUISITION_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
             include_bytes!(env!("WEALTH_ACQUISITION_POTION_BUFF_TEMPLATE")),
@@ -882,16 +894,15 @@ fn detect_player_buff(mat: &impl ToInputArray, kind: BuffKind) -> bool {
         .unwrap()
     });
 
-    let score = match kind {
+    let threshold = match kind {
         BuffKind::AureliaElixir => 0.9,
-        BuffKind::LegionWealth => 0.73,
+        BuffKind::LegionWealth => 0.76,
+        BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => 0.85,
         BuffKind::Rune
         | BuffKind::SayramElixir
         | BuffKind::ExpCouponX3
         | BuffKind::BonusExpCoupon
         | BuffKind::LegionLuck
-        | BuffKind::WealthAcquisitionPotion
-        | BuffKind::ExpAccumulationPotion
         | BuffKind::ExtremeRedPotion
         | BuffKind::ExtremeBluePotion
         | BuffKind::ExtremeGreenPotion
@@ -913,7 +924,52 @@ fn detect_player_buff(mat: &impl ToInputArray, kind: BuffKind) -> bool {
         BuffKind::ExtremeGoldPotion => &*EXTREME_GOLD_POTION_BUFF,
     };
 
-    detect_template(mat, template, Point::default(), score, None).is_ok()
+    if matches!(
+        kind,
+        BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion
+    ) {
+        // Because the two potions are really similar, detecting one may mis-detect for the other.
+        // Can't really think of a better way to do this.... But this seems working just fine.
+        // Also tested with the who-use-this? Invicibility Potion and Resistance Potion. Those two
+        // doesn't match at all so this should be fine.
+        let matches = detect_template_multiple(
+            mat,
+            template,
+            &*WEALTH_EXP_POTION_MASK,
+            Point::default(),
+            2,
+            threshold,
+        )
+        .into_iter()
+        .filter_map(|result| result.ok())
+        .collect::<Vec<_>>();
+        if matches.is_empty() {
+            return false;
+        }
+        // Likely both potions are active
+        if matches.len() == 2 {
+            return true;
+        }
+        let template_other = if matches!(kind, BuffKind::WealthAcquisitionPotion) {
+            &*EXP_ACCUMULATION_POTION_BUFF
+        } else {
+            &*WEALTH_ACQUISITION_POTION_BUFF
+        };
+        let match_current = matches.into_iter().next().unwrap();
+        let match_other = detect_template_single(
+            mat,
+            template_other,
+            &*WEALTH_EXP_POTION_MASK,
+            Point::default(),
+            threshold,
+        );
+        if match_other.is_err() || match_other.unwrap().1 < match_current.1 {
+            return true;
+        }
+        false
+    } else {
+        detect_template(mat, template, Point::default(), threshold).is_ok()
+    }
 }
 
 fn detect_rune_arrows(mat: &impl MatTraitConst) -> Result<[KeyKind; 4]> {
@@ -982,43 +1038,113 @@ fn detect_erda_shower(mat: &impl MatTraitConst) -> Result<Rect> {
     let crop_y = size.height / 5;
     let crop_bbox = Rect::new(size.width - crop_x, size.height - crop_y, crop_x, crop_y);
     let skill_bar = mat.roi(crop_bbox).unwrap();
-    detect_template(&skill_bar, &*ERDA_SHOWER, crop_bbox.tl(), 0.96, None)
+    detect_template(&skill_bar, &*ERDA_SHOWER, crop_bbox.tl(), 0.96)
 }
 
-/// Detects the `template` from the given BGR image `Mat`.
+/// Detects a single match from `template` with the given BGR image `Mat`.
 #[inline]
 fn detect_template<T: ToInputArray + MatTraitConst>(
     mat: &impl ToInputArray,
     template: &T,
     offset: Point,
     threshold: f64,
-    log: Option<&str>,
 ) -> Result<Rect> {
+    detect_template_single(mat, template, no_array(), offset, threshold).map(|(bbox, _)| bbox)
+}
+
+/// Detects a single match with `mask` from `template` with the given BGR image `Mat`.
+#[inline]
+fn detect_template_single<T: ToInputArray + MatTraitConst>(
+    mat: &impl ToInputArray,
+    template: &T,
+    mask: impl ToInputArray,
+    offset: Point,
+    threshold: f64,
+) -> Result<(Rect, f64)> {
+    detect_template_multiple(mat, template, mask, offset, 1, threshold)
+        .into_iter()
+        .next()
+        .unwrap()
+}
+
+/// Detects multiple matches from `template` with the given BGR image `Mat`.
+#[inline]
+fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
+    mat: &impl ToInputArray,
+    template: &T,
+    mask: impl ToInputArray,
+    offset: Point,
+    max_matches: usize,
+    threshold: f64,
+) -> Vec<Result<(Rect, f64)>> {
+    #[inline]
+    fn match_one(
+        result: &Mat,
+        offset: Point,
+        template_size: Size,
+        threshold: f64,
+    ) -> Result<(Rect, f64)> {
+        let mut score = 0f64;
+        let mut loc = Point::default();
+        min_max_loc(
+            &result,
+            None,
+            Some(&mut score),
+            None,
+            Some(&mut loc),
+            &no_array(),
+        )
+        .unwrap();
+        if score < threshold {
+            return Err(anyhow!("template not found").context(score));
+        }
+        let tl = loc + offset;
+        let br = tl + Point::from_size(template_size);
+        let rect = Rect::from_points(tl, br);
+        Ok((rect, score))
+    }
+
     let mut result = Mat::default();
-    let mut score = 0f64;
-    let mut loc = Point::default();
+    match_template(mat, template, &mut result, TM_CCOEFF_NORMED, &mask).unwrap();
 
-    match_template(mat, template, &mut result, TM_CCOEFF_NORMED, &no_array()).unwrap();
-    min_max_loc(
-        &result,
-        None,
-        Some(&mut score),
-        None,
-        Some(&mut loc),
-        &no_array(),
-    )
-    .unwrap();
+    let template_size = template.size().unwrap();
+    let max_matches = max_matches.max(1);
+    if max_matches == 1 {
+        let result = match_one(&result, offset, template_size, threshold);
+        if cfg!(debug_assertions) && result.is_ok() {
+            if let Some(target) = *TEMPLATE_LOG.read().unwrap() {
+                debug!(target: target, "detected single with threshold: {} / {:?}", threshold, result);
+            }
+        }
+        return vec![result];
+    }
 
-    let tl = loc + offset;
-    let br = tl + Point::from_size(template.size().unwrap());
-    if let Some(target) = log {
-        debug!(target: target, "detected with score: {} / {}", score, threshold);
+    let mut filter = Vec::new();
+    let zeros = Mat::zeros(template_size.height, template_size.width, CV_32FC1)
+        .unwrap()
+        .to_mat()
+        .unwrap();
+    for _ in 0..max_matches {
+        let match_result = match_one(&result, offset, template_size, threshold);
+        if match_result.is_err() {
+            filter.push(match_result);
+            continue;
+        }
+        let (rect, score) = match_result.unwrap();
+        let mut roi = result.roi_mut(rect).unwrap();
+        zeros.copy_to(&mut roi).unwrap();
+        filter.push(Ok((rect, score)));
     }
-    if score >= threshold {
-        Ok(Rect::from_points(tl, br))
-    } else {
-        Err(anyhow!("template not found").context(score))
+    if cfg!(debug_assertions) {
+        if let Some(target) = *TEMPLATE_LOG.read().unwrap() {
+            let filter = filter
+                .iter()
+                .filter_map(|result| result.as_ref().cloned().ok())
+                .collect::<Vec<_>>();
+            debug!(target: target, "detected multiple with threshold: {} / {:?}", threshold, filter);
+        }
     }
+    filter
 }
 
 /// Extracts texts from the non-preprocessed `Mat` and detected text bounding boxes.

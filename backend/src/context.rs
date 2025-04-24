@@ -335,6 +335,9 @@ fn update_loop() {
     let mut buff_states = BuffKind::iter()
         .map(BuffState::new)
         .collect::<Vec<BuffState>>();
+    buff_states.iter_mut().for_each(|state| {
+        state.update_enabled_state(&config, &settings.borrow());
+    });
 
     loop_with_fps(FPS, || {
         let mat = match settings.borrow().capture_mode {
@@ -376,6 +379,7 @@ fn update_loop() {
             config: &mut config,
             settings: &mut settings_borrow_mut,
             buffs: &mut buffs,
+            buff_states: &mut buff_states,
             actions: &mut actions,
             rotator: &mut rotator,
             player: &mut player_state,

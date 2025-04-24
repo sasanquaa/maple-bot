@@ -7,7 +7,7 @@ use crate::{
     Action, ActionCondition, ActionKey, Bound, CaptureMode, Configuration, GameState, KeyBinding,
     KeyBindingConfiguration, Minimap as MinimapData, PotionMode, RequestHandler, RotatorMode,
     Settings,
-    buff::BuffKind,
+    buff::{BuffKind, BuffState},
     context::{Context, KeySenderKind},
     database::InputMethod,
     minimap::{Minimap, MinimapState},
@@ -22,6 +22,7 @@ pub struct DefaultRequestHandler<'a> {
     pub config: &'a mut Configuration,
     pub settings: &'a mut Settings,
     pub buffs: &'a mut Vec<(BuffKind, KeyBinding)>,
+    pub buff_states: &'a mut Vec<BuffState>,
     pub actions: &'a mut Vec<Action>,
     pub rotator: &'a mut Rotator,
     pub player: &'a mut PlayerState,
@@ -120,6 +121,9 @@ impl RequestHandler for DefaultRequestHandler<'_> {
                 (_, PotionMode::Percentage(percent)) => Some(percent / 100.0),
             };
         self.player.config.update_health_millis = Some(self.config.health_update_millis);
+        self.buff_states.iter_mut().for_each(|state| {
+            state.update_enabled_state(self.config, self.settings);
+        });
         self.update_rotator_actions(
             self.minimap
                 .data()
@@ -158,6 +162,9 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             ));
         }
         *self.settings = settings;
+        self.buff_states.iter_mut().for_each(|state| {
+            state.update_enabled_state(self.config, self.settings);
+        });
         self.update_rotator_actions(
             self.minimap
                 .data()

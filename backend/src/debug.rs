@@ -52,16 +52,11 @@ pub fn debug_pathing_points(mat: &impl MatTraitConst, minimap: Rect, points: &[P
         )
         .unwrap();
     }
-    debug_mat("Pathing", &mat, 1, &[] as &[(_, &str); 0]);
+    debug_mat("Pathing", &mat, 1, &[]);
 }
 
 #[allow(unused)]
-pub fn debug_mat<T: AsRef<str>>(
-    name: &str,
-    mat: &impl MatTraitConst,
-    wait: i32,
-    bboxes: &[(Rect, T)],
-) -> i32 {
+pub fn debug_mat(name: &str, mat: &impl MatTraitConst, wait: i32, bboxes: &[(Rect, &str)]) -> i32 {
     let mut mat = mat.try_clone().unwrap();
     for (bbox, text) in bboxes {
         let _ = rectangle(
@@ -74,7 +69,7 @@ pub fn debug_mat<T: AsRef<str>>(
         );
         let _ = put_text_def(
             &mut mat,
-            text.as_ref(),
+            text,
             bbox.tl() - Point::new(0, 10),
             FONT_HERSHEY_SIMPLEX,
             0.9,
@@ -92,7 +87,7 @@ pub fn save_image_for_training(mat: &impl MatTraitConst) {
     // let mat = mat.try_clone().unwrap();
     let image = LazyLock::force(&DATASET_DIR).join(format!("{name}.png"));
 
-    debug_mat("Image", &mat, 0, &[] as &[(_, &str); 0]);
+    debug_mat("Image", &mat, 0, &[]);
 
     imwrite_def(image.to_str().unwrap(), &mat).unwrap();
 }
@@ -211,12 +206,7 @@ fn save_minimap_for_training(mat: &Mat, minimap: &Rect) {
     let label = dataset.join(format!("{name}.txt"));
     let image = dataset.join(format!("{name}.png"));
 
-    debug_mat(
-        "Training",
-        &mat.roi(*minimap).unwrap(),
-        0,
-        &[] as &[(_, &str); 0],
-    );
+    debug_mat("Training", &mat.roi(*minimap).unwrap(), 0, &[]);
 
     imwrite_def(image.to_str().unwrap(), mat).unwrap();
     fs::write(label, to_yolo_format(0, mat.size().unwrap(), *minimap)).unwrap();

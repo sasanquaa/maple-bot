@@ -34,6 +34,3 @@ tonic-build = "*"
 
 [dev-dependencies]
 mockall = "0.13.1"
-
-[features]
-wealth_exp_pots = []
