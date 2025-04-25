@@ -1,5 +1,6 @@
 - [Features](#features)
 - [How to use](#how-to-use)
+  - [Download](#download)
   - [Map](#map)
   - [Configuration](#configuration)
   - [Action](#action)
@@ -8,6 +9,7 @@
   - [Rotation Modes](#rotation-modes)
   - [Platforms Pathing](#platforms-pathing)
   - [Capture Modes](#capture-modes)
+  - [Remote Control](#remote-control)
 - [Troubleshooting](#troubleshooting)
   - [Wrong map detection](#wrong-map-detection)
   - [Actions contention](#actions-contention-)
@@ -38,6 +40,12 @@
   - Solving rune in non-GMS region works fine but the bot cannot solve other anti-bot detections
 
 ## How to use
+
+#### Download
+- Head to the [Github Release](https://github.com/sasanquaa/maple-bot/releases)
+- Download the `app.zip` and extract it
+- Run the exe file
+
 #### Map
 - Map is automatically detected but must be created manually by providing a name
 - The created map is saved and can be selected again later
@@ -124,13 +132,16 @@ should also be casted when using this condition or the actions will be re-run.
 Linked key and linked action are useful for combo-oriented class such as Blaster, Cadena, Ark, Mercedes,...
 Animation cancel timing is specific to each class. As such, the timing is approximated and provided in the configuration, so make sure you select the appropriate one.
 
-For linked key, there are three link types:
+For linked key, there are four link types:
 - `Before` - Uses the link key before the actual key (e.g. for Cadena, Chain Arts: Thrash is the link key)
 - `AtTheSame` - Uses the link key at the same time as the actual key (probably only Blaster skating needs this)
 - `After` - Uses the link key after the actual key (e.g. for Blaster, Weaving/Bobbing is the link key)
+- `Along` - Uses the link key along with the actual key while the link key is being held down (e.g. for in-game Combo key)
 
 Note that even though `AtTheSame` would send two keys simultaneously, *the link key will be send first*. When the configured
-class is set to Blaster, the performing action has `After` link type and the link key is not `Space`, an extra `Space` key will be sent for cancelling Bobbing/Weaving. The same effect can also be achieved through linked action.
+class is set to Blaster, the performing action has `After` link type and the link key is not `Jump Key`, an extra `Jump Key` will be sent for cancelling Bobbing/Weaving. The same effect can also be achieved through linked action.
+
+As for `Along` link type, the timing is fixed and does not affected by class type.
 
 Linked action is for linking action(s) into a chain. Linked action can be created by adding a `Linked` condition action below any `Any`/`ErdaShowerOffCooldown`/`EveryMillis`/`Linked` action. The first non-`Linked` action is the start of the actions chain:
 
@@ -182,10 +193,10 @@ There are three capture modes, the first two are similar to what you see in OBS:
 - `BitBlt` - The default capture mode that works for GMS
 - `Windows Graphics Capture` - The alternative capture mode for Windows 10 that works for TMS/MSEA
 - `BitBltArea` - Captures a fixed area on the screen
-  - This capture mode is useful if you are running the game inside something else or want to use fixed capture area (e.g. a VM or capture card?)
+  - This capture mode is useful if you are running the game inside something else or want to use fixed capture area (e.g. a VM, capture card (?) or Sunshine/Moonlight)
   - The capture area can stay behind the game but it cannot be minimized
-  - **This mode relies on high-quality game images so the images should be clear and not blurry**
-  - **Even when the game resizes (e.g. going to cash shop), the capture area must still contain the game**
+  - As of v0.6.0, limited support for remote control has been added see [Remote Control](#remote-control)
+  - **When the game resizes (e.g. going to cash shop), the capture area must still contain the game**
   - **When using this capture mode, key inputs will also be affected:**
     - **Make sure the window on top of the capture area is focused by clicking it for key inputs to work**
     - For example, if you have Notepad on top of the game and focused, it will send input to the Notepad instead of the game
@@ -194,12 +205,23 @@ If you want to customize input method, the currently supported method is by usin
   - Use the language of your choice to write, host it and provide the server URL to the bot
   - Check this [example](https://github.com/sasanquaa/maple-bot/tree/master/examples/python)
 
+#### Remote Control
+v0.6.0 add some supports for remote control. It is currently tested against Sunshine/Moonlight with the following setup:
+1. Both host (Sunshine) and client (Moonlight) native resolutions are 1980x1080
+2. Client connects in borderless windowed, 1080p, 10Mbps bitrate and 30 FPS
+3. Host matches client resolution upon connection using https://github.com/Nonary/ResolutionAutomation
+4. Use BitBltArea and drag over to the client game
+5. Tested against some dark/bright maps and using skills with fancy effects
+
+I think this is the lowest settings the bot can run at. Tested against using windowed/minimized Moonlight but it does
+not detect well. Both host and client should have matching resolutions.
 
 ## Troubleshooting
 #### Wrong map detection
 Wrong map detection can happen when:
 - Moving quickly between different maps
 - Other UIs overlapping
+- The map is not expanded fully
 
 Rule of thumb is:  Map detection will always try to crop the white border and make it is as tight as possbile. So before
 creating a new map, double-check to see if the map being displayed has white border cropped and looks similar to the
