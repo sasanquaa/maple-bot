@@ -15,7 +15,6 @@ use crate::{
 };
 
 const MINIMAP_BORDER_WHITENESS_THRESHOLD: u8 = 160;
-const ANCHORS_ACCEPTABLE_ERROR_RANGE: u8 = 30;
 
 #[derive(Debug, Default)]
 pub struct MinimapState {
@@ -194,12 +193,13 @@ fn update_idle_context(
 
 #[inline]
 fn anchor_match(anchor: Vec4b, pixel: Vec4b) -> bool {
-    let b = anchor[0].abs_diff(pixel[0]);
-    let g = anchor[1].abs_diff(pixel[1]);
-    let r = anchor[2].abs_diff(pixel[2]);
-    b <= ANCHORS_ACCEPTABLE_ERROR_RANGE
-        && g <= ANCHORS_ACCEPTABLE_ERROR_RANGE
-        && r <= ANCHORS_ACCEPTABLE_ERROR_RANGE
+    const ANCHOR_ACCEPTABLE_ERROR_RANGE: u32 = 45;
+
+    let b = anchor[0].abs_diff(pixel[0]) as u32;
+    let g = anchor[1].abs_diff(pixel[1]) as u32;
+    let r = anchor[2].abs_diff(pixel[2]) as u32;
+    let avg = (b + g + r) / 3; // Average for grayscale
+    avg <= ANCHOR_ACCEPTABLE_ERROR_RANGE
 }
 
 #[inline]

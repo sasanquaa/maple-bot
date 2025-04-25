@@ -118,14 +118,13 @@ fn update_detection(
 
 #[inline]
 fn anchor_match(anchor: Vec4b, pixel: Vec4b) -> bool {
-    const ANCHOR_ACCEPTABLE_ERROR_RANGE: u8 = 30;
+    const ANCHOR_ACCEPTABLE_ERROR_RANGE: u32 = 45;
 
-    let b = anchor[0].abs_diff(pixel[0]);
-    let g = anchor[1].abs_diff(pixel[1]);
-    let r = anchor[2].abs_diff(pixel[2]);
-    b <= ANCHOR_ACCEPTABLE_ERROR_RANGE
-        && g <= ANCHOR_ACCEPTABLE_ERROR_RANGE
-        && r <= ANCHOR_ACCEPTABLE_ERROR_RANGE
+    let b = anchor[0].abs_diff(pixel[0]) as u32;
+    let g = anchor[1].abs_diff(pixel[1]) as u32;
+    let r = anchor[2].abs_diff(pixel[2]) as u32;
+    let avg = (b + g + r) / 3; // Average for grayscale
+    avg <= ANCHOR_ACCEPTABLE_ERROR_RANGE
 }
 
 #[inline]
@@ -203,7 +202,7 @@ mod tests {
 
     #[test]
     fn skill_idle_to_cooldown() {
-        let (detector, rect) = create_mock_detector(254, None);
+        let (detector, rect) = create_mock_detector(200, None);
         let context = Context::new(None, Some(detector));
         let mut state = SkillState::new(SkillKind::ErdaShower);
 
