@@ -1,5 +1,3 @@
-![Emo Cat](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/emo-cat.gif)
-
 - [Features](#features)
 - [How to use](#how-to-use)
   - [Map](#map)
@@ -18,25 +16,26 @@
   - [Mage up jump](#mage-up-jump)
   - [Installation](#installation)
 - [Contact](#contact)
+- [Video guides](#video-guides)
 - [Showcase](#showcase)
   - [Rotation](#rotation)
   - [Auto Mobbing & Platforms Pathing](#auto-mobbing-%26-platforms-pathing)
   - [Rune Solving](#rune-solving)
 
 ## Features
-- More like a rotation maker than a bot? (cope)
-- Run around and hit random mobs mode (literally a bot)
-- Auto buffs for common farming-related buffs
-- Auto potion (periodically or somewhat functional Auto HP-like pet skill)
-- Solve rune (for spinning rune, it uses the lost ancient technique of AFK-ing in cash shop for 10 seconds)
-- Platforms pathing (find a path to reach a platform)
-- ~~Barely maintainable~~ UI ~~(please help)~~
-- Work by taking an image and send key inputs (no memory hacking)
+- Rotation maker by through creating preset and actions
+- Support for combo-oriented classes
+- Auto-mobbing mode for hitting random mobs
+- Auto-buff for common farming-related buffs
+- Auto-HP potion
+- Solve rune
+- Platforms pathing for auto-mobbing and rune solving
+- Usable UI
+- Work by taking an image and send key inputs
 - Not a feature but currently work best in GMS:
   - Updating PNGs are required to support non-English regions
-  - Work with TMS/MSEA but I can't with their anti-human bot detection (Rune solving works fine)
-- I hate this game 
-- Why do Jett gets free BOD just to be deleted?
+  - Work with KMS/CMS/TMS/MSEA
+  - Solving rune in non-GMS region works fine but the bot cannot solve other anti-bot detections
 
 ## How to use
 #### Map
@@ -191,21 +190,13 @@ There are three capture modes, the first two are similar to what you see in OBS:
     - **Make sure the window on top of the capture area is focused by clicking it for key inputs to work**
     - For example, if you have Notepad on top of the game and focused, it will send input to the Notepad instead of the game
 
-<details>
-<summary>Technical note</summary>
-
-There is currently no way to customize key inputs sending method. And I will probably add one in the future. But you can use
- `BitBltArea` as a workaround that will require some effort. The capture mode will use `SendInput` and send it to the top-most window of the capture area. So `SetWindowsHookExW ` with `WH_KEYBOARD_LL` can be used to listen to the bot input and proxy it elsewhere or with a different method. `dwExtraInfo` is currently set to the bot PID.
-
-</details>
+If you want to customize input method, the currently supported method is by using gRPC:
+  - Use the language of your choice to write, host it and provide the server URL to the bot
+  - Check this [example](https://github.com/sasanquaa/maple-bot/tree/master/examples/python)
 
 
 ## Troubleshooting
 #### Wrong map detection
-Since v0.3.0, most of the times, there wouldn't be any problem because automatic map's name is no longer detected
-but map detection can still be wrong sometimes. You will most likely notice it right away because it does not look
-"tight", well cropped or aligned with actual map in the game.
-
 Wrong map detection can happen when:
 - Moving quickly between different maps
 - Other UIs overlapping
@@ -248,6 +239,11 @@ If you use the bot on a newly installed Windows, make sure [Visual C++ Redistrib
 - You can reach me by creating an issue on Github or by joining the [Discord](https://discord.gg/ReTp6MHgF6)
 - The Discord is just a simple messaging channel if you have quick questions related to the bot
 
+## Video guides
+1. [Basic operations](https://youtu.be/8X2CKS7bnHY?si=3yPmVPaMsFEyDD8c)
+2. Rotation modes, auto-mobbing and platforms pathing - TODO
+3. Linked key and linked actions - TODO
+
 ## Showcase
 #### Rotation
 https://github.com/user-attachments/assets/3c66dcb9-7196-4245-a7ea-4253f214bba6
@@ -261,4 +257,3 @@ https://github.com/user-attachments/assets/3f087f83-f956-4ee1-84b0-1a31286413ef
 
 #### Rune Solving
 https://github.com/user-attachments/assets/e9ebfc60-42bc-49ef-a367-3c20a1cd00e0
-
