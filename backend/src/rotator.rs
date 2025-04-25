@@ -157,6 +157,9 @@ impl Rotator {
             };
             let (action, offset) = rotator_action(action, i, actions);
             debug_assert!(i != 0 || !matches!(condition, ActionCondition::Linked));
+            // Should not move i below the match because it could cause
+            // infinite loop due to auto mobbing ignoring Any condition
+            i += offset;
             match condition {
                 ActionCondition::EveryMillis(_) | ActionCondition::ErdaShowerOffCooldown => {
                     self.priority_actions.insert(
@@ -173,7 +176,6 @@ impl Rotator {
                 }
                 ActionCondition::Linked => unreachable!(),
             }
-            i += offset;
         }
 
         self.priority_actions.insert(

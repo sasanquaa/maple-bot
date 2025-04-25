@@ -14,7 +14,7 @@ use crate::{
     task::{Task, Update, update_detection_task},
 };
 
-const MINIMAP_BORDER_WHITENESS_THRESHOLD: u8 = 170;
+const MINIMAP_BORDER_WHITENESS_THRESHOLD: u8 = 160;
 
 #[derive(Debug, Default)]
 pub struct MinimapState {
@@ -155,8 +155,8 @@ fn update_idle_context(
     } = idle;
     let tl_pixel = pixel_at(context.detector_unwrap().mat(), anchors.tl.0)?;
     let br_pixel = pixel_at(context.detector_unwrap().mat(), anchors.br.0)?;
-    let tl_match = tl_pixel == anchors.tl.1;
-    let br_match = br_pixel == anchors.br.1;
+    let tl_match = anchor_match(anchors.tl.1, tl_pixel);
+    let br_match = anchor_match(anchors.br.1, br_pixel);
     if !tl_match && !br_match {
         debug!(
             target: "minimap",
@@ -189,6 +189,17 @@ fn update_idle_context(
         platforms_bound,
         ..idle
     }))
+}
+
+#[inline]
+fn anchor_match(anchor: Vec4b, pixel: Vec4b) -> bool {
+    const ANCHOR_ACCEPTABLE_ERROR_RANGE: u32 = 45;
+
+    let b = anchor[0].abs_diff(pixel[0]) as u32;
+    let g = anchor[1].abs_diff(pixel[1]) as u32;
+    let r = anchor[2].abs_diff(pixel[2]) as u32;
+    let avg = (b + g + r) / 3; // Average for grayscale
+    avg <= ANCHOR_ACCEPTABLE_ERROR_RANGE
 }
 
 #[inline]

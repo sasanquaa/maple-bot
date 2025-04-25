@@ -77,7 +77,7 @@ fn update_context(contextual: Skill, context: &Context, state: &mut SkillState) 
             let Ok(pixel) = context.detector_unwrap().mat().at_pt::<Vec4b>(anchor_point) else {
                 return Skill::Detecting;
             };
-            if *pixel != anchor_pixel {
+            if !anchor_match(*pixel, anchor_pixel) {
                 debug!(target: "skill", "assume skill to be on cooldown {:?} != {:?}, could be false positive", (anchor_point, anchor_pixel), pixel);
                 // assume it is on cooldown
                 Skill::Cooldown
@@ -114,6 +114,17 @@ fn update_detection(
         }
         Update::Pending => contextual,
     }
+}
+
+#[inline]
+fn anchor_match(anchor: Vec4b, pixel: Vec4b) -> bool {
+    const ANCHOR_ACCEPTABLE_ERROR_RANGE: u32 = 45;
+
+    let b = anchor[0].abs_diff(pixel[0]) as u32;
+    let g = anchor[1].abs_diff(pixel[1]) as u32;
+    let r = anchor[2].abs_diff(pixel[2]) as u32;
+    let avg = (b + g + r) / 3; // Average for grayscale
+    avg <= ANCHOR_ACCEPTABLE_ERROR_RANGE
 }
 
 #[inline]
@@ -191,7 +202,7 @@ mod tests {
 
     #[test]
     fn skill_idle_to_cooldown() {
-        let (detector, rect) = create_mock_detector(254, None);
+        let (detector, rect) = create_mock_detector(200, None);
         let context = Context::new(None, Some(detector));
         let mut state = SkillState::new(SkillKind::ErdaShower);
 

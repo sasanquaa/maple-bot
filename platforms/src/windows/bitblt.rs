@@ -86,7 +86,7 @@ impl BitBltCapture {
         self.grab_inner(offset)
     }
 
-    fn grab_inner(&mut self, offset: Option<(i32, i32)>) -> Result<Frame, Error> {
+    fn grab_inner(&mut self, mut offset: Option<(i32, i32)>) -> Result<Frame, Error> {
         let handle = self.handle.as_inner().ok_or(Error::WindowNotFound)?;
         let rect = get_rect(handle)?;
         let width = rect.right - rect.left;
@@ -96,7 +96,7 @@ impl BitBltCapture {
         }
 
         let handle_dc = if self.overlap {
-            get_device_context_from_monitor(handle)?
+            get_device_context_from_monitor(handle, &mut offset)?
         } else {
             get_device_context(handle)?
         };
@@ -152,7 +152,10 @@ fn get_rect(handle: HWND) -> Result<RECT, Error> {
 }
 
 #[inline]
-fn get_device_context_from_monitor(handle: HWND) -> Result<DeviceContext, Error> {
+fn get_device_context_from_monitor(
+    handle: HWND,
+    offset: &mut Option<(i32, i32)>,
+) -> Result<DeviceContext, Error> {
     let monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
     if monitor.is_invalid() {
         return Err(Error::WindowNotFound);
@@ -166,6 +169,12 @@ fn get_device_context_from_monitor(handle: HWND) -> Result<DeviceContext, Error>
     };
     unsafe {
         GetMonitorInfoW(monitor, (&raw mut info).cast()).ok()?;
+    }
+    if offset.is_some() {
+        let (mut left, mut top) = offset.unwrap();
+        left -= info.monitorInfo.rcMonitor.left;
+        top -= info.monitorInfo.rcMonitor.top;
+        *offset = Some((left, top));
     }
     let handle_dc =
         unsafe { CreateDCW(None, PCWSTR::from_raw(info.szDevice.as_ptr()), None, None) };

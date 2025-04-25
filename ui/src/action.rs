@@ -8,7 +8,7 @@ use backend::{
     Action, ActionCondition, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove,
     IntoEnumIterator, LinkKeyBinding, Minimap, ParseError, Position, Settings,
 };
-use dioxus::prelude::*;
+use dioxus::{document::eval, prelude::*};
 use futures_util::StreamExt;
 use rand::distr::{Alphanumeric, SampleString};
 
@@ -412,7 +412,8 @@ fn ActionItemList(
     }));
 
     rsx! {
-        div { class: "flex-1 flex flex-col space-y-1 px-1 overflow-y-auto scrollbar rounded",
+        div {
+            class: "flex-1 flex flex-col space-y-1 px-1 overflow-y-auto scrollbar rounded",
             if actions.is_empty() {
                 div { class: "flex items-center justify-center text-sm text-gray-500 h-full",
                     "No actions"
@@ -603,7 +604,29 @@ fn ActionItem(
         Action::Move(_) => "border-blue-300",
         Action::Key(_) => "border-gray-300",
     };
+    let mut did_drag = use_signal(|| false);
     let cursor = if draggable { "cursor-move" } else { "" };
+
+    use_effect(move || {
+        if did_drag() {
+            spawn(async move {
+                let _ = eval(
+                    r#"
+                    window.addEventListener("drop", handleDrop);
+                    async function handleDrop(e) {
+                        e.preventDefault();
+                        window.removeEventListener("drop", handleDrop);
+                        await dioxus.send(true);
+                    }
+                    "#,
+                )
+                .recv::<bool>()
+                .await;
+                did_drag.set(false);
+                on_drop((index, true));
+            });
+        }
+    });
 
     rsx! {
         div {
@@ -615,17 +638,14 @@ fn ActionItem(
             ondragover: move |e| {
                 e.prevent_default();
             },
-            ondragstart: move |e| {
-                if !draggable {
-                    e.prevent_default();
-                } else {
+            ondragstart: move |_| {
+                if draggable {
+                    did_drag.set(true);
                     on_drag(index);
                 }
             },
-            ondrop: move |e| {
-                if !draggable {
-                    e.prevent_default();
-                } else {
+            ondrop: move |_| {
+                if draggable {
                     on_drop((index, true));
                 }
             },
