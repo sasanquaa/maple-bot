@@ -9,7 +9,7 @@ use tokio::sync::broadcast::{self, Receiver, Sender};
 use windows::{
     Win32::{
         Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
-        Graphics::Gdi::{MONITOR_DEFAULTTONULL, MonitorFromWindow},
+        Graphics::Gdi::{IntersectRect, MONITOR_DEFAULTTONULL, MonitorFromWindow},
         System::Threading::GetCurrentProcessId,
         UI::{
             Input::KeyboardAndMouse::{
@@ -474,17 +474,20 @@ fn is_foreground(handle: HWND, kind: KeyInputKind) -> bool {
             }
             let mut rect_fg = RECT::default();
             let mut rect_handle = RECT::default();
+            let mut rect_intersect = RECT::default();
             unsafe {
                 if GetWindowRect(handle_fg, &mut rect_fg).is_err()
                     || GetWindowRect(handle, &mut rect_handle).is_err()
                 {
                     return false;
                 }
+                IntersectRect(
+                    &raw mut rect_intersect,
+                    &raw const rect_fg,
+                    &raw const rect_handle,
+                )
+                .as_bool()
             }
-            rect_fg.left >= rect_handle.left
-                && rect_fg.top >= rect_handle.top
-                && rect_fg.right <= rect_handle.right
-                && rect_fg.bottom <= rect_handle.bottom
         }
     }
 }

@@ -77,7 +77,7 @@ fn update_context(contextual: Skill, context: &Context, state: &mut SkillState) 
             let Ok(pixel) = context.detector_unwrap().mat().at_pt::<Vec4b>(anchor_point) else {
                 return Skill::Detecting;
             };
-            if *pixel != anchor_pixel {
+            if !anchor_match(*pixel, anchor_pixel) {
                 debug!(target: "skill", "assume skill to be on cooldown {:?} != {:?}, could be false positive", (anchor_point, anchor_pixel), pixel);
                 // assume it is on cooldown
                 Skill::Cooldown
@@ -114,6 +114,18 @@ fn update_detection(
         }
         Update::Pending => contextual,
     }
+}
+
+#[inline]
+fn anchor_match(anchor: Vec4b, pixel: Vec4b) -> bool {
+    const ANCHOR_ACCEPTABLE_ERROR_RANGE: u8 = 30;
+
+    let b = anchor[0].abs_diff(pixel[0]);
+    let g = anchor[1].abs_diff(pixel[1]);
+    let r = anchor[2].abs_diff(pixel[2]);
+    b <= ANCHOR_ACCEPTABLE_ERROR_RANGE
+        && g <= ANCHOR_ACCEPTABLE_ERROR_RANGE
+        && r <= ANCHOR_ACCEPTABLE_ERROR_RANGE
 }
 
 #[inline]

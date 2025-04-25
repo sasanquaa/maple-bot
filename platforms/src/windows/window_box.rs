@@ -14,7 +14,7 @@ use tao::{
     dpi::{PhysicalPosition, PhysicalSize},
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
-    platform::windows::EventLoopBuilderExtWindows,
+    platform::windows::{EventLoopBuilderExtWindows, WindowBuilderExtWindows},
     rwh_06::{HasWindowHandle, RawWindowHandle},
     window::WindowBuilder,
 };
@@ -56,6 +56,7 @@ impl Default for WindowBoxCapture {
                 .with_closable(false)
                 .with_transparent(true)
                 .with_resizable(true)
+                .with_drag_and_drop(false)
                 .with_min_inner_size(PhysicalSize::new(800, 600))
                 .with_max_inner_size(PhysicalSize::new(1920, 1080))
                 .build(&event_loop)

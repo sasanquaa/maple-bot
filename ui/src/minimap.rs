@@ -131,7 +131,7 @@ struct ActionView {
     condition: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum MinimapMessage {
     ToggleHalting,
     RedetectMinimap,
@@ -192,7 +192,9 @@ pub fn Minimap(
                         }
                     }
                     MinimapMessage::UpdateMinimap(mut data, save) => {
-                        preset.set(data.actions.keys().next().cloned());
+                        if preset().is_none_or(|preset| !data.actions.contains_key(&preset)) {
+                            preset.set(data.actions.keys().next().cloned());
+                        }
                         minimap.set(Some(data.clone()));
                         update_minimap(preset(), data.clone()).await;
                         if save {

@@ -1,4 +1,4 @@
-use std::{fmt::Display, str::FromStr, time::Duration};
+use std::{fmt::Display, str::FromStr};
 
 use backend::KeyBinding;
 use dioxus::{document::EvalError, prelude::*};
@@ -20,76 +20,45 @@ pub fn use_auto_numeric(
     let minimum_value = use_memo(move || minimum_value.clone());
     let maximum_value = use_memo(move || maximum_value.clone());
     let suffix = use_memo(move || suffix.clone());
-    let mut task = use_signal::<Option<Task>>(|| None);
 
-    // I am had enough, this stuff way too hard
     use_effect(move || {
-        if let Some(task) = task.take() {
-            task.cancel();
-        }
-        let id = id();
         let value = value();
-        task.set(Some(spawn(async move {
-            tokio::time::sleep(Duration::from_millis(80)).await;
+        spawn(async move {
             let js = format!(
                 r#"
+                const hasInput = {has_input};
                 const element = document.getElementById("{id}");
-                element.dispatchEvent(new CustomEvent("autoNumeric:set", {{
-                    detail: {{
-                        value: {value}
-                    }}
-                }}));
-                "#,
+                let autoNumeric = AutoNumeric.getAutoNumericElement(element);
+                if (autoNumeric === null) {{
+                    autoNumeric = new AutoNumeric(element, {value}, {{
+                        allowDecimalPadding: false,
+                        emptyInputBehavior: "{minimum_value}",
+                        maximumValue: "{maximum_value}",
+                        minimumValue: "{minimum_value}",
+                        overrideMinMaxLimits: "invalid",
+                        suffixText: "{suffix}"
+                    }});
+                }} else {{
+                    autoNumeric.set({value});
+                }}
+                if (hasInput) {{
+                    element.addEventListener("autoNumeric:rawValueModified", async (e) => {{
+                        await dioxus.send(e.detail.newRawValue);
+                    }}, {{ once: true }});
+                }}
+            "#
             );
-            document::eval(js.as_str());
-        })));
-    });
-    use_future(move || async move {
-        let js = format!(
-            r#"
-            const element = document.getElementById("{}");
-            const hasInput = {};
-            const autoNumeric = new AutoNumeric(element, {{
-                allowDecimalPadding: false,
-                emptyInputBehavior: "{}",
-                maximumValue: "{}",
-                minimumValue: "{}",
-                suffixText: "{}",
-                defaultValueOverride: "{}"
-            }});
-            if (hasInput) {{
-                let ignoreInitial = true;
-                element.addEventListener("autoNumeric:rawValueModified", async (e) => {{
-                    if (ignoreInitial) {{
-                        ignoreInitial = false;
-                        return;
-                    }} 
-                    await dioxus.send(e.detail.newRawValue);
-                }});
-            }}
-            element.addEventListener("autoNumeric:set", (e) => {{
-                autoNumeric.set(e.detail.value);
-            }});
-            "#,
-            id(),
-            has_input,
-            minimum_value(),
-            maximum_value(),
-            minimum_value(),
-            suffix(),
-            value()
-        );
-        let mut element = document::eval(js.as_str());
-        loop {
-            let value = element.recv::<String>().await;
-            if let Err(EvalError::Finished) = value {
-                element = document::eval(js.as_str());
-                continue;
-            };
+            let mut eval = document::eval(js.as_str());
             if let Some(on_value) = on_value {
-                on_value(value.unwrap());
+                loop {
+                    let value = eval.recv::<String>().await;
+                    if let Err(EvalError::Finished) = value {
+                        return;
+                    };
+                    on_value(value.unwrap());
+                }
             }
-        }
+        });
     });
 }
 

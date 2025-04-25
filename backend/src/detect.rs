@@ -489,7 +489,7 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
     });
     let minimap = bbox.map(|bbox| {
         let bbox = expand_bbox(&bbox);
-        let mut minimap = to_grayscale(&mat.roi(bbox).unwrap(), false);
+        let mut minimap = to_grayscale(&mat.roi(bbox).unwrap(), true);
         unsafe {
             // SAFETY: threshold can be called in place.
             minimap.modify_inplace(|mat, mat_mut| {
@@ -531,11 +531,13 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
     });
     // crop the white border
     let crop = contour.and_then(|bound| {
-        // offset in by 10% to avoid the round border
+        // Offset in by 10% to avoid the round border
         // and use top border as basis
         let range = (bound.width as f32 * 0.1) as i32;
         let start = bound.x + range;
         let end = bound.x + bound.width - range + 1;
+        // Count for the number of pixels larger than threshold
+        // starting from bound's y. Use the maximum count as the number of pixels to crop.
         let mut counts = HashMap::<i32, i32>::new();
         for col in start..end {
             let mut count = 0;
@@ -618,7 +620,7 @@ fn detect_minimap_rune(minimap: &impl ToInputArray) -> Result<Rect> {
 }
 
 fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
-    const PLAYER_IDEAL_RATIO_THRESHOLD: f64 = 0.8;
+    const PLAYER_IDEAL_RATIO_THRESHOLD: f64 = 0.75;
     const PLAYER_DEFAULT_RATIO_THRESHOLD: f64 = 0.6;
     static PLAYER_IDEAL_RATIO: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
