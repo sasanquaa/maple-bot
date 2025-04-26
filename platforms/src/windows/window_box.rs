@@ -2,10 +2,7 @@ use std::{
     ffi::c_void,
     num::NonZeroU32,
     rc::Rc,
-    sync::{
-        Arc, Barrier, Mutex,
-        mpsc::{self, Sender},
-    },
+    sync::{Arc, Barrier, Mutex},
     thread::{self},
 };
 
@@ -18,20 +15,16 @@ use tao::{
     rwh_06::{HasWindowHandle, RawWindowHandle},
     window::WindowBuilder,
 };
+use tokio::sync::oneshot::{self, Sender};
 use windows::Win32::Foundation::HWND;
 
 use super::{BitBltCapture, Error, Frame, Handle};
-
-enum Message {
-    Show,
-    Hide,
-}
 
 #[derive(Debug)]
 pub struct WindowBoxCapture {
     handle: Handle,
     position: Arc<Mutex<Option<PhysicalPosition<i32>>>>,
-    msg_tx: Sender<Message>,
+    close_tx: Option<Sender<()>>,
     capture: BitBltCapture,
 }
 
@@ -43,7 +36,7 @@ impl Default for WindowBoxCapture {
         let barrier_clone = barrier.clone();
         let position = Arc::new(Mutex::new(None));
         let position_clone = position.clone();
-        let (msg_tx, msg_rx) = mpsc::channel::<Message>();
+        let (close_tx, mut close_rx) = oneshot::channel();
 
         thread::spawn(move || {
             let handle = handle_clone;
@@ -64,7 +57,7 @@ impl Default for WindowBoxCapture {
             let window = Rc::new(window);
             let context = Context::new(window.clone()).unwrap();
             let mut surface = Surface::new(&context, window.clone()).unwrap();
-            let window = Some(window);
+            let mut window = Some(window);
 
             *handle.lock().unwrap() =
                 window
@@ -81,19 +74,10 @@ impl Default for WindowBoxCapture {
 
             event_loop.run(move |event, _, control_flow| {
                 *control_flow = ControlFlow::Poll;
-                if let Ok(msg) = msg_rx.try_recv() {
-                    match msg {
-                        Message::Show => {
-                            if let Some(ref window) = window {
-                                window.set_visible(true);
-                            }
-                        }
-                        Message::Hide => {
-                            if let Some(ref window) = window {
-                                window.set_visible(false);
-                            }
-                        }
-                    }
+                if close_rx.try_recv().is_ok() {
+                    window.take();
+                    *control_flow = ControlFlow::Exit;
+                    return;
                 }
 
                 match event {
@@ -139,7 +123,7 @@ impl Default for WindowBoxCapture {
         Self {
             handle,
             position,
-            msg_tx,
+            close_tx: Some(close_tx),
             capture,
         }
     }
@@ -161,12 +145,12 @@ impl WindowBoxCapture {
             .unwrap()
             .map(|position| (position.x, position.y))
     }
+}
 
-    pub fn show(&self) {
-        let _ = self.msg_tx.send(Message::Show);
-    }
-
-    pub fn hide(&self) {
-        let _ = self.msg_tx.send(Message::Hide);
+impl Drop for WindowBoxCapture {
+    fn drop(&mut self) {
+        if let Some(tx) = self.close_tx.take() {
+            tx.send(()).unwrap();
+        }
     }
 }

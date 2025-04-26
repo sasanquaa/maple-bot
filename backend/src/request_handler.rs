@@ -1,14 +1,15 @@
 use log::debug;
 use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
-use platforms::windows::{KeyInputKind, KeyKind, KeyReceiver, WgcCapture, WindowBoxCapture};
+use platforms::windows::{KeyInputKind, KeyKind, KeyReceiver};
 use tokio::sync::broadcast;
 
 use crate::{
-    Action, ActionCondition, ActionKey, Bound, CaptureMode, Configuration, GameState, KeyBinding,
+    Action, ActionCondition, ActionKey, Bound, Configuration, GameState, KeyBinding,
     KeyBindingConfiguration, Minimap as MinimapData, PotionMode, RequestHandler, RotatorMode,
     Settings,
+    bridge::{ImageCapture, ImageCaptureKind, KeySenderMethod},
     buff::{BuffKind, BuffState},
-    context::{Context, KeySenderKind},
+    context::Context,
     database::InputMethod,
     minimap::{Minimap, MinimapState},
     player::PlayerState,
@@ -29,8 +30,7 @@ pub struct DefaultRequestHandler<'a> {
     pub minimap: &'a mut MinimapState,
     pub key_sender: &'a broadcast::Sender<KeyBinding>,
     pub key_receiver: &'a mut KeyReceiver,
-    pub wgc_capture: Option<&'a mut WgcCapture>,
-    pub window_box_capture: &'a WindowBoxCapture,
+    pub image_capture: &'a mut ImageCapture,
 }
 
 impl DefaultRequestHandler<'_> {
@@ -134,30 +134,26 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_update_settings(&mut self, settings: Settings) {
-        if !matches!(settings.capture_mode, CaptureMode::WindowsGraphicsCapture)
-            && let Some(ref mut wgc_capture) = self.wgc_capture
-        {
-            wgc_capture.stop_capture();
-        }
-        if !matches!(settings.capture_mode, CaptureMode::BitBltArea) {
-            self.window_box_capture.hide();
+        self.image_capture
+            .set_mode(self.context.handle, settings.capture_mode);
+
+        if let ImageCaptureKind::BitBltArea(capture) = self.image_capture.kind() {
+            *self.key_receiver = KeyReceiver::new(capture.handle(), KeyInputKind::Foreground);
             if matches!(settings.input_method, InputMethod::Default) {
-                self.context
-                    .keys
-                    .set_kind(KeySenderKind::Fixed(self.context.handle));
+                self.context.keys.set_method(KeySenderMethod::Default(
+                    capture.handle(),
+                    KeyInputKind::Foreground,
+                ));
             }
-        } else {
-            self.window_box_capture.show();
-            *self.key_receiver =
-                KeyReceiver::new(self.window_box_capture.handle(), KeyInputKind::Foreground);
-            if matches!(settings.input_method, InputMethod::Default) {
-                self.context
-                    .keys
-                    .set_kind(KeySenderKind::Foreground(self.window_box_capture.handle()));
-            }
+        } else if matches!(settings.input_method, InputMethod::Default) {
+            self.context.keys.set_method(KeySenderMethod::Default(
+                self.context.handle,
+                KeyInputKind::Fixed,
+            ));
         }
+
         if let InputMethod::Rpc = settings.input_method {
-            self.context.keys.set_kind(KeySenderKind::Rpc(
+            self.context.keys.set_method(KeySenderMethod::Rpc(
                 settings.input_method_rpc_server_url.clone(),
             ));
         }

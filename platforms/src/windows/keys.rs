@@ -200,17 +200,12 @@ pub enum KeyKind {
 }
 
 impl Keys {
-    pub fn new(handle: Handle) -> Self {
+    pub fn new(handle: Handle, kind: KeyInputKind) -> Self {
         Self {
             handle: HandleCell::new(handle),
-            key_input_kind: KeyInputKind::Fixed,
+            key_input_kind: kind,
             key_down: RefCell::new(BitVec::from_elem(256, false)),
         }
-    }
-
-    pub fn set_input_kind(&mut self, handle: Handle, kind: KeyInputKind) {
-        self.handle = HandleCell::new(handle);
-        self.key_input_kind = kind;
     }
 
     pub fn send(&self, kind: KeyKind) -> Result<(), Error> {

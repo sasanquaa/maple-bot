@@ -2835,7 +2835,8 @@ mod tests {
     };
     use crate::{
         ActionKeyDirection, ActionKeyWith, KeyBinding, LinkKeyBinding,
-        context::{Context, MockKeySender},
+        bridge::MockKeySender,
+        context::Context,
         player::{Player, Timeout, update_non_positional_context},
     };
 

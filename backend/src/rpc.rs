@@ -15,6 +15,7 @@ mod input {
 #[derive(Debug)]
 pub struct KeysService {
     client: KeyInputClient<Channel>,
+    url: String,
     key_down: BitVec, // TODO: is a bit wrong good?
 }
 
@@ -22,13 +23,20 @@ impl KeysService {
     pub fn connect<D>(dest: D) -> Result<Self, Error>
     where
         D: TryInto<Endpoint>,
+        D: AsRef<str>,
         D::Error: std::error::Error + Send + Sync + 'static,
     {
-        let client = block_future(async move { KeyInputClient::connect(dest).await })?;
+        let endpoint = TryInto::<Endpoint>::try_into(dest.as_ref().to_string())?;
+        let client = block_future(async move { KeyInputClient::connect(endpoint).await })?;
         Ok(Self {
             client,
+            url: dest.as_ref().to_string(),
             key_down: BitVec::from_elem(128, false),
         })
+    }
+
+    pub fn url(&self) -> &String {
+        &self.url
     }
 
     pub fn reset(&mut self) {
