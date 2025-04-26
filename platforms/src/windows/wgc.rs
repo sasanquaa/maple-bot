@@ -333,6 +333,13 @@ fn get_client_rect(handle: HWND, width: u32, height: u32) -> Result<D3D11_BOX, E
     })
 }
 
+impl Drop for WgcCapture {
+    fn drop(&mut self) {
+        let _ = self.inner;
+        let _ = self.d3d_device.Close();
+    }
+}
+
 #[inline]
 fn create_texture_2d(
     device: &ID3D11Device,

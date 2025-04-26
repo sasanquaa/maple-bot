@@ -1,8 +1,6 @@
 use std::{
-    any::Any,
-    cell::{RefCell, RefMut},
+    cell::RefCell,
     env,
-    fmt::Debug,
     fs::File,
     io::Write,
     rc::Rc,
@@ -11,24 +9,19 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Error, anyhow};
 use dyn_clone::clone_box;
 use log::info;
-#[cfg(test)]
-use mockall::automock;
 use opencv::{
     core::{Vector, VectorToVec},
     imgcodecs::imencode_def,
 };
-use platforms::windows::{
-    self, BitBltCapture, Handle, KeyInputKind, KeyKind, KeyReceiver, Keys, WgcCapture,
-    WindowBoxCapture,
-};
+use platforms::windows::{self, Handle, KeyInputKind, KeyReceiver};
 use strum::IntoEnumIterator;
 use tokio::sync::broadcast;
 
 use crate::{
     Action, RequestHandler,
+    bridge::{DefaultKeySender, ImageCapture, ImageCaptureKind, KeySender, KeySenderMethod},
     buff::{Buff, BuffKind, BuffState},
     database::{CaptureMode, InputMethod, KeyBinding},
     detect::{CachedDetector, Detector},
@@ -39,11 +32,10 @@ use crate::{
     query_configs, query_settings,
     request_handler::{DefaultRequestHandler, config_buffs},
     rotator::Rotator,
-    rpc::KeysService,
     skill::{Skill, SkillKind, SkillState},
 };
 #[cfg(test)]
-use crate::{Settings, detect::MockDetector};
+use crate::{Settings, bridge::MockKeySender, detect::MockDetector};
 
 const FPS: u32 = 30;
 pub const MS_PER_TICK: u64 = 1000 / FPS as u64;
@@ -71,124 +63,6 @@ pub trait Contextual {
     fn update(self, context: &Context, persistent: &mut Self::Persistent) -> ControlFlow<Self>
     where
         Self: Sized;
-}
-
-/// The kind of key input method
-///
-/// Bridge enum between platform and RPC
-#[derive(Clone, Debug)]
-pub enum KeySenderKind {
-    Rpc(String),
-    Foreground(Handle),
-    Fixed(Handle),
-}
-
-/// A trait for sending keys
-#[cfg_attr(test, automock)]
-pub trait KeySender: Debug + Any {
-    fn set_kind(&mut self, kind: KeySenderKind);
-
-    fn send(&self, kind: KeyKind) -> Result<(), Error>;
-
-    fn send_click_to_focus(&self) -> Result<(), Error>;
-
-    fn send_up(&self, kind: KeyKind) -> Result<(), Error>;
-
-    fn send_down(&self, kind: KeyKind) -> Result<(), Error>;
-}
-
-#[derive(Debug)]
-struct DefaultKeySender {
-    platform: Keys,
-    service: Option<RefCell<KeysService>>,
-    kind: KeySenderKind,
-}
-
-impl DefaultKeySender {
-    #[inline]
-    fn borrow_service_mut(&self) -> Result<RefMut<KeysService>, Error> {
-        self.service
-            .as_ref()
-            .map(|service| service.borrow_mut())
-            .ok_or(anyhow!("service not connected"))
-    }
-}
-
-impl KeySender for DefaultKeySender {
-    fn set_kind(&mut self, kind: KeySenderKind) {
-        match kind.clone() {
-            KeySenderKind::Rpc(url) => {
-                if let KeySenderKind::Rpc(ref cur_url) = self.kind
-                    && cur_url != &url
-                {
-                    self.service = None;
-                }
-                if self.service.is_none() {
-                    self.service = KeysService::connect(url).map(RefCell::new).ok();
-                }
-            }
-            KeySenderKind::Foreground(handle) => {
-                self.platform
-                    .set_input_kind(handle, KeyInputKind::Foreground);
-            }
-            KeySenderKind::Fixed(handle) => {
-                self.platform.set_input_kind(handle, KeyInputKind::Fixed);
-            }
-        }
-        if let Ok(mut service) = self.borrow_service_mut() {
-            service.reset();
-        }
-        self.kind = kind;
-    }
-
-    fn send(&self, kind: KeyKind) -> Result<(), Error> {
-        match self.kind {
-            KeySenderKind::Rpc(_) => {
-                self.borrow_service_mut()?.send(kind)?;
-                Ok(())
-            }
-            KeySenderKind::Foreground(_) | KeySenderKind::Fixed(_) => {
-                self.platform.send(kind)?;
-                Ok(())
-            }
-        }
-    }
-
-    fn send_click_to_focus(&self) -> Result<(), Error> {
-        match self.kind {
-            KeySenderKind::Rpc(_) => Ok(()),
-            KeySenderKind::Foreground(_) | KeySenderKind::Fixed(_) => {
-                self.platform.send_click_to_focus()?;
-                Ok(())
-            }
-        }
-    }
-
-    fn send_up(&self, kind: KeyKind) -> Result<(), Error> {
-        match self.kind {
-            KeySenderKind::Rpc(_) => {
-                self.borrow_service_mut()?.send_up(kind)?;
-                Ok(())
-            }
-            KeySenderKind::Foreground(_) | KeySenderKind::Fixed(_) => {
-                self.platform.send_up(kind)?;
-                Ok(())
-            }
-        }
-    }
-
-    fn send_down(&self, kind: KeyKind) -> Result<(), Error> {
-        match self.kind {
-            KeySenderKind::Rpc(_) => {
-                self.borrow_service_mut()?.send_down(kind)?;
-                Ok(())
-            }
-            KeySenderKind::Foreground(_) | KeySenderKind::Fixed(_) => {
-                self.platform.send_down(kind)?;
-                Ok(())
-            }
-        }
-    }
 }
 
 /// A struct that stores the game information
@@ -279,40 +153,28 @@ fn update_loop() {
     let mut buffs = config_buffs(&config);
     let settings = query_settings(); // Override by UI
 
-    let keys_service = if let InputMethod::Rpc = settings.input_method {
-        KeysService::connect(settings.input_method_rpc_server_url.clone())
-            .map(RefCell::new)
-            .ok()
-    } else {
-        None
-    };
-    let key_sender_kind = if let InputMethod::Rpc = settings.input_method {
-        KeySenderKind::Rpc(settings.input_method_rpc_server_url.clone())
+    let key_sender_method = if let InputMethod::Rpc = settings.input_method {
+        KeySenderMethod::Rpc(settings.input_method_rpc_server_url.clone())
     } else {
         match settings.capture_mode {
             CaptureMode::BitBlt | CaptureMode::WindowsGraphicsCapture => {
-                KeySenderKind::Fixed(handle)
+                KeySenderMethod::Default(handle, KeyInputKind::Fixed)
             }
-            CaptureMode::BitBltArea => KeySenderKind::Foreground(handle),
+            // This shouldn't matter because we have to get the Handle from the box capture anyway
+            CaptureMode::BitBltArea => KeySenderMethod::Default(handle, KeyInputKind::Foreground),
         }
     };
-    let mut keys = DefaultKeySender {
-        platform: Keys::new(handle),
-        service: keys_service,
-        kind: key_sender_kind,
-    };
+    let mut keys = DefaultKeySender::new(key_sender_method);
     let key_sender = broadcast::channel::<KeyBinding>(1).0; // Callback to UI
     let mut key_receiver = KeyReceiver::new(handle, KeyInputKind::Fixed);
 
-    let mut bitblt_capture = BitBltCapture::new(handle, false);
-    let mut wgc_capture = WgcCapture::new(handle, MS_PER_TICK);
-    let mut window_box_capture = WindowBoxCapture::default();
-    if !matches!(settings.capture_mode, CaptureMode::BitBltArea) {
-        window_box_capture.hide();
-    } else {
-        key_receiver = KeyReceiver::new(window_box_capture.handle(), KeyInputKind::Foreground);
-        keys.platform
-            .set_input_kind(window_box_capture.handle(), KeyInputKind::Foreground);
+    let mut image_capture = ImageCapture::new(handle, settings.capture_mode);
+    if let ImageCaptureKind::BitBltArea(capture) = image_capture.kind() {
+        key_receiver = KeyReceiver::new(capture.handle(), KeyInputKind::Foreground);
+        keys.set_method(KeySenderMethod::Default(
+            capture.handle(),
+            KeyInputKind::Foreground,
+        ));
     }
 
     let settings = Rc::new(RefCell::new(settings));
@@ -340,15 +202,7 @@ fn update_loop() {
     });
 
     loop_with_fps(FPS, || {
-        let mat = match settings.borrow().capture_mode {
-            CaptureMode::BitBlt => bitblt_capture.grab().ok().map(OwnedMat::new),
-            CaptureMode::WindowsGraphicsCapture => wgc_capture
-                .as_mut()
-                .ok()
-                .and_then(|capture| capture.grab().ok())
-                .map(OwnedMat::new),
-            CaptureMode::BitBltArea => window_box_capture.grab().ok().map(OwnedMat::new),
-        };
+        let mat = image_capture.grab().map(OwnedMat::new);
         let was_player_alive = !player_state.is_dead;
         let was_minimap_idle = matches!(context.minimap, Minimap::Idle(_));
         let detector = mat.map(CachedDetector::new);
@@ -386,8 +240,7 @@ fn update_loop() {
             minimap: &mut minimap_state,
             key_sender: &key_sender,
             key_receiver: &mut key_receiver,
-            wgc_capture: wgc_capture.as_mut().ok(),
-            window_box_capture: &window_box_capture,
+            image_capture: &mut image_capture,
         };
         handler.poll_request();
         handler.poll_key();
