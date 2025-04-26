@@ -1,0 +1,6 @@
+[env]
+OPENCV_MSVC_CRT = "static"
+
+[build]
+target = "x86_64-pc-windows-msvc"
+

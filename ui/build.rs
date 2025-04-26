@@ -9,7 +9,7 @@ fn main() {
         "cargo:rustc-env=TAILWIND_CSS={}",
         tailwind_out.to_str().unwrap()
     );
-    Command::new("npx.cmd")
+    Command::new("npx")
         .arg("@tailwindcss/cli")
         .arg("-i")
         .arg(tailwind_in.to_str().unwrap())

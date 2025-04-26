@@ -1,0 +1,13 @@
+set(CMAKE_SYSTEM_NAME Windows)
+set(CMAKE_SYSTEM_PROCESSOR AMD64)
+
+set(CMAKE_C_FLAGS " /MT ")
+set(CMAKE_CXX_FLAGS " /MT ")
+set(CMAKE_BUILD_TYPE Release)
+set(MSVC_TOOLSET_VERSION 143)
+
+set(BUILD_SHARED_LIBS OFF)
+
+set(ENV{CC} "cl")
+set(ENV{CXX} "cl")
+set(ENV{PATH} "${MSVC_ROOT}/bin/x64:$ENV{PATH}")
