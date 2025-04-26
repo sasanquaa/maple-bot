@@ -11,7 +11,10 @@ use tao::{
     dpi::{PhysicalPosition, PhysicalSize},
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
-    platform::windows::{EventLoopBuilderExtWindows, WindowBuilderExtWindows},
+    platform::{
+        run_return::EventLoopExtRunReturn,
+        windows::{EventLoopBuilderExtWindows, WindowBuilderExtWindows},
+    },
     rwh_06::{HasWindowHandle, RawWindowHandle},
     window::WindowBuilder,
 };
@@ -41,7 +44,7 @@ impl Default for WindowBoxCapture {
         thread::spawn(move || {
             let handle = handle_clone;
             let position = position_clone;
-            let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
+            let mut event_loop = EventLoopBuilder::new().with_any_thread(true).build();
             let window = WindowBuilder::new()
                 .with_title("Capture Area")
                 .with_decorations(true)
@@ -57,7 +60,7 @@ impl Default for WindowBoxCapture {
             let window = Rc::new(window);
             let context = Context::new(window.clone()).unwrap();
             let mut surface = Surface::new(&context, window.clone()).unwrap();
-            let mut window = Some(window);
+            let window = Some(window);
 
             *handle.lock().unwrap() =
                 window
@@ -72,10 +75,9 @@ impl Default for WindowBoxCapture {
             *position.lock().unwrap() = window.as_ref().unwrap().inner_position().ok();
             barrier_clone.wait();
 
-            event_loop.run(move |event, _, control_flow| {
+            event_loop.run_return(|event, _, control_flow| {
                 *control_flow = ControlFlow::Poll;
                 if close_rx.try_recv().is_ok() {
-                    window.take();
                     *control_flow = ControlFlow::Exit;
                     return;
                 }
