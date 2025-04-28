@@ -37,6 +37,9 @@ const EXTREME_RED_POTION: &str = "Extreme Red Potion";
 const EXTREME_BLUE_POTION: &str = "Extreme Blue Potion";
 const EXTREME_GREEN_POTION: &str = "Extreme Green Potion";
 const EXTREME_GOLD_POTION: &str = "Extreme Gold Potion";
+const TAB_GAME: &str = "Game";
+const TAB_BUFFS: &str = "Buffs";
+const TAB_FIXED_ACTIONS: &str = "Fixed Actions";
 
 #[component]
 pub fn Configuration(
@@ -44,9 +47,6 @@ pub fn Configuration(
     configs: ReadOnlySignal<Option<Vec<ConfigurationData>>>,
     config: ReadOnlySignal<Option<ConfigurationData>>,
 ) -> Element {
-    const TAB_GAME: &str = "Game";
-    const TAB_BUFF: &str = "Buff";
-
     let mut active_tab = use_signal(|| TAB_GAME.to_string());
     let is_disabled = use_memo(move || config().is_none());
     let active = use_signal(|| None);
@@ -67,7 +67,7 @@ pub fn Configuration(
 
     rsx! {
         Tab {
-            tabs: vec![TAB_GAME.to_string(), TAB_BUFF.to_string()],
+            tabs: vec![TAB_GAME.to_string(), TAB_BUFFS.to_string()],
             div_class: "px-2 pt-2 pb-1",
             class: "text-xs px-2 pb-2 focus:outline-none",
             selected_class: "text-gray-800 border-b",
@@ -107,8 +107,16 @@ pub fn Configuration(
                             on_config,
                         }
                     },
-                    TAB_BUFF => rsx! {
+                    TAB_BUFFS => rsx! {
                         ConfigBuffKeyBindings {
+                            active,
+                            is_disabled,
+                            config_view,
+                            on_config,
+                        }
+                    },
+                    TAB_FIXED_ACTIONS => rsx! {
+                        ConfigFixedActions {
                             active,
                             is_disabled,
                             config_view,
@@ -480,6 +488,16 @@ fn ConfigBuffKeyBindings(
             value: Some(config_view().extreme_gold_potion_key),
         }
     }
+}
+
+#[component]
+fn ConfigFixedActions(
+    active: Signal<Option<&'static str>>,
+    is_disabled: Memo<bool>,
+    config_view: Memo<ConfigurationData>,
+    on_config: EventHandler<ConfigurationData>,
+) -> Element {
+    rsx! {}
 }
 
 #[component]

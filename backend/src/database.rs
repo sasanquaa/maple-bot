@@ -201,6 +201,8 @@ pub struct Configuration {
     pub extreme_gold_potion_key: KeyBindingConfiguration,
     #[serde(default)]
     pub class: Class,
+    #[serde(default)]
+    pub actions: Vec<ActionConfiguration>,
 }
 
 fn jump_key_default() -> KeyBindingConfiguration {
@@ -239,6 +241,7 @@ impl Default for Configuration {
             extreme_green_potion_key: KeyBindingConfiguration::default(),
             extreme_gold_potion_key: KeyBindingConfiguration::default(),
             class: Class::default(),
+            actions: vec![],
         }
     }
 }
@@ -252,6 +255,32 @@ pub enum PotionMode {
 impl Default for PotionMode {
     fn default() -> Self {
         Self::EveryMillis(0)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub struct ActionConfiguration {
+    pub action: Action,
+    pub enabled: bool,
+}
+
+impl Default for ActionConfiguration {
+    fn default() -> Self {
+        // Template for a buff
+        Self {
+            action: Action::Key(ActionKey {
+                key: KeyBinding::A,
+                link_key: None,
+                count: 1,
+                position: None,
+                condition: ActionCondition::EveryMillis(180000),
+                direction: ActionKeyDirection::Any,
+                with: ActionKeyWith::Stationary,
+                queue_to_front: Some(true),
+                ..Default::default()
+            }),
+            enabled: false,
+        }
     }
 }
 

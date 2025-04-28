@@ -304,5 +304,12 @@ fn config_actions(config: &Configuration) -> Vec<Action> {
             ..ActionKey::default()
         }));
     }
+    vec.extend(
+        config
+            .actions
+            .iter()
+            .copied()
+            .filter_map(|action| action.enabled.then_some(action.action)),
+    );
     vec
 }
