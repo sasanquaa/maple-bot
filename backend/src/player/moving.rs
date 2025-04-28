@@ -2,19 +2,33 @@ use log::{debug, info};
 use opencv::core::Point;
 
 use super::{
-    DOUBLE_JUMP_THRESHOLD, JUMP_THRESHOLD, LastMovement, Player, PlayerState,
+    JUMP_THRESHOLD, Player, PlayerState,
     actions::{PlayerAction, PlayerActionKey, PlayerActionMove},
+    double_jump::DOUBLE_JUMP_THRESHOLD,
+    state::LastMovement,
     timeout::Timeout,
-    x_distance_direction, y_distance_direction,
 };
 use crate::{
     ActionKeyDirection, ActionKeyWith,
     array::Array,
     player::{
-        ADJUSTING_MEDIUM_THRESHOLD, ADJUSTING_SHORT_THRESHOLD, GRAPPLING_THRESHOLD,
-        UNSTUCK_TRACKER_THRESHOLD, on_action, solve_rune::SolvingRune, use_key::UseKey,
+        adjust::{ADJUSTING_MEDIUM_THRESHOLD, ADJUSTING_SHORT_THRESHOLD},
+        grapple::GRAPPLING_THRESHOLD,
+        on_action,
+        solve_rune::SolvingRune,
+        use_key::UseKey,
     },
 };
+
+/// Maximum amount of ticks a change in x or y direction must be detected
+pub const MOVE_TIMEOUT: u32 = 5;
+
+/// Maximum number of times [`Player::Moving`] state can be transitioned to
+/// without changing position
+const UNSTUCK_TRACKER_THRESHOLD: u32 = 7;
+
+/// Minimium y distance required to perform a fall and double jump/adjusting
+pub const ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD: i32 = 8;
 
 #[derive(Clone, Copy, Debug)]
 pub struct MovingIntermediates {
@@ -111,7 +125,39 @@ impl Moving {
     }
 
     #[inline]
-    pub fn last_destination(&self) -> Point {
+    pub fn x_distance_direction_from(
+        &self,
+        current_destination: bool,
+        cur_pos: Point,
+    ) -> (i32, i32) {
+        let dest = if current_destination {
+            self.dest
+        } else {
+            self.last_destination()
+        };
+        let direction = dest.x - cur_pos.x;
+        let distance = direction.abs();
+        (distance, direction)
+    }
+
+    #[inline]
+    pub fn y_distance_direction_from(
+        &self,
+        current_destination: bool,
+        cur_pos: Point,
+    ) -> (i32, i32) {
+        let dest = if current_destination {
+            self.dest
+        } else {
+            self.last_destination()
+        };
+        let direction = dest.y - cur_pos.y;
+        let distance = direction.abs();
+        (distance, direction)
+    }
+
+    #[inline]
+    fn last_destination(&self) -> Point {
         if self.is_destination_intermediate() {
             let points = self.intermediates.unwrap().inner;
             points[points.len() - 1].0
@@ -135,8 +181,8 @@ impl Moving {
                     return false;
                 }
                 let pos = state.last_known_pos.unwrap();
-                let (x_distance, _) = x_distance_direction(self.dest, pos);
-                let (y_distance, y_direction) = y_distance_direction(self.dest, pos);
+                let (x_distance, _) = self.x_distance_direction_from(true, pos);
+                let (y_distance, y_direction) = self.y_distance_direction_from(true, pos);
                 let y_skippable = (matches!(state.last_movement, Some(LastMovement::Falling))
                     && y_direction >= 0)
                     || (matches!(state.last_movement, Some(LastMovement::UpJumping))
@@ -161,102 +207,11 @@ impl Moving {
 /// more fluid movement.
 pub fn update_moving_context(
     state: &mut PlayerState,
-    cur_pos: Point,
     dest: Point,
     exact: bool,
     intermediates: Option<MovingIntermediates>,
 ) -> Player {
-    const HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 20;
-    const VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 8;
-    const AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 6;
-    const AUTO_MOB_VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 5;
     const UP_JUMP_THRESHOLD: i32 = 10;
-
-    /// Aborts the action when state starts looping.
-    ///
-    /// Note: Initially, this is only intended for auto mobbing until rune pathing is added...
-    fn abort_action_on_state_repeat(next: Player, state: &mut PlayerState) -> Player {
-        if let Some(last_movement) = state.last_movement {
-            let count_map = if state.has_priority_action() {
-                &mut state.last_movement_priority_map
-            } else {
-                &mut state.last_movement_normal_map
-            };
-            let count = count_map.entry(last_movement).or_insert(0);
-            *count += 1;
-            let count = *count;
-            debug!(target: "player", "last movement {:?}", count_map);
-            let count_max = match last_movement {
-                LastMovement::Adjusting | LastMovement::DoubleJumping => {
-                    if state.has_auto_mob_action_only() {
-                        AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT
-                    } else {
-                        HORIZONTAL_MOVEMENT_REPEAT_COUNT
-                    }
-                }
-                LastMovement::Falling
-                | LastMovement::Grappling
-                | LastMovement::UpJumping
-                | LastMovement::Jumping => {
-                    if state.has_auto_mob_action_only() {
-                        AUTO_MOB_VERTICAL_MOVEMENT_REPEAT_COUNT
-                    } else {
-                        VERTICAL_MOVEMENT_REPEAT_COUNT
-                    }
-                }
-            };
-            debug_assert!(count <= count_max);
-            if count >= count_max {
-                info!(target: "player", "abort action due to repeated state");
-                state.mark_action_completed();
-                return Player::Idle;
-            }
-        }
-        next
-    }
-
-    fn on_player_action(
-        last_known_direction: ActionKeyDirection,
-        action: PlayerAction,
-        moving: Moving,
-    ) -> Option<(Player, bool)> {
-        match action {
-            PlayerAction::Move(PlayerActionMove {
-                wait_after_move_ticks,
-                ..
-            }) => {
-                if wait_after_move_ticks > 0 {
-                    Some((
-                        Player::Stalling(Timeout::default(), wait_after_move_ticks),
-                        false,
-                    ))
-                } else {
-                    Some((Player::Idle, true))
-                }
-            }
-            PlayerAction::Key(PlayerActionKey {
-                with: ActionKeyWith::DoubleJump,
-                direction,
-                ..
-            }) => {
-                if matches!(direction, ActionKeyDirection::Any) || direction == last_known_direction
-                {
-                    Some((Player::DoubleJumping(moving, true, false), false))
-                } else {
-                    Some((Player::UseKey(UseKey::from_action(action)), false))
-                }
-            }
-            PlayerAction::Key(PlayerActionKey {
-                with: ActionKeyWith::Any | ActionKeyWith::Stationary,
-                ..
-            }) => Some((Player::UseKey(UseKey::from_action(action)), false)),
-            PlayerAction::AutoMob(_) => Some((
-                Player::UseKey(UseKey::from_action_pos(action, Some(moving.pos))),
-                false,
-            )),
-            PlayerAction::SolveRune => Some((Player::SolvingRune(SolvingRune::default()), false)),
-        }
-    }
 
     debug_assert!(intermediates.is_none() || intermediates.unwrap().current > 0);
     state.use_immediate_control_flow = true;
@@ -266,9 +221,10 @@ pub fn update_moving_context(
         return Player::Unstucking(Timeout::default(), None);
     }
 
-    let (x_distance, _) = x_distance_direction(dest, cur_pos);
-    let (y_distance, y_direction) = y_distance_direction(dest, cur_pos);
+    let cur_pos = state.last_known_pos.unwrap();
     let moving = Moving::new(cur_pos, dest, exact, intermediates);
+    let (x_distance, _) = moving.x_distance_direction_from(true, cur_pos);
+    let (y_distance, y_direction) = moving.y_distance_direction_from(true, cur_pos);
     let skip_destination = moving.auto_mob_can_skip_current_destination(state);
     let is_intermediate = moving.is_destination_intermediate();
 
@@ -325,5 +281,95 @@ pub fn update_moving_context(
                 || Player::Idle,
             )
         }
+    }
+}
+
+/// Aborts the action when state starts looping.
+///
+/// Note: Initially, this is only intended for auto mobbing until rune pathing is added...
+fn abort_action_on_state_repeat(next: Player, state: &mut PlayerState) -> Player {
+    const HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 20;
+    const VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 8;
+    const AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 6;
+    const AUTO_MOB_VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 5;
+
+    if let Some(last_movement) = state.last_movement {
+        let count_map = if state.has_priority_action() {
+            &mut state.last_movement_priority_map
+        } else {
+            &mut state.last_movement_normal_map
+        };
+        let count = count_map.entry(last_movement).or_insert(0);
+        *count += 1;
+        let count = *count;
+        debug!(target: "player", "last movement {:?}", count_map);
+        let count_max = match last_movement {
+            LastMovement::Adjusting | LastMovement::DoubleJumping => {
+                if state.has_auto_mob_action_only() {
+                    AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT
+                } else {
+                    HORIZONTAL_MOVEMENT_REPEAT_COUNT
+                }
+            }
+            LastMovement::Falling
+            | LastMovement::Grappling
+            | LastMovement::UpJumping
+            | LastMovement::Jumping => {
+                if state.has_auto_mob_action_only() {
+                    AUTO_MOB_VERTICAL_MOVEMENT_REPEAT_COUNT
+                } else {
+                    VERTICAL_MOVEMENT_REPEAT_COUNT
+                }
+            }
+        };
+        debug_assert!(count <= count_max);
+        if count >= count_max {
+            info!(target: "player", "abort action due to repeated state");
+            state.mark_action_completed();
+            return Player::Idle;
+        }
+    }
+    next
+}
+
+fn on_player_action(
+    last_known_direction: ActionKeyDirection,
+    action: PlayerAction,
+    moving: Moving,
+) -> Option<(Player, bool)> {
+    match action {
+        PlayerAction::Move(PlayerActionMove {
+            wait_after_move_ticks,
+            ..
+        }) => {
+            if wait_after_move_ticks > 0 {
+                Some((
+                    Player::Stalling(Timeout::default(), wait_after_move_ticks),
+                    false,
+                ))
+            } else {
+                Some((Player::Idle, true))
+            }
+        }
+        PlayerAction::Key(PlayerActionKey {
+            with: ActionKeyWith::DoubleJump,
+            direction,
+            ..
+        }) => {
+            if matches!(direction, ActionKeyDirection::Any) || direction == last_known_direction {
+                Some((Player::DoubleJumping(moving, true, false), false))
+            } else {
+                Some((Player::UseKey(UseKey::from_action(action)), false))
+            }
+        }
+        PlayerAction::Key(PlayerActionKey {
+            with: ActionKeyWith::Any | ActionKeyWith::Stationary,
+            ..
+        }) => Some((Player::UseKey(UseKey::from_action(action)), false)),
+        PlayerAction::AutoMob(_) => Some((
+            Player::UseKey(UseKey::from_action_pos(action, Some(moving.pos))),
+            false,
+        )),
+        PlayerAction::SolveRune => Some((Player::SolvingRune(SolvingRune::default()), false)),
     }
 }

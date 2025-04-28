@@ -1,14 +1,23 @@
-use opencv::core::Point;
-
-use super::{Player, PlayerState, moving::Moving};
+use super::{Player, PlayerState, moving::Moving, state::LastMovement};
 use crate::{
     context::Context,
     player::{
-        LastMovement, MOVE_TIMEOUT,
+        MOVE_TIMEOUT,
         timeout::{ChangeAxis, update_moving_axis_context},
-        y_distance_direction,
     },
 };
+
+/// Minimum y distance from the destination required to perform a grappling hook
+pub const GRAPPLING_THRESHOLD: i32 = 26;
+
+/// Maximum y distance from the destination required to perform a grappling hook
+pub const GRAPPLING_MAX_THRESHOLD: i32 = 41;
+
+const TIMEOUT: u32 = MOVE_TIMEOUT * 10;
+
+const STOPPING_TIMEOUT: u32 = MOVE_TIMEOUT * 3;
+
+const STOPPING_THRESHOLD: i32 = 3;
 
 /// Updates the [`Player::Grappling`] contextual state
 ///
@@ -19,17 +28,13 @@ use crate::{
 pub fn update_grappling_context(
     context: &Context,
     state: &mut PlayerState,
-    cur_pos: Point,
     moving: Moving,
 ) -> Player {
-    const TIMEOUT: u32 = MOVE_TIMEOUT * 10;
-    const STOPPING_TIMEOUT: u32 = MOVE_TIMEOUT * 3;
-    const STOPPING_THRESHOLD: i32 = 3;
-
     if !moving.timeout.started {
         state.last_movement = Some(LastMovement::Grappling);
     }
 
+    let cur_pos = state.last_known_pos.unwrap();
     let key = state.config.grappling_key;
     let x_changed = cur_pos.x != moving.pos.x;
 
@@ -43,10 +48,10 @@ pub fn update_grappling_context(
         },
         None::<fn()>,
         |mut moving| {
-            let (distance, direction) = y_distance_direction(moving.dest, moving.pos);
+            let (distance, direction) = moving.y_distance_direction_from(true, moving.pos);
             if moving.timeout.current >= MOVE_TIMEOUT && x_changed {
                 // during double jump and grappling failed
-                moving = moving.timeout_current(TIMEOUT);
+                moving = moving.timeout_current(TIMEOUT).completed(true);
             }
             if !moving.completed {
                 if direction <= 0 || distance <= STOPPING_THRESHOLD {

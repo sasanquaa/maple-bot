@@ -7,9 +7,8 @@ use platforms::windows::KeyKind;
 use rand::seq::IteratorRandom;
 
 use super::{
-    AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT, DOUBLE_JUMP_AUTO_MOB_THRESHOLD, DOUBLE_JUMP_THRESHOLD,
-    FALLING_THRESHOLD, JUMP_THRESHOLD, LastMovement, MAX_RUNE_FAILED_COUNT, MOVE_TIMEOUT, Player,
-    PlayerAction, timeout::Timeout,
+    DOUBLE_JUMP_THRESHOLD, JUMP_THRESHOLD, MOVE_TIMEOUT, Player, PlayerAction,
+    double_jump::DOUBLE_JUMP_AUTO_MOB_THRESHOLD, fall::FALLING_THRESHOLD, timeout::Timeout,
 };
 use crate::{
     ActionKeyDirection, Class,
@@ -20,6 +19,32 @@ use crate::{
     player::timeout::update_with_timeout,
     task::{Task, Update, update_detection_task},
 };
+
+/// The maximum number of times rune solving can fail before transition to
+/// `Player::CashShopThenExit`
+pub const MAX_RUNE_FAILED_COUNT: u32 = 2;
+
+/// The number of times a reachable y must successfuly ensures the player moves to that exact y
+/// Once the count is reached, it is considered "solidified" and guaranteed the reachable y is
+/// always a y that has platform(s)
+pub const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 4;
+
+/// The maximum of number points for auto mobbing to periodically move to
+pub const AUTO_MOB_MAX_PATHING_POINTS: usize = 5;
+
+/// The acceptable y range above and below the detected mob position when matched with a reachable y
+pub const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 10;
+
+/// The player previous movement-related contextual state
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
+pub enum LastMovement {
+    Adjusting,
+    DoubleJumping,
+    Falling,
+    Grappling,
+    UpJumping,
+    Jumping,
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PlayerConfiguration {

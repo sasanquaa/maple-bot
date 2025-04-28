@@ -3,9 +3,9 @@ use log::debug;
 use super::{
     Player, PlayerAction, PlayerState,
     actions::on_action_state_mut,
+    state::AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT,
     timeout::{Timeout, update_with_timeout},
 };
-use crate::player::AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT;
 
 /// Updates the [`Player::Stalling`] contextual state
 ///

@@ -13,8 +13,8 @@ use crate::{
     context::Context,
     minimap::Minimap,
     player::{
-        AUTO_MOB_MAX_PATHING_POINTS, LastMovement, MOVE_TIMEOUT, Moving, Player,
-        on_action_state_mut, update_with_timeout,
+        LastMovement, MOVE_TIMEOUT, Moving, Player, on_action_state_mut,
+        state::AUTO_MOB_MAX_PATHING_POINTS, update_with_timeout,
     },
 };
 

@@ -3,22 +3,28 @@ use opencv::core::Point;
 use platforms::windows::KeyKind;
 
 use super::{
-    Player, PlayerAction, PlayerActionKey, PlayerState, moving::Moving, on_auto_mob_use_key_action,
-    use_key::UseKey,
+    Player, PlayerAction, PlayerActionKey, PlayerState, actions::on_auto_mob_use_key_action,
+    moving::Moving, use_key::UseKey,
 };
 use crate::{
     ActionKeyDirection, ActionKeyWith,
     context::Context,
     player::{
-        ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD, DOUBLE_JUMP_THRESHOLD, LastMovement,
-        MOVE_TIMEOUT,
         actions::on_action,
+        moving::{ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD, MOVE_TIMEOUT},
+        state::LastMovement,
         timeout::{ChangeAxis, Timeout, update_moving_axis_context},
-        x_distance_direction, y_distance_direction,
     },
 };
 
+/// Minimum x distance from the destination required to perform a double jump
+pub const DOUBLE_JUMP_THRESHOLD: i32 = 25;
+
+/// Minimum x distance from the destination required to perform a double jump in auto mobbing
+pub const DOUBLE_JUMP_AUTO_MOB_THRESHOLD: i32 = 15;
+
 const USE_KEY_X_THRESHOLD: i32 = DOUBLE_JUMP_THRESHOLD;
+
 const USE_KEY_Y_THRESHOLD: i32 = 10;
 
 /// Updates the [`Player::DoubleJumping`] contextual state
@@ -38,7 +44,6 @@ const USE_KEY_Y_THRESHOLD: i32 = 10;
 pub fn update_double_jumping_context(
     context: &Context,
     state: &mut PlayerState,
-    cur_pos: Point,
     moving: Moving,
     forced: bool,
     require_stationary: bool,
@@ -49,12 +54,14 @@ pub fn update_double_jumping_context(
     const FORCE_THRESHOLD: i32 = 3;
 
     debug_assert!(moving.timeout.started || !moving.completed);
+    let cur_pos = state.last_known_pos.unwrap();
     let ignore_grappling = forced || state.should_disable_grappling();
     let x_changed = (cur_pos.x - moving.pos.x).abs();
-    let (x_distance, x_direction) = x_distance_direction(moving.dest, cur_pos);
-    let (y_distance, y_direction) = y_distance_direction(moving.dest, cur_pos);
+    let (x_distance, x_direction) = moving.x_distance_direction_from(true, cur_pos);
+    let (y_distance, y_direction) = moving.y_distance_direction_from(true, cur_pos);
     let is_intermediate = moving.is_destination_intermediate();
     if !moving.timeout.started {
+        // Checks to perform a fall and returns to double jump
         if !forced
             && !matches!(state.last_movement, Some(LastMovement::Falling))
             && y_direction < 0
@@ -126,12 +133,7 @@ pub fn update_double_jumping_context(
             }
             on_action(
                 state,
-                |action| {
-                    let dest = moving.last_destination();
-                    let (x_distance, _) = x_distance_direction(dest, cur_pos);
-                    let (y_distance, _) = y_distance_direction(dest, cur_pos);
-                    on_player_action(context, forced, action, x_distance, y_distance, moving)
-                },
+                |action| on_player_action(context, cur_pos, forced, action, moving),
                 || {
                     if !ignore_grappling
                         && moving.completed
@@ -160,12 +162,14 @@ pub fn update_double_jumping_context(
 
 fn on_player_action(
     context: &Context,
+    cur_pos: Point,
     forced: bool,
     action: PlayerAction,
-    x_distance: i32,
-    y_distance: i32,
     moving: Moving,
 ) -> Option<(Player, bool)> {
+    let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
+    let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
+
     match action {
         // ignore proximity check when it is forced to double jumped
         // this indicates the player is already near the destination

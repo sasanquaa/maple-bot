@@ -1,10 +1,19 @@
+use opencv::core::Point;
+use platforms::windows::KeyKind;
 use strum::Display;
 
-use super::{Player, PlayerState};
+use super::{Player, PlayerState, use_key::UseKey};
 use crate::{
     Action, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, KeyBinding, Position,
-    context::MS_PER_TICK, database::LinkKeyBinding,
+    context::{Context, MS_PER_TICK},
+    database::LinkKeyBinding,
 };
+
+/// The minimum x distance required to transition to [`Player::UseKey`] in auto mob action
+const AUTO_MOB_USE_KEY_X_THRESHOLD: i32 = 20;
+
+/// The minimum y distance required to transition to [`Player::UseKey`] in auto mob action
+const AUTO_MOB_USE_KEY_Y_THRESHOLD: i32 = 8;
 
 /// Represents the fixed key action
 ///
@@ -106,6 +115,31 @@ impl From<Action> for PlayerAction {
             Action::Move(action) => PlayerAction::Move(action.into()),
             Action::Key(action) => PlayerAction::Key(action.into()),
         }
+    }
+}
+
+/// Checks proximity in [`PlayerAction::AutoMob`] for transitioning to [`Player::UseKey`]
+///
+/// This is common logics shared with other contextual states when there is auto mob action
+#[inline]
+pub fn on_auto_mob_use_key_action(
+    context: &Context,
+    action: PlayerAction,
+    cur_pos: Point,
+    x_distance: i32,
+    y_distance: i32,
+) -> Option<(Player, bool)> {
+    if x_distance <= AUTO_MOB_USE_KEY_X_THRESHOLD && y_distance <= AUTO_MOB_USE_KEY_Y_THRESHOLD {
+        let _ = context.keys.send_up(KeyKind::Down);
+        let _ = context.keys.send_up(KeyKind::Up);
+        let _ = context.keys.send_up(KeyKind::Left);
+        let _ = context.keys.send_up(KeyKind::Right);
+        Some((
+            Player::UseKey(UseKey::from_action_pos(action, Some(cur_pos))),
+            false,
+        ))
+    } else {
+        None
     }
 }
 

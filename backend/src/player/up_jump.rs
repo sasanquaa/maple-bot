@@ -1,5 +1,4 @@
 use log::debug;
-use opencv::core::Point;
 use platforms::windows::KeyKind;
 
 use super::{Player, PlayerState, moving::Moving};
@@ -7,11 +6,11 @@ use crate::{
     context::Context,
     minimap::Minimap,
     player::{
-        ADJUSTING_MEDIUM_THRESHOLD, LastMovement, MOVE_TIMEOUT, PlayerAction,
-        actions::on_action,
-        on_auto_mob_use_key_action,
+        MOVE_TIMEOUT, PlayerAction,
+        actions::{on_action, on_auto_mob_use_key_action},
+        adjust::ADJUSTING_MEDIUM_THRESHOLD,
+        state::LastMovement,
         timeout::{ChangeAxis, update_moving_axis_context},
-        x_distance_direction, y_distance_direction,
     },
 };
 
@@ -26,7 +25,6 @@ use crate::{
 pub fn update_up_jumping_context(
     context: &Context,
     state: &mut PlayerState,
-    cur_pos: Point,
     moving: Moving,
 ) -> Player {
     const SPAM_DELAY: u32 = 7;
@@ -34,6 +32,7 @@ pub fn update_up_jumping_context(
     const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
     const UP_JUMPED_THRESHOLD: i32 = 5;
 
+    let cur_pos = state.last_known_pos.unwrap();
     if !moving.timeout.started {
         if let Minimap::Idle(idle) = context.minimap {
             for portal in idle.portals {
@@ -52,10 +51,11 @@ pub fn update_up_jumping_context(
     }
 
     let y_changed = (cur_pos.y - moving.pos.y).abs();
-    let (x_distance, _) = x_distance_direction(moving.dest, cur_pos);
+    let (x_distance, _) = moving.x_distance_direction_from(true, cur_pos);
     let up_jump_key = state.config.upjump_key;
     let jump_key = state.config.jump_key;
     let has_teleport_key = state.config.teleport_key.is_some();
+
     update_moving_axis_context(
         moving,
         cur_pos,
@@ -115,9 +115,8 @@ pub fn update_up_jumping_context(
                                 false,
                             ));
                         }
-                        let dest = moving.last_destination();
-                        let (x_distance, _) = x_distance_direction(dest, cur_pos);
-                        let (y_distance, _) = y_distance_direction(dest, cur_pos);
+                        let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
+                        let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
                         on_auto_mob_use_key_action(context, action, cur_pos, x_distance, y_distance)
                     }
                     PlayerAction::Key(_) | PlayerAction::Move(_) | PlayerAction::SolveRune => None,
@@ -127,4 +126,112 @@ pub fn update_up_jumping_context(
         },
         ChangeAxis::Vertical,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::assert_matches::assert_matches;
+
+    use opencv::core::Point;
+    use platforms::windows::KeyKind;
+
+    use super::{Moving, PlayerState, update_up_jumping_context};
+    use crate::{
+        bridge::MockKeySender,
+        context::Context,
+        player::{Player, Timeout},
+    };
+
+    #[test]
+    fn up_jumping_start() {
+        let pos = Point::new(5, 5);
+        let moving = Moving {
+            pos,
+            dest: pos,
+            ..Default::default()
+        };
+        let mut state = PlayerState::default();
+        let mut context = Context::new(None, None);
+        state.config.jump_key = KeyKind::Space;
+        state.last_known_pos = Some(pos);
+
+        let mut keys = MockKeySender::new();
+        keys.expect_send_down()
+            .withf(|key| matches!(key, KeyKind::Up))
+            .returning(|_| Ok(()))
+            .once();
+        keys.expect_send()
+            .withf(|key| matches!(key, KeyKind::Space))
+            .returning(|_| Ok(()))
+            .once();
+        context.keys = Box::new(keys);
+        // Space + Up only
+        update_up_jumping_context(&context, &mut state, moving);
+        let _ = context.keys; // drop mock for validation
+
+        state.config.upjump_key = Some(KeyKind::C);
+        let mut keys = MockKeySender::new();
+        keys.expect_send_down()
+            .withf(|key| matches!(key, KeyKind::Up))
+            .once()
+            .returning(|_| Ok(()));
+        keys.expect_send()
+            .withf(|key| matches!(key, KeyKind::Space))
+            .never()
+            .returning(|_| Ok(()));
+        context.keys = Box::new(keys);
+        // Up only
+        update_up_jumping_context(&context, &mut state, moving);
+        let _ = context.keys; // drop mock for validation
+
+        state.config.teleport_key = Some(KeyKind::Shift);
+        let mut keys = MockKeySender::new();
+        keys.expect_send_down()
+            .withf(|key| matches!(key, KeyKind::Up))
+            .once()
+            .returning(|_| Ok(()));
+        keys.expect_send()
+            .withf(|key| matches!(key, KeyKind::Space))
+            .once()
+            .returning(|_| Ok(()));
+        context.keys = Box::new(keys);
+        // Space + Up
+        update_up_jumping_context(&context, &mut state, moving);
+        let _ = context.keys; // drop mock for validation
+    }
+
+    #[test]
+    fn up_jumping_update() {
+        let moving_pos = Point::new(7, 1);
+        let moving = Moving {
+            pos: moving_pos,
+            timeout: Timeout {
+                started: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut state = PlayerState {
+            last_known_pos: Some(Point::new(7, 7)),
+            ..Default::default()
+        };
+        let context = Context::new(None, None);
+
+        // up jumped because y changed > 5
+        assert_matches!(
+            update_up_jumping_context(&context, &mut state, moving),
+            Player::UpJumping(Moving {
+                timeout: Timeout {
+                    current: 1,
+                    total: 1,
+                    ..
+                },
+                completed: true,
+                ..
+            })
+        );
+
+        // TODO
+        // more tests
+    }
 }

@@ -3,21 +3,28 @@ use opencv::core::Point;
 use platforms::windows::KeyKind;
 
 use super::{
-    Player, PlayerAction, PlayerActionAutoMob, PlayerActionKey, PlayerActionMove, PlayerState,
-    actions::on_action_state_mut, moving::Moving, use_key::UseKey,
+    JUMP_THRESHOLD, Player, PlayerAction, PlayerActionAutoMob, PlayerActionKey, PlayerActionMove,
+    PlayerState,
+    actions::on_action_state_mut,
+    double_jump::DOUBLE_JUMP_THRESHOLD,
+    grapple::{GRAPPLING_MAX_THRESHOLD, GRAPPLING_THRESHOLD},
+    moving::{Moving, MovingIntermediates},
+    use_key::UseKey,
 };
 use crate::{
     ActionKeyDirection, ActionKeyWith, Position,
+    array::Array,
     context::Context,
     minimap::Minimap,
-    player::{AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT, AUTO_MOB_REACHABLE_Y_THRESHOLD, find_points},
+    pathing::{PlatformWithNeighbors, find_points_with},
+    player::state::{AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT, AUTO_MOB_REACHABLE_Y_THRESHOLD},
 };
 
 /// Updates [`Player::Idle`] contextual state
 ///
 /// This state does not do much on its own except when auto mobbing. It acts as entry
 /// to other state when there is an action and helps clearing keys.
-pub fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: Point) -> Player {
+pub fn update_idle_context(context: &Context, state: &mut PlayerState) -> Player {
     state.last_destinations = None;
     state.last_movement = None;
     state.stalling_timeout_state = None;
@@ -28,7 +35,7 @@ pub fn update_idle_context(context: &Context, state: &mut PlayerState, cur_pos: 
 
     on_action_state_mut(
         state,
-        |state, action| on_player_action(context, state, action, cur_pos),
+        |state, action| on_player_action(context, state, action),
         || Player::Idle,
     )
 }
@@ -37,8 +44,8 @@ fn on_player_action(
     context: &Context,
     state: &mut PlayerState,
     action: PlayerAction,
-    cur_pos: Point,
 ) -> Option<(Player, bool)> {
+    let cur_pos = state.last_known_pos.unwrap();
     match action {
         PlayerAction::AutoMob(PlayerActionAutoMob { position, .. }) => Some((
             ensure_reachable_auto_mob_y(context, state, cur_pos, position),
@@ -198,4 +205,37 @@ fn populate_auto_mob_reachable_y(context: &Context, state: &mut PlayerState) {
         AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT - 1,
     );
     debug!(target: "player", "auto mob initial reachable y map {:?}", state.auto_mob_reachable_y_map);
+}
+
+#[inline]
+fn find_points(
+    platforms: &[PlatformWithNeighbors],
+    cur_pos: Point,
+    dest: Point,
+    exact: bool,
+    up_jump_only: bool,
+) -> Option<MovingIntermediates> {
+    let vertical_threshold = if up_jump_only {
+        GRAPPLING_THRESHOLD
+    } else {
+        GRAPPLING_MAX_THRESHOLD
+    };
+    let vec = find_points_with(
+        platforms,
+        cur_pos,
+        dest,
+        DOUBLE_JUMP_THRESHOLD,
+        JUMP_THRESHOLD,
+        vertical_threshold,
+    )?;
+    let len = vec.len();
+    let array = Array::from_iter(
+        vec.into_iter()
+            .enumerate()
+            .map(|(i, point)| (point, if i == len - 1 { exact } else { false })),
+    );
+    Some(MovingIntermediates {
+        current: 0,
+        inner: array,
+    })
 }

@@ -4,7 +4,8 @@ use super::{Player, PlayerState, actions::PlayerAction};
 use crate::{
     context::Context,
     player::{
-        MAX_RUNE_FAILED_COUNT, on_action_state_mut,
+        on_action_state_mut,
+        state::MAX_RUNE_FAILED_COUNT,
         timeout::{Timeout, update_with_timeout},
     },
     task::{Update, update_detection_task},

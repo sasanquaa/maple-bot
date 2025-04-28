@@ -15,6 +15,7 @@ pub enum CashShop {
     Stalling,
 }
 
+// TODO: Improve this?
 pub fn update_cash_shop_context(
     context: &Context,
     state: &PlayerState,
