@@ -27,7 +27,6 @@ mod minimap;
 mod network;
 mod pathing;
 mod player;
-mod player_actions;
 mod request_handler;
 mod rotator;
 mod rpc;

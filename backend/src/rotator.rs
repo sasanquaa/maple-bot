@@ -17,8 +17,10 @@ use crate::{
     context::{Context, MS_PER_TICK},
     database::{Action, ActionCondition, ActionKey, ActionMove},
     minimap::Minimap,
-    player::{GRAPPLING_THRESHOLD, Player, PlayerState},
-    player_actions::{PlayerAction, PlayerActionAutoMob, PlayerActionKey},
+    player::{
+        GRAPPLING_THRESHOLD, Player, PlayerAction, PlayerActionAutoMob, PlayerActionKey,
+        PlayerState,
+    },
     skill::{Skill, SkillKind},
     task::{Task, Update, update_detection_task},
 };
