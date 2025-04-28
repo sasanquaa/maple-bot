@@ -1,9 +1,6 @@
+use backend::{CaptureMode, InputMethod, KeyBindingConfiguration, Settings as SettingsData};
 #[cfg(debug_assertions)]
-use backend::capture_image;
-use backend::{
-    CaptureMode, InputMethod, KeyBindingConfiguration, Settings as SettingsData, infer_minimap,
-    infer_rune,
-};
+use backend::{capture_image, infer_minimap, infer_rune};
 use dioxus::prelude::*;
 
 use crate::{
