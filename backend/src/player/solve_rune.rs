@@ -11,6 +11,10 @@ use crate::{
     task::{Update, update_detection_task},
 };
 
+const TIMEOUT: u32 = 155;
+
+const PRESS_KEY_INTERVAL: u32 = 8;
+
 #[derive(Clone, Copy, Default, Debug)]
 pub struct SolvingRune {
     timeout: Timeout,
@@ -30,9 +34,6 @@ pub fn update_solving_rune_context(
     state: &mut PlayerState,
     solving_rune: SolvingRune,
 ) -> Player {
-    const TIMEOUT: u32 = 155;
-    const PRESS_KEY_INTERVAL: u32 = 8;
-
     debug_assert!(state.rune_validate_timeout.is_none());
     debug_assert!(state.rune_failed_count < MAX_RUNE_FAILED_COUNT);
     debug_assert!(!state.rune_cash_shop);

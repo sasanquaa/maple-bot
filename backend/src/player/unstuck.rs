@@ -9,6 +9,14 @@ use crate::{
     task::{Update, update_detection_task},
 };
 
+const Y_IGNORE_THRESHOLD: i32 = 18;
+
+// what is gamba mode? i am disappointed if you don't know
+const GAMBA_MODE_COUNT: u32 = 3;
+
+/// Random threshold to choose unstucking direction
+const X_TO_RIGHT_THRESHOLD: i32 = 10;
+
 /// Updates the [`Player::Unstucking`] contextual state
 ///
 /// This state can only be transitioned to when [`PlayerState::unstuck_counter`] reached the fixed
@@ -26,12 +34,6 @@ pub fn update_unstucking_context(
     timeout: Timeout,
     has_settings: Option<bool>,
 ) -> Player {
-    const Y_IGNORE_THRESHOLD: i32 = 18;
-    // what is gamba mode? i am disappointed if you don't know
-    const GAMBA_MODE_COUNT: u32 = 3;
-    /// Random threshold to choose unstucking direction
-    const X_TO_RIGHT_THRESHOLD: i32 = 10;
-
     let Minimap::Idle(idle) = context.minimap else {
         return Player::Detecting;
     };

@@ -16,6 +16,10 @@ use crate::{
 /// Minimum y distance from the destination required to perform a fall
 pub const FALLING_THRESHOLD: i32 = 4;
 
+const STOP_DOWN_KEY_TICK: u32 = 3;
+
+const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
+
 /// Updates the [`Player::Falling`] contextual state
 ///
 /// This state will perform a drop down `Down Key + Space`
@@ -25,9 +29,6 @@ pub fn update_falling_context(
     moving: Moving,
     anchor: Point,
 ) -> Player {
-    const STOP_DOWN_KEY_TICK: u32 = 3;
-    const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
-
     let cur_pos = state.last_known_pos.unwrap();
     let y_changed = cur_pos.y - anchor.y;
     let (x_distance, _) = moving.x_distance_direction_from(true, cur_pos);

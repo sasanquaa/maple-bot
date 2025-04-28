@@ -26,6 +26,12 @@ pub const DOUBLE_JUMP_AUTO_MOB_THRESHOLD: i32 = 15;
 const USE_KEY_X_THRESHOLD: i32 = DOUBLE_JUMP_THRESHOLD;
 
 const USE_KEY_Y_THRESHOLD: i32 = 10;
+// Note: even in auto mob, also use the non-auto mob threshold
+const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
+
+const GRAPPLING_THRESHOLD: i32 = 4;
+
+const FORCE_THRESHOLD: i32 = 3;
 
 /// Updates the [`Player::DoubleJumping`] contextual state
 ///
@@ -48,11 +54,6 @@ pub fn update_double_jumping_context(
     forced: bool,
     require_stationary: bool,
 ) -> Player {
-    // Note: even in auto mob, also use the non-auto mob threshold
-    const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
-    const GRAPPLING_THRESHOLD: i32 = 4;
-    const FORCE_THRESHOLD: i32 = 3;
-
     debug_assert!(moving.timeout.started || !moving.completed);
     let cur_pos = state.last_known_pos.unwrap();
     let ignore_grappling = forced || state.should_disable_grappling();
