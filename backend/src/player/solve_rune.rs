@@ -6,7 +6,6 @@ use crate::{
     player::{
         MAX_RUNE_FAILED_COUNT, on_action_state_mut,
         timeout::{Timeout, update_with_timeout},
-        update_rune_fail_count_state,
     },
     task::{Update, update_detection_task},
 };
@@ -110,7 +109,7 @@ pub fn update_solving_rune_context(
                     if solving_rune.keys.is_some() {
                         state.rune_validate_timeout = Some(Timeout::default());
                     } else {
-                        update_rune_fail_count_state(state);
+                        state.update_rune_fail_count_state();
                     }
                 }
                 Some((next, is_terminal))

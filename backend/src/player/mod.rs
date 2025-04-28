@@ -5,7 +5,6 @@ use double_jump::update_double_jumping_context;
 use fall::update_falling_context;
 use grapple::update_grappling_context;
 use idle::update_idle_context;
-use log::debug;
 use moving::{Moving, MovingIntermediates, update_moving_context};
 use opencv::core::Point;
 use platforms::windows::KeyKind;
@@ -19,13 +18,10 @@ use use_key::{UseKey, update_use_key_context};
 
 use crate::{
     array::Array,
-    buff::{Buff, BuffKind},
     context::{Context, Contextual, ControlFlow},
     database::ActionKeyDirection,
     minimap::Minimap,
-    network::NotificationKind,
     pathing::{PlatformWithNeighbors, find_points_with},
-    task::{Update, update_detection_task},
 };
 
 mod actions;
@@ -171,7 +167,9 @@ impl Contextual for Player {
         let cur_pos = if state.ignore_pos_update {
             state.last_known_pos
         } else {
-            update_state(context, state)
+            state
+                .update_state(context)
+                .then(|| state.last_known_pos.unwrap())
         };
         let Some(cur_pos) = cur_pos else {
             // When the player detection fails, the possible causes are:

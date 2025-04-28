@@ -177,7 +177,7 @@ pub fn on_action_state_mut(
                 PlayerAction::Key(PlayerActionKey { position: None, .. }) => (),
             }
             // FIXME: clear only when has position?
-            state.clear_action_and_movement();
+            state.mark_action_completed();
         }
         return next;
     }

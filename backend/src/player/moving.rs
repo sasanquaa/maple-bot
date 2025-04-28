@@ -208,7 +208,7 @@ pub fn update_moving_context(
             debug_assert!(count <= count_max);
             if count >= count_max {
                 info!(target: "player", "abort action due to repeated state");
-                state.clear_action_and_movement();
+                state.mark_action_completed();
                 return Player::Idle;
             }
         }

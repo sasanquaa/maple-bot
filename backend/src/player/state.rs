@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
+use log::debug;
 use opencv::core::{Point, Rect};
 use platforms::windows::KeyKind;
 use rand::seq::IteratorRandom;
 
 use super::{
     AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT, DOUBLE_JUMP_AUTO_MOB_THRESHOLD, DOUBLE_JUMP_THRESHOLD,
-    FALLING_THRESHOLD, JUMP_THRESHOLD, LastMovement, MAX_RUNE_FAILED_COUNT, Player, PlayerAction,
-    reset_health, timeout::Timeout,
+    FALLING_THRESHOLD, JUMP_THRESHOLD, LastMovement, MAX_RUNE_FAILED_COUNT, MOVE_TIMEOUT, Player,
+    PlayerAction, timeout::Timeout,
 };
 use crate::{
     ActionKeyDirection, Class,
@@ -188,6 +189,7 @@ impl PlayerState {
         self.has_normal_action().then_some(self.normal_action_id)
     }
 
+    /// Whether is a normal action
     #[inline]
     pub fn has_normal_action(&self) -> bool {
         self.normal_action.is_some()
@@ -214,11 +216,13 @@ impl PlayerState {
             .then_some(self.priority_action_id)
     }
 
+    /// Whether there is a priority action
     #[inline]
     pub fn has_priority_action(&self) -> bool {
         self.priority_action.is_some()
     }
 
+    /// Sets the priority action to `id` and `action` and resets to [`Player::Idle`] on next update
     #[inline]
     pub fn set_priority_action(&mut self, id: u32, action: PlayerAction) {
         let _ = self.replace_priority_action(id, action);
@@ -247,11 +251,13 @@ impl PlayerState {
             .then_some(prev_id)
     }
 
+    /// Whether there is a priority rune action
     #[inline]
     pub fn has_rune_action(&self) -> bool {
         matches!(self.priority_action, Some(PlayerAction::SolveRune))
     }
 
+    /// Whether the player is validating whether the rune is solved
     #[inline]
     pub fn is_validating_rune(&self) -> bool {
         self.rune_validate_timeout.is_some()
@@ -265,7 +271,7 @@ impl PlayerState {
     }
 
     #[inline]
-    pub(super) fn clear_action_and_movement(&mut self) {
+    pub(super) fn mark_action_completed(&mut self) {
         if self.has_priority_action() {
             self.priority_action = None;
             self.last_movement_priority_map.clear();
@@ -353,51 +359,21 @@ impl PlayerState {
                 && self.config.rune_platforms_pathing_up_jump_only)
     }
 
-    /// Updates the [`PlayerState`]
+    /// Updates the [`PlayerState`] on each tick.
     ///
-    /// This function:
-    /// - Returns the player current position or `None` when the minimap or player cannot be detected
-    /// - Updates the stationary check via `state.is_stationary_timeout`
-    /// - Delegates to `update_health_state`, `update_rune_validating_state` and `update_is_dead_state`
-    /// - Resets `state.unstuck_counter` and `state.unstuck_consecutive_counter` when position changed
+    /// This function updates the player states including current position, health, whether the
+    /// player is dead, stationary state and rune validation state. It also resets
+    /// [`PlayerState::unstuck_counter`] and [`PlayerState::unstuck_consecutive_counter`] when the
+    /// player position changes.
     #[inline]
-    fn update_state(context: &Context, state: &mut PlayerState) -> Option<Point> {
-        let Minimap::Idle(idle) = &context.minimap else {
-            reset_health(state);
-            return None;
-        };
-        let minimap_bbox = idle.bbox;
-        let Ok(bbox) = context.detector_unwrap().detect_player(minimap_bbox) else {
-            reset_health(state);
-            return None;
-        };
-        let tl = bbox.tl();
-        let br = bbox.br();
-        let x = (tl.x + br.x) / 2;
-        let y = minimap_bbox.height - br.y;
-        let pos = Point::new(x, y);
-        let last_known_pos = state.last_known_pos.unwrap_or(pos);
-        if last_known_pos != pos {
-            state.unstuck_counter = 0;
-            state.unstuck_consecutive_counter = 0;
-            state.is_stationary_timeout = Timeout::default();
+    pub(super) fn update_state(&mut self, context: &Context) -> bool {
+        if self.update_position_state(context) {
+            self.update_health_state(context);
+            self.update_rune_validating_state(context);
+            self.update_is_dead_state(context);
+            return true;
         }
-
-        let (is_stationary, is_stationary_timeout) = update_with_timeout(
-            state.is_stationary_timeout,
-            MOVE_TIMEOUT,
-            |timeout| (false, timeout),
-            || (true, state.is_stationary_timeout),
-            |timeout| (false, timeout),
-        );
-        state.is_stationary = is_stationary;
-        state.is_stationary_timeout = is_stationary_timeout;
-        state.last_known_pos = Some(pos);
-
-        update_health_state(context, state);
-        update_rune_validating_state(context, state);
-        update_is_dead_state(context, state);
-        Some(pos)
+        false
     }
 
     /// Increments the rune validation fail count and sets [`PlayerState::rune_cash_shop`] if needed
@@ -408,6 +384,45 @@ impl PlayerState {
             self.rune_failed_count = 0;
             self.rune_cash_shop = true;
         }
+    }
+
+    #[inline]
+    fn update_position_state(&mut self, context: &Context) -> bool {
+        let minimap_bbox = match &context.minimap {
+            Minimap::Detecting => return false,
+            Minimap::Idle(idle) => idle.bbox,
+        };
+        let Ok(player_bbox) = context.detector_unwrap().detect_player(minimap_bbox) else {
+            return false;
+        };
+        let tl = player_bbox.tl();
+        let br = player_bbox.br();
+        let x = (tl.x + br.x) / 2;
+        // The native coordinate of OpenCV is top-left and this flips to bottom-left for
+        // for better intution to the UI. All player states and actions also operate on this
+        // bottom-left coordinate.
+        //
+        // TODO: Should keep original coordinate? And flips before passing to UI?
+        let y = minimap_bbox.height - br.y;
+        let pos = Point::new(x, y);
+        let last_known_pos = self.last_known_pos.unwrap_or(pos);
+        if last_known_pos != pos {
+            self.unstuck_counter = 0;
+            self.unstuck_consecutive_counter = 0;
+            self.is_stationary_timeout = Timeout::default();
+        }
+
+        let (is_stationary, is_stationary_timeout) = update_with_timeout(
+            self.is_stationary_timeout,
+            MOVE_TIMEOUT,
+            |timeout| (false, timeout),
+            || (true, self.is_stationary_timeout),
+            |timeout| (false, timeout),
+        );
+        self.is_stationary = is_stationary;
+        self.is_stationary_timeout = is_stationary_timeout;
+        self.last_known_pos = Some(pos);
+        true
     }
 
     /// Updates the rune validation [`Timeout`]
@@ -450,21 +465,21 @@ impl PlayerState {
             return;
         }
 
-        let Some(health_bar) = state.health_bar else {
+        let Some(health_bar) = self.health_bar else {
             let update =
-                update_detection_task(context, 1000, &mut state.health_bar_task, move |detector| {
+                update_detection_task(context, 1000, &mut self.health_bar_task, move |detector| {
                     detector.detect_player_health_bar()
                 });
             if let Update::Ok(health_bar) = update {
-                state.health_bar = Some(health_bar);
+                self.health_bar = Some(health_bar);
             }
             return;
         };
 
         let Update::Ok(health) = update_detection_task(
             context,
-            state.config.update_health_millis.unwrap_or(1000),
-            &mut state.health_task,
+            self.config.update_health_millis.unwrap_or(1000),
+            &mut self.health_task,
             move |detector| {
                 let (current_bar, max_bar) =
                     detector.detect_player_current_max_health_bars(health_bar)?;
@@ -476,13 +491,13 @@ impl PlayerState {
             return;
         };
 
-        let percentage = state.config.use_potion_below_percent.unwrap();
+        let percentage = self.config.use_potion_below_percent.unwrap();
         let (current, max) = health;
         let ratio = current as f32 / max as f32;
 
-        state.health = Some(health);
+        self.health = Some(health);
         if ratio <= percentage {
-            let _ = context.keys.send(state.config.potion_key);
+            let _ = context.keys.send(self.config.potion_key);
         }
     }
 
@@ -495,19 +510,19 @@ impl PlayerState {
     }
 
     #[inline]
-    fn update_is_dead_state(context: &Context, state: &mut PlayerState) {
+    fn update_is_dead_state(&mut self, context: &Context) {
         let Update::Ok(is_dead) =
-            update_detection_task(context, 5000, &mut state.is_dead_task, |detector| {
+            update_detection_task(context, 5000, &mut self.is_dead_task, |detector| {
                 Ok(detector.detect_player_is_dead())
             })
         else {
             return;
         };
-        if is_dead && !state.is_dead {
+        if is_dead && !self.is_dead {
             let _ = context
                 .notification
                 .schedule_notification(NotificationKind::PlayerIsDead);
         }
-        state.is_dead = is_dead;
+        self.is_dead = is_dead;
     }
 }
