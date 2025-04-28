@@ -1,5 +1,6 @@
 use actions::{on_action, on_action_state_mut};
 use adjust::update_adjusting_context;
+use cash_shop::{CashShop, update_cash_shop_context};
 use double_jump::update_double_jumping_context;
 use fall::update_falling_context;
 use grapple::update_grappling_context;
@@ -29,6 +30,7 @@ use crate::{
 
 mod actions;
 mod adjust;
+mod cash_shop;
 mod double_jump;
 mod fall;
 mod grapple;
@@ -111,15 +113,6 @@ enum LastMovement {
     Grappling,
     UpJumping,
     Jumping,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum CashShop {
-    Entering,
-    Entered,
-    Exitting,
-    Exitted,
-    Stalling,
 }
 
 /// The player contextual states
@@ -247,56 +240,13 @@ fn update_non_positional_context(
         Player::SolvingRune(solving_rune) => (!failed_to_detect_player)
             .then(|| update_solving_rune_context(context, state, solving_rune)),
         // TODO: Improve this?
-        Player::CashShopThenExit(timeout, cash_shop) => {
-            let next = match cash_shop {
-                CashShop::Entering => {
-                    let _ = context.keys.send(state.config.cash_shop_key);
-                    let next = if context.detector_unwrap().detect_player_in_cash_shop() {
-                        CashShop::Entered
-                    } else {
-                        CashShop::Entering
-                    };
-                    Player::CashShopThenExit(timeout, next)
-                }
-                CashShop::Entered => {
-                    update_with_timeout(
-                        timeout,
-                        305, // exits after 10 secs
-                        |timeout| Player::CashShopThenExit(timeout, cash_shop),
-                        || Player::CashShopThenExit(timeout, CashShop::Exitting),
-                        |timeout| Player::CashShopThenExit(timeout, cash_shop),
-                    )
-                }
-                CashShop::Exitting => {
-                    let next = if context.detector_unwrap().detect_player_in_cash_shop() {
-                        CashShop::Exitting
-                    } else {
-                        CashShop::Exitted
-                    };
-                    let _ = context.keys.send_click_to_focus();
-                    let _ = context.keys.send(KeyKind::Esc);
-                    let _ = context.keys.send(KeyKind::Enter);
-                    Player::CashShopThenExit(timeout, next)
-                }
-                CashShop::Exitted => {
-                    if failed_to_detect_player {
-                        Player::CashShopThenExit(timeout, cash_shop)
-                    } else {
-                        Player::CashShopThenExit(Timeout::default(), CashShop::Stalling)
-                    }
-                }
-                CashShop::Stalling => {
-                    update_with_timeout(
-                        timeout,
-                        90, // returns after 3 secs
-                        |timeout| Player::CashShopThenExit(timeout, cash_shop),
-                        || Player::Idle,
-                        |timeout| Player::CashShopThenExit(timeout, cash_shop),
-                    )
-                }
-            };
-            Some(next)
-        }
+        Player::CashShopThenExit(timeout, cash_shop) => Some(update_cash_shop_context(
+            context,
+            state,
+            timeout,
+            cash_shop,
+            failed_to_detect_player,
+        )),
         Player::Detecting
         | Player::Idle
         | Player::Moving(_, _, _)
