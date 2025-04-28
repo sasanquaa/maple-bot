@@ -7,9 +7,18 @@ use rand::seq::IteratorRandom;
 
 use super::{
     AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT, DOUBLE_JUMP_AUTO_MOB_THRESHOLD, DOUBLE_JUMP_THRESHOLD,
-    FALLING_THRESHOLD, JUMP_THRESHOLD, LastMovement, Player, PlayerAction, timeout::Timeout,
+    FALLING_THRESHOLD, JUMP_THRESHOLD, LastMovement, MAX_RUNE_FAILED_COUNT, Player, PlayerAction,
+    reset_health, timeout::Timeout,
 };
-use crate::{ActionKeyDirection, Class, task::Task};
+use crate::{
+    ActionKeyDirection, Class,
+    buff::{Buff, BuffKind},
+    context::Context,
+    minimap::Minimap,
+    network::NotificationKind,
+    player::timeout::update_with_timeout,
+    task::{Task, Update, update_detection_task},
+};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PlayerConfiguration {
@@ -342,5 +351,163 @@ impl PlayerState {
             || (self.has_rune_action()
                 && self.config.rune_platforms_pathing
                 && self.config.rune_platforms_pathing_up_jump_only)
+    }
+
+    /// Updates the [`PlayerState`]
+    ///
+    /// This function:
+    /// - Returns the player current position or `None` when the minimap or player cannot be detected
+    /// - Updates the stationary check via `state.is_stationary_timeout`
+    /// - Delegates to `update_health_state`, `update_rune_validating_state` and `update_is_dead_state`
+    /// - Resets `state.unstuck_counter` and `state.unstuck_consecutive_counter` when position changed
+    #[inline]
+    fn update_state(context: &Context, state: &mut PlayerState) -> Option<Point> {
+        let Minimap::Idle(idle) = &context.minimap else {
+            reset_health(state);
+            return None;
+        };
+        let minimap_bbox = idle.bbox;
+        let Ok(bbox) = context.detector_unwrap().detect_player(minimap_bbox) else {
+            reset_health(state);
+            return None;
+        };
+        let tl = bbox.tl();
+        let br = bbox.br();
+        let x = (tl.x + br.x) / 2;
+        let y = minimap_bbox.height - br.y;
+        let pos = Point::new(x, y);
+        let last_known_pos = state.last_known_pos.unwrap_or(pos);
+        if last_known_pos != pos {
+            state.unstuck_counter = 0;
+            state.unstuck_consecutive_counter = 0;
+            state.is_stationary_timeout = Timeout::default();
+        }
+
+        let (is_stationary, is_stationary_timeout) = update_with_timeout(
+            state.is_stationary_timeout,
+            MOVE_TIMEOUT,
+            |timeout| (false, timeout),
+            || (true, state.is_stationary_timeout),
+            |timeout| (false, timeout),
+        );
+        state.is_stationary = is_stationary;
+        state.is_stationary_timeout = is_stationary_timeout;
+        state.last_known_pos = Some(pos);
+
+        update_health_state(context, state);
+        update_rune_validating_state(context, state);
+        update_is_dead_state(context, state);
+        Some(pos)
+    }
+
+    /// Increments the rune validation fail count and sets [`PlayerState::rune_cash_shop`] if needed
+    #[inline]
+    pub(super) fn update_rune_fail_count_state(&mut self) {
+        self.rune_failed_count += 1;
+        if self.rune_failed_count >= MAX_RUNE_FAILED_COUNT {
+            self.rune_failed_count = 0;
+            self.rune_cash_shop = true;
+        }
+    }
+
+    /// Updates the rune validation [`Timeout`]
+    ///
+    /// [`PlayerState::rune_validate_timeout`] is [`Some`] only when [`Player::SolvingRune`]
+    /// successfully detects and sends all the keys. After about 12 seconds, it
+    /// will check if the player has the rune buff.
+    #[inline]
+    fn update_rune_validating_state(&mut self, context: &Context) {
+        const VALIDATE_TIMEOUT: u32 = 375;
+
+        debug_assert!(self.rune_failed_count < MAX_RUNE_FAILED_COUNT);
+        debug_assert!(!self.rune_cash_shop);
+        self.rune_validate_timeout = self.rune_validate_timeout.and_then(|timeout| {
+            update_with_timeout(
+                timeout,
+                VALIDATE_TIMEOUT,
+                Some,
+                || {
+                    if matches!(context.buffs[BuffKind::Rune], Buff::NoBuff) {
+                        self.update_rune_fail_count_state();
+                    } else {
+                        self.rune_failed_count = 0;
+                    }
+                    None
+                },
+                Some,
+            )
+        });
+    }
+
+    // TODO: This should be a PlayerAction?
+    #[inline]
+    fn update_health_state(&mut self, context: &Context) {
+        if let Player::SolvingRune(_) = context.player {
+            return;
+        }
+        if self.config.use_potion_below_percent.is_none() {
+            self.reset_health();
+            return;
+        }
+
+        let Some(health_bar) = state.health_bar else {
+            let update =
+                update_detection_task(context, 1000, &mut state.health_bar_task, move |detector| {
+                    detector.detect_player_health_bar()
+                });
+            if let Update::Ok(health_bar) = update {
+                state.health_bar = Some(health_bar);
+            }
+            return;
+        };
+
+        let Update::Ok(health) = update_detection_task(
+            context,
+            state.config.update_health_millis.unwrap_or(1000),
+            &mut state.health_task,
+            move |detector| {
+                let (current_bar, max_bar) =
+                    detector.detect_player_current_max_health_bars(health_bar)?;
+                let health = detector.detect_player_health(current_bar, max_bar)?;
+                debug!(target: "player", "health updated {:?}", health);
+                Ok(health)
+            },
+        ) else {
+            return;
+        };
+
+        let percentage = state.config.use_potion_below_percent.unwrap();
+        let (current, max) = health;
+        let ratio = current as f32 / max as f32;
+
+        state.health = Some(health);
+        if ratio <= percentage {
+            let _ = context.keys.send(state.config.potion_key);
+        }
+    }
+
+    #[inline]
+    fn reset_health(&mut self) {
+        self.health = None;
+        self.health_task = None;
+        self.health_bar = None;
+        self.health_bar_task = None;
+    }
+
+    #[inline]
+    fn update_is_dead_state(context: &Context, state: &mut PlayerState) {
+        let Update::Ok(is_dead) =
+            update_detection_task(context, 5000, &mut state.is_dead_task, |detector| {
+                Ok(detector.detect_player_is_dead())
+            })
+        else {
+            return;
+        };
+        if is_dead && !state.is_dead {
+            let _ = context
+                .notification
+                .schedule_notification(NotificationKind::PlayerIsDead);
+        }
+        state.is_dead = is_dead;
     }
 }
