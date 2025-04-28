@@ -4,7 +4,10 @@ use log::debug;
 use opencv::core::Point;
 use platforms::windows::KeyKind;
 
-use super::{PlayerState, Timeout};
+use super::{
+    PlayerState, Timeout,
+    actions::{PlayerAction, PlayerActionKey},
+};
 use crate::{
     ActionKeyDirection, ActionKeyWith, Class, KeyBinding, LinkKeyBinding,
     context::Context,
@@ -13,7 +16,6 @@ use crate::{
         AUTO_MOB_MAX_PATHING_POINTS, LastMovement, MOVE_TIMEOUT, Moving, Player,
         on_action_state_mut, update_with_timeout,
     },
-    player_actions::{PlayerAction, PlayerActionKey},
 };
 
 /// The different stages of using key

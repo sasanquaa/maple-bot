@@ -1,4 +1,6 @@
-use super::{Player, PlayerState, SolvingRune};
+use platforms::windows::KeyKind;
+
+use super::{Player, PlayerState, actions::PlayerAction};
 use crate::{
     context::Context,
     player::{
@@ -6,9 +8,15 @@ use crate::{
         timeout::{Timeout, update_with_timeout},
         update_rune_fail_count_state,
     },
-    player_actions::PlayerAction,
     task::{Update, update_detection_task},
 };
+
+#[derive(Clone, Copy, Default, Debug)]
+pub struct SolvingRune {
+    timeout: Timeout,
+    keys: Option<[KeyKind; 4]>,
+    key_index: usize,
+}
 
 /// Updates the [`Player::SolvingRune`] contextual state
 ///
