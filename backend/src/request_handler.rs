@@ -3,6 +3,8 @@ use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
 use platforms::windows::{KeyInputKind, KeyKind, KeyReceiver};
 use tokio::sync::broadcast;
 
+#[cfg(debug_assertions)]
+use crate::debug::save_image_for_training;
 use crate::{
     Action, ActionCondition, ActionKey, Bound, Configuration, GameState, KeyBinding,
     KeyBindingConfiguration, Minimap as MinimapData, PotionMode, RequestHandler, RotatorMode,
@@ -218,6 +220,13 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     #[inline]
     fn on_key_receiver(&self) -> broadcast::Receiver<KeyBinding> {
         self.key_sender.subscribe()
+    }
+
+    #[cfg(debug_assertions)]
+    fn on_capture_image(&self, is_grayscale: bool) {
+        if let Some(ref detector) = self.context.detector {
+            save_image_for_training(detector.mat(), is_grayscale, false);
+        }
     }
 }
 

@@ -81,13 +81,18 @@ pub fn debug_mat(name: &str, mat: &impl MatTraitConst, wait: i32, bboxes: &[(Rec
 }
 
 #[allow(unused)]
-pub fn save_image_for_training(mat: &impl MatTraitConst) {
+pub fn save_image_for_training(mat: &impl MatTraitConst, is_grayscale: bool, view: bool) {
     let name = Alphanumeric.sample_string(&mut rand::rng(), 8);
-    let mat = to_grayscale(mat);
-    // let mat = mat.try_clone().unwrap();
+    let mat = if is_grayscale {
+        to_grayscale(mat)
+    } else {
+        mat.try_clone().unwrap() // No point in cloning except for having the same type
+    };
     let image = LazyLock::force(&DATASET_DIR).join(format!("{name}.png"));
 
-    debug_mat("Image", &mat, 0, &[]);
+    if view {
+        debug_mat("Image", &mat, 0, &[]);
+    }
 
     imwrite_def(image.to_str().unwrap(), &mat).unwrap();
 }

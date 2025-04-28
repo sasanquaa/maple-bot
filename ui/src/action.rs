@@ -412,8 +412,7 @@ fn ActionItemList(
     }));
 
     rsx! {
-        div {
-            class: "flex-1 flex flex-col space-y-1 px-1 overflow-y-auto scrollbar rounded",
+        div { class: "flex-1 flex flex-col space-y-1 px-1 overflow-y-auto scrollbar rounded",
             if actions.is_empty() {
                 div { class: "flex items-center justify-center text-sm text-gray-500 h-full",
                     "No actions"
