@@ -2,7 +2,6 @@ use std::env;
 use std::sync::LazyLock;
 use std::{fs, path::PathBuf};
 
-use opencv::core::Mat;
 use opencv::core::MatTraitConst;
 use opencv::core::ModifyInplace;
 use opencv::core::Point;
@@ -10,6 +9,8 @@ use opencv::core::Rect;
 use opencv::core::Scalar;
 use opencv::core::Size;
 use opencv::core::add_weighted_def;
+use opencv::core::{Mat, ToInputArray};
+use opencv::highgui::destroy_window;
 use opencv::imgproc::COLOR_BGRA2GRAY;
 use opencv::imgproc::LINE_8;
 use opencv::imgproc::cvt_color_def;
@@ -29,6 +30,18 @@ static DATASET_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
         .parent()
         .unwrap()
         .join("dataset");
+    fs::create_dir_all(dir.clone()).unwrap();
+    dir
+});
+
+static DATASET_MINIMAP_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
+    let dir = DATASET_DIR.join("minimap");
+    fs::create_dir_all(dir.clone()).unwrap();
+    dir
+});
+
+static DATASET_RUNE_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
+    let dir = DATASET_DIR.join("rune");
     fs::create_dir_all(dir.clone()).unwrap();
     dir
 });
@@ -77,7 +90,9 @@ pub fn debug_mat(name: &str, mat: &impl MatTraitConst, wait: i32, bboxes: &[(Rec
         );
     }
     imshow(name, &mat).unwrap();
-    wait_key(wait).unwrap()
+    let result = wait_key(wait).unwrap();
+    destroy_window(name);
+    result
 }
 
 #[allow(unused)]
@@ -123,9 +138,9 @@ pub fn debug_rune(mat: &Mat, preds: &Vec<&[f32]>, w_ratio: f32, h_ratio: f32) {
 }
 
 #[allow(unused)]
-pub fn save_rune_for_training(
-    mat: &Mat,
-    preds: &Vec<&[f32]>,
+pub fn save_rune_for_training<T: MatTraitConst + ToInputArray>(
+    mat: &T,
+    preds: &[Vec<f32>],
     arrows: &[KeyKind; 4],
     w_ratio: f32,
     h_ratio: f32,
@@ -146,35 +161,37 @@ pub fn save_rune_for_training(
             _ => unreachable!(),
         })
         .collect::<Vec<_>>();
-    debug_mat(
+
+    let key = debug_mat(
         "Training",
         mat,
         0,
         &bboxes.clone().into_iter().zip(texts).collect::<Vec<_>>(),
     );
+    if key == 97 {
+        let labels = bboxes
+            .iter()
+            .zip(arrows)
+            .map(|(bbox, arrow)| {
+                let label = match arrow {
+                    KeyKind::Up => 0,
+                    KeyKind::Down => 1,
+                    KeyKind::Left => 2,
+                    KeyKind::Right => 3,
+                    _ => unreachable!(),
+                };
+                to_yolo_format(label, size, *bbox)
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
 
-    let labels = bboxes
-        .iter()
-        .zip(arrows)
-        .map(|(bbox, arrow)| {
-            let label = match arrow {
-                KeyKind::Up => 0,
-                KeyKind::Down => 1,
-                KeyKind::Left => 2,
-                KeyKind::Right => 3,
-                _ => unreachable!(),
-            };
-            to_yolo_format(label, size, *bbox)
-        })
-        .collect::<Vec<String>>()
-        .join("\n");
+        let dataset = &DATASET_RUNE_DIR;
+        let label = dataset.join(format!("{name}.txt"));
+        let image = dataset.join(format!("{name}.png"));
 
-    let dataset = LazyLock::force(&DATASET_DIR);
-    let label = dataset.join(format!("{name}.txt"));
-    let image = dataset.join(format!("{name}.png"));
-
-    imwrite_def(image.to_str().unwrap(), mat).unwrap();
-    fs::write(label, labels).unwrap();
+        imwrite_def(image.to_str().unwrap(), mat).unwrap();
+        fs::write(label, labels).unwrap();
+    }
 }
 
 #[allow(unused)]
@@ -205,16 +222,17 @@ pub fn save_mobs_for_training(mat: &Mat, mobs: &[Rect]) {
 }
 
 #[allow(unused)]
-fn save_minimap_for_training(mat: &Mat, minimap: &Rect) {
+pub fn save_minimap_for_training<T: MatTraitConst + ToInputArray>(mat: &T, minimap: Rect) {
     let name = Alphanumeric.sample_string(&mut rand::rng(), 8);
-    let dataset = LazyLock::force(&DATASET_DIR);
+    let dataset = &DATASET_MINIMAP_DIR;
     let label = dataset.join(format!("{name}.txt"));
     let image = dataset.join(format!("{name}.png"));
 
-    debug_mat("Training", &mat.roi(*minimap).unwrap(), 0, &[]);
-
-    imwrite_def(image.to_str().unwrap(), mat).unwrap();
-    fs::write(label, to_yolo_format(0, mat.size().unwrap(), *minimap)).unwrap();
+    let key = debug_mat("Training", mat, 0, &[(minimap, "Minimap")]);
+    if key == 97 {
+        imwrite_def(image.to_str().unwrap(), mat).unwrap();
+        fs::write(label, to_yolo_format(0, mat.size().unwrap(), minimap)).unwrap();
+    }
 }
 
 fn map_bbox_from_prediction(pred: &[f32], size: Size, w_ratio: f32, h_ratio: f32) -> Rect {

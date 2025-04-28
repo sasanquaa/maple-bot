@@ -91,6 +91,10 @@ enum Request {
     KeyReceiver,
     #[cfg(debug_assertions)]
     CaptureImage(bool),
+    #[cfg(debug_assertions)]
+    InferRune,
+    #[cfg(debug_assertions)]
+    InferMinimap,
 }
 
 /// Represents response to UI [`Request`]
@@ -112,6 +116,10 @@ enum Response {
     KeyReceiver(broadcast::Receiver<KeyBinding>),
     #[cfg(debug_assertions)]
     CaptureImage,
+    #[cfg(debug_assertions)]
+    InferRune,
+    #[cfg(debug_assertions)]
+    InferMinimap,
 }
 
 pub(crate) trait RequestHandler {
@@ -139,6 +147,12 @@ pub(crate) trait RequestHandler {
 
     #[cfg(debug_assertions)]
     fn on_capture_image(&self, is_grayscale: bool);
+
+    #[cfg(debug_assertions)]
+    fn on_infer_rune(&self);
+
+    #[cfg(debug_assertions)]
+    fn on_infer_minimap(&self);
 }
 
 #[derive(Debug, Clone)]
@@ -229,6 +243,16 @@ pub async fn capture_image(is_grayscale: bool) {
     )
 }
 
+#[cfg(debug_assertions)]
+pub async fn infer_rune() {
+    expect_unit_variant!(request(Request::InferRune).await, Response::InferRune)
+}
+
+#[cfg(debug_assertions)]
+pub async fn infer_minimap() {
+    expect_unit_variant!(request(Request::InferMinimap).await, Response::InferMinimap)
+}
+
 pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
     if let Ok((request, sender)) = LazyLock::force(&REQUESTS).1.lock().unwrap().try_recv() {
         let result = match request {
@@ -268,6 +292,16 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
             Request::CaptureImage(is_grayscale) => {
                 handler.on_capture_image(is_grayscale);
                 Response::CaptureImage
+            }
+            #[cfg(debug_assertions)]
+            Request::InferRune => {
+                handler.on_infer_rune();
+                Response::InferRune
+            }
+            #[cfg(debug_assertions)]
+            Request::InferMinimap => {
+                handler.on_infer_minimap();
+                Response::InferMinimap
             }
         };
         let _ = sender.send(result);
