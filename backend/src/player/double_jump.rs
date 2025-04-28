@@ -161,6 +161,11 @@ pub fn update_double_jumping_context(
     )
 }
 
+/// Handles [`PlayerAction`] during double jump
+///
+/// It currently handles action for auto mob and a key action with [`ActionKeyWith::Any`] or
+/// [`ActionKeyWith::DoubleJump`]. For auto mob, the same handling logics is reused. For the other,
+/// it will try to transition to [`Player::UseKey`] when the player is close enough.
 fn on_player_action(
     context: &Context,
     cur_pos: Point,

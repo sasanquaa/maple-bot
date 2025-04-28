@@ -22,7 +22,7 @@ const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
 
 /// Updates the [`Player::Falling`] contextual state
 ///
-/// This state will perform a drop down `Down Key + Space`
+/// This state will perform a drop down `Down Key + Jump Key`
 pub fn update_falling_context(
     context: &Context,
     state: &mut PlayerState,
