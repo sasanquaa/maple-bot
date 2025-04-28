@@ -90,6 +90,8 @@ enum Request {
     MinimapFrame,
     MinimapPlatformsBound,
     KeyReceiver,
+    #[cfg(debug_assertions)]
+    CaptureImage(bool),
 }
 
 /// Represents response to UI [`Request`]
@@ -109,6 +111,8 @@ enum Response {
     MinimapFrame(Option<(Vec<u8>, usize, usize)>),
     MinimapPlatformsBound(Option<Bound>),
     KeyReceiver(broadcast::Receiver<KeyBinding>),
+    #[cfg(debug_assertions)]
+    CaptureImage,
 }
 
 pub(crate) trait RequestHandler {
@@ -133,6 +137,9 @@ pub(crate) trait RequestHandler {
     fn on_minimap_platforms_bound(&self) -> Option<Bound>;
 
     fn on_key_receiver(&self) -> broadcast::Receiver<KeyBinding>;
+
+    #[cfg(debug_assertions)]
+    fn on_capture_image(&self, is_grayscale: bool);
 }
 
 #[derive(Debug, Clone)]
@@ -215,6 +222,14 @@ pub async fn key_receiver() -> broadcast::Receiver<KeyBinding> {
     expect_value_variant!(request(Request::KeyReceiver).await, Response::KeyReceiver)
 }
 
+#[cfg(debug_assertions)]
+pub async fn capture_image(is_grayscale: bool) {
+    expect_unit_variant!(
+        request(Request::CaptureImage(is_grayscale)).await,
+        Response::CaptureImage
+    )
+}
+
 pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
     if let Ok((request, sender)) = LazyLock::force(&REQUESTS).1.lock().unwrap().try_recv() {
         let result = match request {
@@ -250,6 +265,11 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
                 Response::MinimapPlatformsBound(handler.on_minimap_platforms_bound())
             }
             Request::KeyReceiver => Response::KeyReceiver(handler.on_key_receiver()),
+            #[cfg(debug_assertions)]
+            Request::CaptureImage(is_grayscale) => {
+                handler.on_capture_image(is_grayscale);
+                Response::CaptureImage
+            }
         };
         let _ = sender.send(result);
     }

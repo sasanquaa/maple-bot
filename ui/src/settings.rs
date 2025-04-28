@@ -1,3 +1,5 @@
+#[cfg(debug_assertions)]
+use backend::capture_image;
 use backend::{CaptureMode, InputMethod, KeyBindingConfiguration, Settings as SettingsData};
 use dioxus::prelude::*;
 
@@ -128,7 +130,38 @@ pub fn Settings(
                     },
                     value: Some(settings_view().platform_add_key),
                 }
+                {
+                    #[cfg(debug_assertions)]
+                    rsx! {
+                        SettingsDebugButton {
+                            label: "Capture Color Image",
+                            on_click: move |_| async {
+                                capture_image(false).await;
+                            },
+                        }
+                        SettingsDebugButton {
+                            label: "Capture Grayscale Image",
+                            on_click: move |_| async {
+                                capture_image(true).await;
+                            },
+                        }
+                    }
+                }
             }
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+#[component]
+fn SettingsDebugButton(label: String, on_click: EventHandler) -> Element {
+    rsx! {
+        button {
+            class: "button-primary h-8",
+            onclick: move |_| {
+                on_click(());
+            },
+            {label}
         }
     }
 }
