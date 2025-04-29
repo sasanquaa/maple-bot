@@ -1,4 +1,6 @@
-use backend::{CaptureMode, InputMethod, KeyBindingConfiguration, Settings as SettingsData};
+use backend::{
+    CaptureMode, InputMethod, KeyBindingConfiguration, Settings as SettingsData, record_images,
+};
 #[cfg(debug_assertions)]
 use backend::{capture_image, infer_minimap, infer_rune};
 use dioxus::prelude::*;
@@ -25,6 +27,8 @@ pub fn Settings(
     let on_settings = move |updated| {
         app_coroutine.send(AppMessage::UpdateSettings(updated));
     };
+    #[cfg(debug_assertions)]
+    let mut recording = use_signal(|| false);
 
     rsx! {
         div { class: "px-2 pb-2 pt-2 flex flex-col overflow-y-auto scrollbar h-full",
@@ -155,6 +159,14 @@ pub fn Settings(
                             label: "Infer Minimap",
                             on_click: move |_| async {
                                 infer_minimap().await;
+                            },
+                        }
+                        SettingsDebugButton {
+                            label: if recording() { "Stop Recording" } else { "Start Recording" },
+                            on_click: move |_| async move {
+                                let current = *recording.peek();
+                                record_images(!current).await;
+                                recording.set(!current);
                             },
                         }
                     }

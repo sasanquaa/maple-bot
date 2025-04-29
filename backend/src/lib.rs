@@ -95,6 +95,8 @@ enum Request {
     InferRune,
     #[cfg(debug_assertions)]
     InferMinimap,
+    #[cfg(debug_assertions)]
+    RecordImages(bool),
 }
 
 /// Represents response to UI [`Request`]
@@ -120,6 +122,8 @@ enum Response {
     InferRune,
     #[cfg(debug_assertions)]
     InferMinimap,
+    #[cfg(debug_assertions)]
+    RecordImages,
 }
 
 pub(crate) trait RequestHandler {
@@ -153,6 +157,9 @@ pub(crate) trait RequestHandler {
 
     #[cfg(debug_assertions)]
     fn on_infer_minimap(&self);
+
+    #[cfg(debug_assertions)]
+    fn on_record_images(&mut self, start: bool);
 }
 
 #[derive(Debug, Clone)]
@@ -253,6 +260,14 @@ pub async fn infer_minimap() {
     expect_unit_variant!(request(Request::InferMinimap).await, Response::InferMinimap)
 }
 
+#[cfg(debug_assertions)]
+pub async fn record_images(start: bool) {
+    expect_unit_variant!(
+        request(Request::RecordImages(start)).await,
+        Response::RecordImages
+    )
+}
+
 pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
     if let Ok((request, sender)) = LazyLock::force(&REQUESTS).1.lock().unwrap().try_recv() {
         let result = match request {
@@ -302,6 +317,11 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
             Request::InferMinimap => {
                 handler.on_infer_minimap();
                 Response::InferMinimap
+            }
+            #[cfg(debug_assertions)]
+            Request::RecordImages(start) => {
+                handler.on_record_images(start);
+                Response::RecordImages
             }
         };
         let _ = sender.send(result);
