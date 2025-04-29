@@ -1,5 +1,6 @@
 use std::env;
 use std::sync::LazyLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fs, path::PathBuf};
 
 use opencv::core::MatTraitConst;
@@ -97,13 +98,35 @@ pub fn debug_mat(name: &str, mat: &impl MatTraitConst, wait: i32, bboxes: &[(Rec
 
 #[allow(unused)]
 pub fn save_image_for_training(mat: &impl MatTraitConst, is_grayscale: bool, view: bool) {
-    let name = Alphanumeric.sample_string(&mut rand::rng(), 8);
+    save_image_for_training_to(mat, None, is_grayscale, view);
+}
+
+#[allow(unused)]
+pub fn save_image_for_training_to(
+    mat: &impl MatTraitConst,
+    folder: Option<String>,
+    is_grayscale: bool,
+    view: bool,
+) {
+    let name = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
     let mat = if is_grayscale {
         to_grayscale(mat)
     } else {
         mat.try_clone().unwrap() // No point in cloning except for having the same type
     };
-    let image = LazyLock::force(&DATASET_DIR).join(format!("{name}.png"));
+    let folder = if let Some(id) = folder {
+        let dir = DATASET_DIR.join(id.as_str());
+        if !dir.exists() {
+            fs::create_dir_all(dir.clone()).unwrap();
+        }
+        dir
+    } else {
+        DATASET_DIR.clone()
+    };
+    let image = folder.join(format!("{name}.png"));
 
     if view {
         debug_mat("Image", &mat, 0, &[]);

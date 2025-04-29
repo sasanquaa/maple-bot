@@ -1,6 +1,8 @@
 use log::debug;
 use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
 use platforms::windows::{KeyInputKind, KeyKind, KeyReceiver};
+#[cfg(debug_assertions)]
+use rand::distr::{Alphanumeric, SampleString};
 use tokio::sync::broadcast;
 
 #[cfg(debug_assertions)]
@@ -33,6 +35,8 @@ pub struct DefaultRequestHandler<'a> {
     pub key_sender: &'a broadcast::Sender<KeyBinding>,
     pub key_receiver: &'a mut KeyReceiver,
     pub image_capture: &'a mut ImageCapture,
+    #[cfg(debug_assertions)]
+    pub recording_images_id: &'a mut Option<String>,
 }
 
 impl DefaultRequestHandler<'_> {
@@ -248,6 +252,15 @@ impl RequestHandler for DefaultRequestHandler<'_> {
                 save_minimap_for_training(detector.mat(), rect);
             }
         }
+    }
+
+    #[cfg(debug_assertions)]
+    fn on_record_images(&mut self, start: bool) {
+        *self.recording_images_id = if start {
+            Some(Alphanumeric.sample_string(&mut rand::rng(), 8))
+        } else {
+            None
+        };
     }
 }
 
