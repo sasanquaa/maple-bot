@@ -99,7 +99,12 @@ pub trait Detector: 'static + Send + DynClone + Debug {
     fn detect_player_buff(&self, kind: BuffKind) -> bool;
 
     /// Detects rune arrows from the given RGBA image `Mat`.
-    fn detect_rune_arrows(&self) -> Result<[KeyKind; 4]>;
+    ///
+    /// Optional `preds` can be provided to get the prediction scores, width and height ratios.
+    fn detect_rune_arrows(
+        &self,
+        preds: Option<&mut (Vec<Vec<f32>>, f32, f32)>,
+    ) -> Result<[KeyKind; 4]>;
 
     /// Detects the Erda Shower skill from the given BGRA `Mat` image.
     fn detect_erda_shower(&self) -> Result<Rect>;
@@ -124,7 +129,10 @@ mock! {
         fn detect_player_current_max_health_bars(&self, health_bar: Rect) -> Result<(Rect, Rect)>;
         fn detect_player_health(&self, current_bar: Rect, max_bar: Rect) -> Result<(u32, u32)>;
         fn detect_player_buff(&self, kind: BuffKind) -> bool;
-        fn detect_rune_arrows(&self) -> Result<[KeyKind; 4]>;
+        fn detect_rune_arrows<'a>(
+            &'a self,
+            preds: Option<&'a mut (Vec<Vec<f32>>, f32, f32)>,
+        ) -> Result<[KeyKind; 4]>;
         fn detect_erda_shower(&self) -> Result<Rect>;
     }
 
@@ -246,8 +254,11 @@ impl Detector for CachedDetector {
         detect_player_buff(mat, kind)
     }
 
-    fn detect_rune_arrows(&self) -> Result<[KeyKind; 4]> {
-        detect_rune_arrows(&*self.mat)
+    fn detect_rune_arrows(
+        &self,
+        preds: Option<&mut (Vec<Vec<f32>>, f32, f32)>,
+    ) -> Result<[KeyKind; 4]> {
+        detect_rune_arrows(&*self.mat, preds)
     }
 
     fn detect_erda_shower(&self) -> Result<Rect> {
@@ -979,7 +990,10 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
     }
 }
 
-fn detect_rune_arrows(mat: &impl MatTraitConst) -> Result<[KeyKind; 4]> {
+fn detect_rune_arrows(
+    mat: &impl MatTraitConst,
+    preds_out: Option<&mut (Vec<Vec<f32>>, f32, f32)>,
+) -> Result<[KeyKind; 4]> {
     static RUNE_MODEL: LazyLock<Session> = LazyLock::new(|| {
         Session::builder()
             .and_then(|b| b.commit_from_memory(include_bytes!(env!("RUNE_MODEL"))))
@@ -996,7 +1010,7 @@ fn detect_rune_arrows(mat: &impl MatTraitConst) -> Result<[KeyKind; 4]> {
         }
     }
 
-    let (mat_in, _, _) = preprocess_for_yolo(mat);
+    let (mat_in, w_ratio, h_ratio) = preprocess_for_yolo(mat);
     let result = RUNE_MODEL.run([norm_rgb_to_input_value(&mat_in)]).unwrap();
     let mat_out = from_output_value(&result);
     let mut preds = (0..mat_out.rows())
@@ -1013,6 +1027,12 @@ fn detect_rune_arrows(mat: &impl MatTraitConst) -> Result<[KeyKind; 4]> {
     }
     // sort by x for arrow order
     preds.sort_by(|&a, &b| a[0].total_cmp(&b[0]));
+
+    if let Some(preds_out) = preds_out {
+        preds_out.0.extend(preds.iter().map(|pred| pred.to_vec()));
+        preds_out.1 = w_ratio;
+        preds_out.2 = h_ratio;
+    }
 
     let first = map_arrow(preds[0]);
     let second = map_arrow(preds[1]);

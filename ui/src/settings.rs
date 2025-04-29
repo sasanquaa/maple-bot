@@ -1,6 +1,6 @@
-#[cfg(debug_assertions)]
-use backend::capture_image;
 use backend::{CaptureMode, InputMethod, KeyBindingConfiguration, Settings as SettingsData};
+#[cfg(debug_assertions)]
+use backend::{capture_image, infer_minimap, infer_rune};
 use dioxus::prelude::*;
 
 use crate::{
@@ -143,6 +143,18 @@ pub fn Settings(
                             label: "Capture Grayscale Image",
                             on_click: move |_| async {
                                 capture_image(true).await;
+                            },
+                        }
+                        SettingsDebugButton {
+                            label: "Infer Rune",
+                            on_click: move |_| async {
+                                infer_rune().await;
+                            },
+                        }
+                        SettingsDebugButton {
+                            label: "Infer Minimap",
+                            on_click: move |_| async {
+                                infer_minimap().await;
                             },
                         }
                     }

@@ -55,7 +55,7 @@ pub fn update_solving_rune_context(
             if solving_rune.keys.is_none() {
                 let Update::Ok(keys) =
                     update_detection_task(context, 500, &mut state.rune_task, move |detector| {
-                        detector.detect_rune_arrows()
+                        detector.detect_rune_arrows(None)
                     })
                 else {
                     return Player::SolvingRune(SolvingRune {
