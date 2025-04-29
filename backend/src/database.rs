@@ -260,7 +260,11 @@ impl Default for PotionMode {
 
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 pub struct ActionConfiguration {
-    pub action: Action,
+    pub key: KeyBinding,
+    pub every_millis: u64,
+    pub require_stationary: bool,
+    pub wait_before_use_millis: u64,
+    pub wait_after_use_millis: u64,
     pub enabled: bool,
 }
 
@@ -268,19 +272,34 @@ impl Default for ActionConfiguration {
     fn default() -> Self {
         // Template for a buff
         Self {
-            action: Action::Key(ActionKey {
-                key: KeyBinding::A,
-                link_key: None,
-                count: 1,
-                position: None,
-                condition: ActionCondition::EveryMillis(180000),
-                direction: ActionKeyDirection::Any,
-                with: ActionKeyWith::Stationary,
-                queue_to_front: Some(true),
-                ..Default::default()
-            }),
+            key: KeyBinding::default(),
+            every_millis: 180000,
+            require_stationary: true,
+            wait_before_use_millis: 500,
+            wait_after_use_millis: 500,
             enabled: false,
         }
+    }
+}
+
+impl From<ActionConfiguration> for Action {
+    fn from(value: ActionConfiguration) -> Self {
+        Self::Key(ActionKey {
+            key: value.key,
+            link_key: None,
+            count: 1,
+            position: None,
+            condition: ActionCondition::EveryMillis(value.every_millis),
+            direction: ActionKeyDirection::Any,
+            with: if value.require_stationary {
+                ActionKeyWith::Stationary
+            } else {
+                Default::default()
+            },
+            queue_to_front: Some(true),
+            wait_before_use_millis: value.wait_before_use_millis,
+            wait_after_use_millis: value.wait_after_use_millis,
+        })
     }
 }
 

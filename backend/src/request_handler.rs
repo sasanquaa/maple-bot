@@ -309,7 +309,7 @@ fn config_actions(config: &Configuration) -> Vec<Action> {
             .actions
             .iter()
             .copied()
-            .filter_map(|action| action.enabled.then_some(action.action)),
+            .filter_map(|action| action.enabled.then_some(Action::from(action))),
     );
     vec
 }

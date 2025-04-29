@@ -1,15 +1,15 @@
 use std::{fmt::Display, str::FromStr};
 
 use backend::{
-    Class, Configuration as ConfigurationData, IntoEnumIterator, KeyBindingConfiguration,
-    PotionMode,
+    ActionConfiguration, Class, Configuration as ConfigurationData, IntoEnumIterator,
+    KeyBindingConfiguration, PotionMode,
 };
 use dioxus::prelude::*;
 
 use crate::{
     AppMessage,
-    input::{MillisInput, PercentageInput},
-    key::KeyBindingConfigurationInput,
+    input::{KeyBindingInput, MillisInput, PercentageInput},
+    key::{KeyBindingConfigurationInput, KeyInput},
     select::{EnumSelect, TextSelect},
     tab::Tab,
 };
@@ -497,7 +497,35 @@ fn ConfigFixedActions(
     config_view: Memo<ConfigurationData>,
     on_config: EventHandler<ConfigurationData>,
 ) -> Element {
-    rsx! {}
+    rsx! {
+        ConfigFixedActionInput {
+            on_input: move |action_config| {},
+            value: ActionConfiguration::default(),
+        }
+    }
+}
+
+#[component]
+fn ConfigFixedActionInput(
+    on_input: EventHandler<ActionConfiguration>,
+    value: ActionConfiguration,
+) -> Element {
+    rsx! {
+        KeyBindingInput {
+            label: "Key",
+            label_class: LABEL_CLASS,
+            div_class: DIV_CLASS,
+            input_class: INPUT_CLASS,
+            disabled: false,
+            on_input: move |key| {
+                (on_input)(ActionConfiguration {
+                    key,
+                    ..value
+                })
+            },
+            value: value.key,
+        }
+    }
 }
 
 #[component]
