@@ -35,7 +35,6 @@ pub fn use_auto_numeric(
                         emptyInputBehavior: "{minimum_value}",
                         maximumValue: "{maximum_value}",
                         minimumValue: "{minimum_value}",
-                        overrideMinMaxLimits: "invalid",
                         suffixText: "{suffix}"
                     }});
                 }} else {{
@@ -273,6 +272,7 @@ pub fn NumberInputI32(
             label_class,
             div_class,
             input_class,
+            minimum_value: 0,
             disabled,
             on_input,
             value,

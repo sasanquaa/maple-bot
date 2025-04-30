@@ -334,13 +334,30 @@ impl From<Rect> for Bound {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 pub struct AutoMobbing {
     pub bound: Bound,
     pub key: KeyBinding,
+    #[serde(default = "auto_mobbing_key_count_default")]
     pub key_count: u32,
     pub key_wait_before_millis: u64,
     pub key_wait_after_millis: u64,
+}
+
+impl Default for AutoMobbing {
+    fn default() -> Self {
+        Self {
+            bound: Bound::default(),
+            key: KeyBinding::default(),
+            key_count: auto_mobbing_key_count_default(),
+            key_wait_before_millis: 0,
+            key_wait_after_millis: 0,
+        }
+    }
+}
+
+fn auto_mobbing_key_count_default() -> u32 {
+    1
 }
 
 #[derive(
