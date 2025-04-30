@@ -228,7 +228,8 @@ fn update_rune_task(
             }
             Some(rune)
         }
-        Update::Err(_) | Update::Pending => rune,
+        Update::Err(_) => None,
+        Update::Pending => rune,
     }
 }
 

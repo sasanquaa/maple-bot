@@ -1,9 +1,5 @@
 [application]
-name = "maple-bot"
 asset_dir = "assets"
-
-[web.app]
-title = "Maple Bot"
 
 [web.watcher]
 watch_path = ["src", "assets"]

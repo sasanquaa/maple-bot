@@ -22,6 +22,7 @@ use dioxus::{
 use futures_util::StreamExt;
 use minimap::{Minimap, MinimapMessage};
 use notification::Notifications;
+use rand::distr::{Alphanumeric, SampleString};
 use settings::Settings;
 use tab::Tab;
 use tokio::{
@@ -63,7 +64,7 @@ fn main() {
         ))
         .with_resizable(true)
         .with_drag_and_drop(false)
-        .with_title("Maple Bot");
+        .with_title(Alphanumeric.sample_string(&mut rand::rng(), 16));
     let cfg = dioxus::desktop::Config::default()
         .with_menu(None)
         .with_window(window);
