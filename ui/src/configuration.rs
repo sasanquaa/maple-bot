@@ -5,11 +5,12 @@ use backend::{
     KeyBindingConfiguration, PotionMode,
 };
 use dioxus::prelude::*;
+use rand::distr::{Alphanumeric, SampleString};
 
 use crate::{
     AppMessage,
-    input::{KeyBindingInput, MillisInput, PercentageInput},
-    key::{KeyBindingConfigurationInput, KeyInput},
+    input::{Checkbox, KeyBindingInput, MillisInput, PercentageInput, use_auto_numeric},
+    key::KeyBindingConfigurationInput,
     select::{EnumSelect, TextSelect},
     tab::Tab,
 };
@@ -67,7 +68,7 @@ pub fn Configuration(
 
     rsx! {
         Tab {
-            tabs: vec![TAB_GAME.to_string(), TAB_BUFFS.to_string()],
+            tabs: vec![TAB_GAME.to_string(), TAB_BUFFS.to_string(), TAB_FIXED_ACTIONS.to_string()],
             div_class: "px-2 pt-2 pb-1",
             class: "text-xs px-2 pb-2 focus:outline-none",
             selected_class: "text-gray-800 border-b",
@@ -497,33 +498,200 @@ fn ConfigFixedActions(
     config_view: Memo<ConfigurationData>,
     on_config: EventHandler<ConfigurationData>,
 ) -> Element {
+    let mut editing_action = use_signal(ActionConfiguration::default);
+    let actions_view = use_memo(move || config_view().actions);
+
     rsx! {
-        ConfigFixedActionInput {
-            on_input: move |action_config| {},
-            value: ActionConfiguration::default(),
+        div { class: "flex flex-col space-y-2",
+            ConfigFixedActionInput {
+                is_disabled,
+                on_input: move |action| {
+                    editing_action.set(action);
+                },
+                value: editing_action(),
+            }
+            div { class: "mt-2",
+                button {
+                    class: "w-full button-primary h-6",
+                    disabled: is_disabled(),
+                    onclick: move |_| {
+                        let mut actions = actions_view.peek().clone();
+                        actions.push(*editing_action.peek());
+                        on_config(ConfigurationData {
+                            actions,
+                            ..config_view()
+                        });
+                    },
+                    "Add action"
+                }
+            }
+            for action in actions_view() {
+                ConfigFixedActionCard { is_disabled, action }
+            }
+        }
+    }
+}
+
+#[component]
+fn ConfigFixedActionCard(is_disabled: Memo<bool>, action: ActionConfiguration) -> Element {
+    const KEY: &str = "font-mono w-1/2 text-xs";
+    const VALUE: &str = "font-mono text-xs w-24 overflow-hidden text-ellipsis";
+    const DIV: &str = "flex items-center space-x-1";
+
+    let ActionConfiguration {
+        key,
+        every_millis,
+        require_stationary,
+        wait_before_use_millis,
+        wait_after_use_millis,
+        ..
+    } = action;
+    let every_millis_id = use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
+    let wait_before_use_millis_id = use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
+    let wait_after_use_millis_id = use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
+
+    use_auto_numeric(
+        every_millis_id,
+        every_millis.to_string(),
+        None,
+        "0".to_string(),
+        u64::MAX.to_string(),
+        "ms".to_string(),
+    );
+    use_auto_numeric(
+        wait_before_use_millis_id,
+        wait_before_use_millis.to_string(),
+        None,
+        "0".to_string(),
+        u64::MAX.to_string(),
+        "ms".to_string(),
+    );
+    use_auto_numeric(
+        wait_after_use_millis_id,
+        wait_after_use_millis.to_string(),
+        None,
+        "0".to_string(),
+        u64::MAX.to_string(),
+        "ms".to_string(),
+    );
+
+    rsx! {
+        div { class: "flex",
+            div { class: "w-3/4",
+                div { class: "flex flex-col p-1 space-y-1 border-l rounded",
+                    div { class: DIV,
+                        span { class: KEY, "Key" }
+                        span { class: VALUE, {key.to_string()} }
+                    }
+                    div { class: DIV,
+                        span { class: KEY, "Every Milliseconds" }
+                        span { id: every_millis_id(), class: VALUE, {every_millis.to_string()} }
+                    }
+                    div { class: DIV,
+                        span { class: KEY, "Require stationary" }
+                        span { class: VALUE, {require_stationary.to_string()} }
+                    }
+                    div { class: DIV,
+                        span { class: KEY, "Wait before" }
+                        span { id: wait_before_use_millis_id(), class: VALUE,
+                            {wait_before_use_millis.to_string()}
+                        }
+                    }
+                    div { class: DIV,
+                        span { class: KEY, "Wait after" }
+                        span { id: wait_after_use_millis_id(), class: VALUE,
+                            {wait_after_use_millis.to_string()}
+                        }
+                    }
+                }
+            }
+            div { class: "flex flex-col space-y-1 flex-1 justify-center",
+                button {
+                    class: "w-full button-primary h-6",
+                    disabled: is_disabled(),
+                    onclick: move |_| {},
+                    "Enabled"
+                }
+                button {
+                    class: "w-full button-danger h-6",
+                    disabled: is_disabled(),
+                    onclick: move |_| {},
+                    "Delete"
+                }
+            }
         }
     }
 }
 
 #[component]
 fn ConfigFixedActionInput(
+    is_disabled: Memo<bool>,
     on_input: EventHandler<ActionConfiguration>,
     value: ActionConfiguration,
 ) -> Element {
     rsx! {
-        KeyBindingInput {
-            label: "Key",
-            label_class: LABEL_CLASS,
-            div_class: DIV_CLASS,
-            input_class: INPUT_CLASS,
-            disabled: false,
-            on_input: move |key| {
-                (on_input)(ActionConfiguration {
-                    key,
-                    ..value
-                })
-            },
-            value: value.key,
+        div { class: "flex flex-col space-y-3",
+            KeyBindingInput {
+                label: "Key",
+                label_class: LABEL_CLASS,
+                div_class: DIV_CLASS,
+                input_class: INPUT_CLASS,
+                disabled: is_disabled(),
+                on_input: move |key| {
+                    (on_input)(ActionConfiguration {
+                        key,
+                        ..value
+                    })
+                },
+                value: value.key,
+            }
+            ConfigMillisInput {
+                label: "Use Every Milliseconds",
+                disabled: is_disabled(),
+                on_input: move |every_millis| {
+                    (on_input)(ActionConfiguration {
+                        every_millis,
+                        ..value
+                    })
+                },
+                value: value.every_millis,
+            }
+            Checkbox {
+                label: "Require stationary",
+                label_class: LABEL_CLASS,
+                div_class: DIV_CLASS,
+                input_class: "w-44",
+                disabled: is_disabled(),
+                on_input: move |require_stationary| {
+                    (on_input)(ActionConfiguration {
+                        require_stationary,
+                        ..value
+                    })
+                },
+                value: value.require_stationary,
+            }
+            ConfigMillisInput {
+                label: "Wait before action",
+                disabled: is_disabled(),
+                on_input: move |wait_before_use_millis| {
+                    (on_input)(ActionConfiguration {
+                        wait_before_use_millis,
+                        ..value
+                    })
+                },
+                value: value.wait_before_use_millis,
+            }
+            ConfigMillisInput {
+                label: "Wait after action",
+                disabled: is_disabled(),
+                on_input: move |wait_after_use_millis| {
+                    (on_input)(ActionConfiguration {
+                        wait_after_use_millis,
+                        ..value
+                    })
+                },
+                value: value.wait_after_use_millis,
+            }
         }
     }
 }
@@ -537,7 +705,7 @@ fn ConfigMillisInput(
 ) -> Element {
     rsx! {
         MillisInput {
-            label: "Every Milliseconds",
+            label,
             div_class: DIV_CLASS,
             label_class: LABEL_CLASS,
             input_class: INPUT_CLASS,
