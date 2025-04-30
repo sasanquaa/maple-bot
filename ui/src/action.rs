@@ -672,11 +672,12 @@ fn ActionItem(
             }
             div { class: "absolute right-3 top-1",
                 button {
+                    class: "w-4 h-4 border border-red-500 p-0.5",
                     onclick: move |e| {
                         e.stop_propagation();
                         on_remove(());
                     },
-                    XIcon { class: "w-[10px] h-[10px] text-red-400 fill-current" }
+                    XIcon { class: "w-full h-full text-red-400 fill-current" }
                 }
             }
         }
