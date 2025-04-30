@@ -201,6 +201,8 @@ pub struct Configuration {
     pub extreme_gold_potion_key: KeyBindingConfiguration,
     #[serde(default)]
     pub class: Class,
+    #[serde(default)]
+    pub actions: Vec<ActionConfiguration>,
 }
 
 fn jump_key_default() -> KeyBindingConfiguration {
@@ -239,6 +241,7 @@ impl Default for Configuration {
             extreme_green_potion_key: KeyBindingConfiguration::default(),
             extreme_gold_potion_key: KeyBindingConfiguration::default(),
             class: Class::default(),
+            actions: vec![],
         }
     }
 }
@@ -252,6 +255,51 @@ pub enum PotionMode {
 impl Default for PotionMode {
     fn default() -> Self {
         Self::EveryMillis(0)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub struct ActionConfiguration {
+    pub key: KeyBinding,
+    pub every_millis: u64,
+    pub require_stationary: bool,
+    pub wait_before_use_millis: u64,
+    pub wait_after_use_millis: u64,
+    pub enabled: bool,
+}
+
+impl Default for ActionConfiguration {
+    fn default() -> Self {
+        // Template for a buff
+        Self {
+            key: KeyBinding::default(),
+            every_millis: 180000,
+            require_stationary: true,
+            wait_before_use_millis: 500,
+            wait_after_use_millis: 500,
+            enabled: false,
+        }
+    }
+}
+
+impl From<ActionConfiguration> for Action {
+    fn from(value: ActionConfiguration) -> Self {
+        Self::Key(ActionKey {
+            key: value.key,
+            link_key: None,
+            count: 1,
+            position: None,
+            condition: ActionCondition::EveryMillis(value.every_millis),
+            direction: ActionKeyDirection::Any,
+            with: if value.require_stationary {
+                ActionKeyWith::Stationary
+            } else {
+                Default::default()
+            },
+            queue_to_front: Some(true),
+            wait_before_use_millis: value.wait_before_use_millis,
+            wait_after_use_millis: value.wait_after_use_millis,
+        })
     }
 }
 

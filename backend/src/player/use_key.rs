@@ -18,6 +18,12 @@ use crate::{
     },
 };
 
+/// The total number of ticks for changing direction before timing out
+const CHANGE_DIRECTION_TIMEOUT: u32 = 2;
+
+/// The tick to which the actual key will be pressed for [`LinkKeyBinding::Along`]
+const LINK_ALONG_PRESS_TICK: u32 = 2;
+
 /// The different stages of using key
 #[derive(Clone, Copy, Debug)]
 pub enum UseKeyStage {
@@ -37,7 +43,7 @@ pub enum UseKeyStage {
     /// for [`UseKey::wait_after_use_ticks`]
     Using(Timeout, bool),
     /// Ensures all [`UseKey::count`] times executed
-    PostCondition,
+    Postcondition,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -106,127 +112,18 @@ impl UseKey {
     }
 }
 
+/// Updates the [`Player::UseKey`] contextual state
+///
+/// Like [`Player::SolvingRune`], this state can only be transitioned via a [`PlayerAction`]. It
+/// can be transitioned during any of the movement state. Or if there is no position, it will
+/// be transitioned to immediately by [`Player::Idle`].
+///
+/// There are multiple stages to using a key as described by [`UseKeyStage`].
 pub fn update_use_key_context(
     context: &Context,
     state: &mut PlayerState,
     use_key: UseKey,
 ) -> Player {
-    const CHANGE_DIRECTION_TIMEOUT: u32 = 2;
-    const LINK_ALONG_PRESS_TICK: u32 = 2;
-
-    fn populate_auto_mob_pathing_points(context: &Context, state: &mut PlayerState) {
-        if state.auto_mob_pathing_points.len() >= AUTO_MOB_MAX_PATHING_POINTS
-            || state.auto_mob_reachable_y_require_update()
-        {
-            return;
-        }
-        // The idea is to pick a pathing point with a different y from existing points and with x
-        // within 70% on both sides from the middle of the minimap
-        let minimap_width = match context.minimap {
-            Minimap::Idle(idle) => idle.bbox.width,
-            _ => unreachable!(),
-        };
-        let minimap_mid = minimap_width / 2;
-        let minimap_threshold = (minimap_mid as f32 * 0.7) as i32;
-        let pos = state.last_known_pos.unwrap();
-        let x_offset = (pos.x - minimap_mid).abs();
-        let y = state.auto_mob_reachable_y.unwrap();
-        if x_offset > minimap_threshold
-            || state
-                .auto_mob_pathing_points
-                .iter()
-                .any(|point| point.y == y)
-        {
-            return;
-        }
-        state.auto_mob_pathing_points.push(Point::new(pos.x, y));
-        debug!(target: "player", "auto mob pathing points {:?}", state.auto_mob_pathing_points);
-    }
-
-    #[inline]
-    fn ensure_direction(state: &PlayerState, direction: ActionKeyDirection) -> bool {
-        match direction {
-            ActionKeyDirection::Any => true,
-            ActionKeyDirection::Left | ActionKeyDirection::Right => {
-                direction == state.last_known_direction
-            }
-        }
-    }
-
-    #[inline]
-    fn ensure_use_with(state: &PlayerState, use_key: UseKey) -> bool {
-        match use_key.with {
-            ActionKeyWith::Any => true,
-            ActionKeyWith::Stationary => state.is_stationary,
-            ActionKeyWith::DoubleJump => {
-                matches!(state.last_movement, Some(LastMovement::DoubleJumping))
-            }
-        }
-    }
-
-    #[inline]
-    fn update_link_key(
-        context: &Context,
-        class: Class,
-        jump_key: KeyKind,
-        use_key: UseKey,
-        timeout: Timeout,
-        completed: bool,
-    ) -> Player {
-        debug_assert!(!timeout.started || !completed);
-        let link_key = use_key.link_key.unwrap();
-        let link_key_timeout = if matches!(link_key, LinkKeyBinding::Along(_)) {
-            4
-        } else {
-            match class {
-                Class::Cadena => 4,
-                Class::Blaster => 8,
-                Class::Ark => 10,
-                Class::Generic => 5,
-            }
-        };
-        update_with_timeout(
-            timeout,
-            link_key_timeout,
-            |timeout| {
-                if let LinkKeyBinding::Before(key) = link_key {
-                    let _ = context.keys.send(key.into());
-                } else if let LinkKeyBinding::Along(key) = link_key {
-                    let _ = context.keys.send_down(key.into());
-                }
-                Player::UseKey(UseKey {
-                    stage: UseKeyStage::Using(timeout, completed),
-                    ..use_key
-                })
-            },
-            || {
-                if let LinkKeyBinding::After(key) = link_key {
-                    let _ = context.keys.send(key.into());
-                    if matches!(class, Class::Blaster) && KeyKind::from(key) != jump_key {
-                        let _ = context.keys.send(jump_key);
-                    }
-                } else if let LinkKeyBinding::Along(key) = link_key {
-                    let _ = context.keys.send_up(key.into());
-                }
-                Player::UseKey(UseKey {
-                    stage: UseKeyStage::Using(timeout, true),
-                    ..use_key
-                })
-            },
-            |timeout| {
-                if matches!(link_key, LinkKeyBinding::Along(_))
-                    && timeout.total == LINK_ALONG_PRESS_TICK
-                {
-                    let _ = context.keys.send(use_key.key.into());
-                }
-                Player::UseKey(UseKey {
-                    stage: UseKeyStage::Using(timeout, completed),
-                    ..use_key
-                })
-            },
-        )
-    }
-
     // TODO: Am I cooked?
     let next = match use_key.stage {
         UseKeyStage::Precondition => {
@@ -363,7 +260,7 @@ pub fn update_use_key_context(
                 }
             }
             let next = Player::UseKey(UseKey {
-                stage: UseKeyStage::PostCondition,
+                stage: UseKeyStage::Postcondition,
                 ..use_key
             });
             if use_key.wait_after_use_ticks > 0 {
@@ -373,7 +270,7 @@ pub fn update_use_key_context(
                 next
             }
         }
-        UseKeyStage::PostCondition => {
+        UseKeyStage::Postcondition => {
             debug_assert!(state.stalling_timeout_state.is_none());
             if use_key.current_count + 1 < use_key.count {
                 Player::UseKey(UseKey {
@@ -404,6 +301,124 @@ pub fn update_use_key_context(
             PlayerAction::Move(_) | PlayerAction::SolveRune => None,
         },
         || next,
+    )
+}
+
+/// Populates pathing points for an auto mob action
+///
+/// After using key state is fully complete, it will try to populate a pathing point to be used
+/// when [`Rotator`] fails the mob detection. This will will help [`Rotator`] re-uses the previous
+/// detected mob point for moving to area with more mobs.
+fn populate_auto_mob_pathing_points(context: &Context, state: &mut PlayerState) {
+    if state.auto_mob_pathing_points.len() >= AUTO_MOB_MAX_PATHING_POINTS
+        || state.auto_mob_reachable_y_require_update()
+    {
+        return;
+    }
+    // The idea is to pick a pathing point with a different y from existing points and with x
+    // within 70% on both sides from the middle of the minimap
+    let minimap_width = match context.minimap {
+        Minimap::Idle(idle) => idle.bbox.width,
+        _ => unreachable!(),
+    };
+    let minimap_mid = minimap_width / 2;
+    let minimap_threshold = (minimap_mid as f32 * 0.7) as i32;
+    let pos = state.last_known_pos.unwrap();
+    let x_offset = (pos.x - minimap_mid).abs();
+    let y = state.auto_mob_reachable_y.unwrap();
+    if x_offset > minimap_threshold
+        || state
+            .auto_mob_pathing_points
+            .iter()
+            .any(|point| point.y == y)
+    {
+        return;
+    }
+    state.auto_mob_pathing_points.push(Point::new(pos.x, y));
+    debug!(target: "player", "auto mob pathing points {:?}", state.auto_mob_pathing_points);
+}
+
+#[inline]
+fn ensure_direction(state: &PlayerState, direction: ActionKeyDirection) -> bool {
+    match direction {
+        ActionKeyDirection::Any => true,
+        ActionKeyDirection::Left | ActionKeyDirection::Right => {
+            direction == state.last_known_direction
+        }
+    }
+}
+
+#[inline]
+fn ensure_use_with(state: &PlayerState, use_key: UseKey) -> bool {
+    match use_key.with {
+        ActionKeyWith::Any => true,
+        ActionKeyWith::Stationary => state.is_stationary,
+        ActionKeyWith::DoubleJump => {
+            matches!(state.last_movement, Some(LastMovement::DoubleJumping))
+        }
+    }
+}
+
+#[inline]
+fn update_link_key(
+    context: &Context,
+    class: Class,
+    jump_key: KeyKind,
+    use_key: UseKey,
+    timeout: Timeout,
+    completed: bool,
+) -> Player {
+    debug_assert!(!timeout.started || !completed);
+    let link_key = use_key.link_key.unwrap();
+    let link_key_timeout = if matches!(link_key, LinkKeyBinding::Along(_)) {
+        4
+    } else {
+        match class {
+            Class::Cadena => 4,
+            Class::Blaster => 8,
+            Class::Ark => 10,
+            Class::Generic => 5,
+        }
+    };
+    update_with_timeout(
+        timeout,
+        link_key_timeout,
+        |timeout| {
+            if let LinkKeyBinding::Before(key) = link_key {
+                let _ = context.keys.send(key.into());
+            } else if let LinkKeyBinding::Along(key) = link_key {
+                let _ = context.keys.send_down(key.into());
+            }
+            Player::UseKey(UseKey {
+                stage: UseKeyStage::Using(timeout, completed),
+                ..use_key
+            })
+        },
+        || {
+            if let LinkKeyBinding::After(key) = link_key {
+                let _ = context.keys.send(key.into());
+                if matches!(class, Class::Blaster) && KeyKind::from(key) != jump_key {
+                    let _ = context.keys.send(jump_key);
+                }
+            } else if let LinkKeyBinding::Along(key) = link_key {
+                let _ = context.keys.send_up(key.into());
+            }
+            Player::UseKey(UseKey {
+                stage: UseKeyStage::Using(timeout, true),
+                ..use_key
+            })
+        },
+        |timeout| {
+            if matches!(link_key, LinkKeyBinding::Along(_))
+                && timeout.total == LINK_ALONG_PRESS_TICK
+            {
+                let _ = context.keys.send(use_key.key.into());
+            }
+            Player::UseKey(UseKey {
+                stage: UseKeyStage::Using(timeout, completed),
+                ..use_key
+            })
+        },
     )
 }
 
@@ -563,7 +578,7 @@ mod tests {
             assert_matches!(
                 player,
                 Player::UseKey(UseKey {
-                    stage: UseKeyStage::PostCondition,
+                    stage: UseKeyStage::Postcondition,
                     ..
                 })
             );
@@ -629,7 +644,7 @@ mod tests {
         assert_matches!(
             state.stalling_timeout_state,
             Some(Player::UseKey(UseKey {
-                stage: UseKeyStage::PostCondition,
+                stage: UseKeyStage::Postcondition,
                 ..
             }))
         );

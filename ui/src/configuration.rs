@@ -1,14 +1,16 @@
 use std::{fmt::Display, str::FromStr};
 
 use backend::{
-    Class, Configuration as ConfigurationData, IntoEnumIterator, KeyBindingConfiguration,
-    PotionMode,
+    ActionConfiguration, Class, Configuration as ConfigurationData, IntoEnumIterator,
+    KeyBindingConfiguration, PotionMode,
 };
 use dioxus::prelude::*;
+use rand::distr::{Alphanumeric, SampleString};
 
 use crate::{
     AppMessage,
-    input::{MillisInput, PercentageInput},
+    icons::{CheckMarkIcon, XIcon},
+    input::{Checkbox, KeyBindingInput, MillisInput, PercentageInput, use_auto_numeric},
     key::KeyBindingConfigurationInput,
     select::{EnumSelect, TextSelect},
     tab::Tab,
@@ -37,6 +39,9 @@ const EXTREME_RED_POTION: &str = "Extreme Red Potion";
 const EXTREME_BLUE_POTION: &str = "Extreme Blue Potion";
 const EXTREME_GREEN_POTION: &str = "Extreme Green Potion";
 const EXTREME_GOLD_POTION: &str = "Extreme Gold Potion";
+const TAB_GAME: &str = "Game";
+const TAB_BUFFS: &str = "Buffs";
+const TAB_FIXED_ACTIONS: &str = "Fixed Actions";
 
 #[component]
 pub fn Configuration(
@@ -44,9 +49,6 @@ pub fn Configuration(
     configs: ReadOnlySignal<Option<Vec<ConfigurationData>>>,
     config: ReadOnlySignal<Option<ConfigurationData>>,
 ) -> Element {
-    const TAB_GAME: &str = "Game";
-    const TAB_BUFF: &str = "Buff";
-
     let mut active_tab = use_signal(|| TAB_GAME.to_string());
     let is_disabled = use_memo(move || config().is_none());
     let active = use_signal(|| None);
@@ -67,7 +69,7 @@ pub fn Configuration(
 
     rsx! {
         Tab {
-            tabs: vec![TAB_GAME.to_string(), TAB_BUFF.to_string()],
+            tabs: vec![TAB_GAME.to_string(), TAB_BUFFS.to_string(), TAB_FIXED_ACTIONS.to_string()],
             div_class: "px-2 pt-2 pb-1",
             class: "text-xs px-2 pb-2 focus:outline-none",
             selected_class: "text-gray-800 border-b",
@@ -107,8 +109,16 @@ pub fn Configuration(
                             on_config,
                         }
                     },
-                    TAB_BUFF => rsx! {
+                    TAB_BUFFS => rsx! {
                         ConfigBuffKeyBindings {
+                            active,
+                            is_disabled,
+                            config_view,
+                            on_config,
+                        }
+                    },
+                    TAB_FIXED_ACTIONS => rsx! {
+                        ConfigFixedActions {
                             active,
                             is_disabled,
                             config_view,
@@ -483,6 +493,292 @@ fn ConfigBuffKeyBindings(
 }
 
 #[component]
+fn ConfigFixedActions(
+    active: Signal<Option<&'static str>>,
+    is_disabled: Memo<bool>,
+    config_view: Memo<ConfigurationData>,
+    on_config: EventHandler<ConfigurationData>,
+) -> Element {
+    let mut editing_action = use_signal(ActionConfiguration::default);
+    let mut editing_action_index = use_signal(|| None);
+    let actions_view = use_memo(move || config_view().actions);
+
+    use_effect(move || {
+        if let Some(index) = editing_action_index() {
+            if let Some(action) = actions_view.peek().get(index) {
+                editing_action.set(*action);
+            }
+        }
+    });
+
+    rsx! {
+        div { class: "flex flex-col space-y-2",
+            ConfigFixedActionInput {
+                is_disabled,
+                on_input: move |action| {
+                    editing_action.set(action);
+                },
+                value: editing_action(),
+            }
+            div { class: "mt-2 flex space-x-2",
+                if editing_action_index().is_some() {
+                    button {
+                        class: "w-1/2 button-primary h-6",
+                        disabled: is_disabled(),
+                        onclick: move |_| {
+                            if let Some(index) = editing_action_index.take() {
+                                let mut actions = actions_view.peek().clone();
+                                *actions.get_mut(index).unwrap() = *editing_action.peek();
+                                on_config(ConfigurationData {
+                                    actions,
+                                    ..config_view()
+                                });
+                            }
+                        },
+                        "Save"
+                    }
+                    button {
+                        class: "w-1/2 button-secondary h-6",
+                        disabled: is_disabled(),
+                        onclick: move |_| {
+                            editing_action_index.set(None);
+                        },
+                        "Cancel"
+                    }
+                } else {
+                    button {
+                        class: "flex-1 button-primary h-6",
+                        disabled: is_disabled(),
+                        onclick: move |_| {
+                            let mut actions = actions_view.peek().clone();
+                            actions.push(*editing_action.peek());
+                            on_config(ConfigurationData {
+                                actions,
+                                ..config_view()
+                            });
+                        },
+                        "Add action"
+                    }
+                }
+            }
+            for (i , action) in actions_view().into_iter().enumerate() {
+                ConfigFixedActionCard {
+                    index: i,
+                    is_disabled,
+                    action,
+                    on_delete: move |_| {
+                        let mut actions = actions_view.peek().clone();
+                        actions.remove(i);
+                        on_config(ConfigurationData {
+                            actions,
+                            ..config_view()
+                        });
+                    },
+                    on_toggle: move |enabled| {
+                        let mut actions = actions_view.peek().clone();
+                        actions.get_mut(i).unwrap().enabled = enabled;
+                        on_config(ConfigurationData {
+                            actions,
+                            ..config_view()
+                        });
+                    },
+                    on_click: move |i| {
+                        editing_action_index.set(Some(i));
+                    },
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn ConfigFixedActionCard(
+    index: usize,
+    is_disabled: Memo<bool>,
+    action: ActionConfiguration,
+    on_delete: EventHandler,
+    on_toggle: EventHandler<bool>,
+    on_click: EventHandler<usize>,
+) -> Element {
+    const KEY: &str = "font-mono w-1/2 text-xs";
+    const VALUE: &str = "font-mono text-xs w-24 overflow-hidden text-ellipsis";
+    const DIV: &str = "flex items-center space-x-1";
+
+    let ActionConfiguration {
+        key,
+        every_millis,
+        require_stationary,
+        wait_before_use_millis,
+        wait_after_use_millis,
+        enabled,
+    } = action;
+    let every_millis_id = use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
+    let wait_before_use_millis_id = use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
+    let wait_after_use_millis_id = use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
+
+    use_auto_numeric(
+        every_millis_id,
+        every_millis.to_string(),
+        None,
+        "0".to_string(),
+        u64::MAX.to_string(),
+        "ms".to_string(),
+    );
+    use_auto_numeric(
+        wait_before_use_millis_id,
+        wait_before_use_millis.to_string(),
+        None,
+        "0".to_string(),
+        u64::MAX.to_string(),
+        "ms".to_string(),
+    );
+    use_auto_numeric(
+        wait_after_use_millis_id,
+        wait_after_use_millis.to_string(),
+        None,
+        "0".to_string(),
+        u64::MAX.to_string(),
+        "ms".to_string(),
+    );
+    let enabled_text_color = if enabled {
+        "text-blue-700"
+    } else {
+        "text-gray-500"
+    };
+    let enabled_border_color = if enabled {
+        "border-blue-700"
+    } else {
+        "border-gray-500"
+    };
+
+    rsx! {
+        div {
+            class: "relative flex flex-col p-1 space-y-1 border-l-2 border-gray-300 rounded",
+            onclick: move |_| {
+                on_click(index);
+            },
+            div { class: DIV,
+                span { class: KEY, "Key" }
+                span { class: VALUE, {key.to_string()} }
+            }
+            div { class: DIV,
+                span { class: KEY, "Every milliseconds" }
+                span { id: every_millis_id(), class: VALUE, {every_millis.to_string()} }
+            }
+            div { class: DIV,
+                span { class: KEY, "Require stationary" }
+                span { class: VALUE, {require_stationary.to_string()} }
+            }
+            div { class: DIV,
+                span { class: KEY, "Wait before" }
+                span { id: wait_before_use_millis_id(), class: VALUE,
+                    {wait_before_use_millis.to_string()}
+                }
+            }
+            div { class: DIV,
+                span { class: KEY, "Wait after" }
+                span { id: wait_after_use_millis_id(), class: VALUE,
+                    {wait_after_use_millis.to_string()}
+                }
+            }
+            div { class: "absolute right-3 top-1 flex space-x-2 flex-1 justify-center",
+                button {
+                    class: "w-5 h-5 border {enabled_border_color} p-1",
+                    disabled: is_disabled(),
+                    onclick: move |e| {
+                        e.stop_propagation();
+                        on_toggle(!enabled);
+                    },
+                    CheckMarkIcon { class: "w-full h-full {enabled_text_color} fill-current" }
+                }
+                button {
+                    class: "w-5 h-5 border border-red-500 p-1",
+                    disabled: is_disabled(),
+                    onclick: move |e| {
+                        e.stop_propagation();
+                        on_delete(());
+                    },
+                    XIcon { class: "w-full h-full text-red-400 fill-current" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn ConfigFixedActionInput(
+    is_disabled: Memo<bool>,
+    on_input: EventHandler<ActionConfiguration>,
+    value: ActionConfiguration,
+) -> Element {
+    rsx! {
+        div { class: "flex flex-col space-y-3",
+            KeyBindingInput {
+                label: "Key",
+                label_class: LABEL_CLASS,
+                div_class: DIV_CLASS,
+                input_class: INPUT_CLASS,
+                disabled: is_disabled(),
+                on_input: move |key| {
+                    (on_input)(ActionConfiguration {
+                        key,
+                        ..value
+                    })
+                },
+                value: value.key,
+            }
+            ConfigMillisInput {
+                label: "Every milliseconds",
+                disabled: is_disabled(),
+                on_input: move |every_millis| {
+                    (on_input)(ActionConfiguration {
+                        every_millis,
+                        ..value
+                    })
+                },
+                value: value.every_millis,
+            }
+            Checkbox {
+                label: "Require stationary",
+                label_class: LABEL_CLASS,
+                div_class: DIV_CLASS,
+                input_class: "w-44",
+                disabled: is_disabled(),
+                on_input: move |require_stationary| {
+                    (on_input)(ActionConfiguration {
+                        require_stationary,
+                        ..value
+                    })
+                },
+                value: value.require_stationary,
+            }
+            ConfigMillisInput {
+                label: "Wait before action",
+                disabled: is_disabled(),
+                on_input: move |wait_before_use_millis| {
+                    (on_input)(ActionConfiguration {
+                        wait_before_use_millis,
+                        ..value
+                    })
+                },
+                value: value.wait_before_use_millis,
+            }
+            ConfigMillisInput {
+                label: "Wait after action",
+                disabled: is_disabled(),
+                on_input: move |wait_after_use_millis| {
+                    (on_input)(ActionConfiguration {
+                        wait_after_use_millis,
+                        ..value
+                    })
+                },
+                value: value.wait_after_use_millis,
+            }
+        }
+    }
+}
+
+#[component]
 fn ConfigMillisInput(
     label: String,
     disabled: bool,
@@ -491,7 +787,7 @@ fn ConfigMillisInput(
 ) -> Element {
     rsx! {
         MillisInput {
-            label: "Every Milliseconds",
+            label,
             div_class: DIV_CLASS,
             label_class: LABEL_CLASS,
             input_class: INPUT_CLASS,
