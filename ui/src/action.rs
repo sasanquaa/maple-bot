@@ -28,7 +28,7 @@ const DIV_CLASS: &str = "flex h-6 items-center space-x-2";
 const LABEL_CLASS: &str = "flex-1 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400";
 const INPUT_CLASS: &str = "w-22 h-full border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
 
-enum ActionsMessage {
+pub enum ActionsMessage {
     UpdateMinimap(Minimap),
     UpdatePreset(String),
 }
@@ -62,6 +62,16 @@ pub fn Actions(
             }
         },
     );
+    let rotation_mode_view = use_memo(move || {
+        minimap()
+            .map(|minimap| minimap.rotation_mode)
+            .unwrap_or_default()
+    });
+    let reset_on_erda_view = use_memo(move || {
+        minimap()
+            .map(|minimap| minimap.actions_any_reset_on_erda_condition)
+            .unwrap_or_default()
+    });
 
     use_effect(move || {
         if preset().is_none() {
@@ -105,13 +115,20 @@ pub fn Actions(
                 TAB_ROTATION_MODE => rsx! {
                     Rotations {
                         disabled: minimap().is_none(),
-                        on_input: move |mode| {
+                        on_rotation_mode: move |mode| {
                             if let Some(mut minimap) = minimap.peek().clone() {
                                 minimap.rotation_mode = mode;
                                 coroutine.send(ActionsMessage::UpdateMinimap(minimap));
                             }
                         },
-                        value: minimap().map(|minimap| minimap.rotation_mode).unwrap_or_default(),
+                        on_reset_on_erda: move |checked| {
+                            if let Some(mut minimap) = minimap.peek().clone() {
+                                minimap.actions_any_reset_on_erda_condition = checked;
+                                coroutine.send(ActionsMessage::UpdateMinimap(minimap));
+                            }
+                        },
+                        rotation_mode: rotation_mode_view(),
+                        reset_on_erda: reset_on_erda_view(),
                     }
                 },
                 TAB_PLATFORMS => rsx! {
@@ -463,7 +480,7 @@ fn ActionItem(
     on_drag: EventHandler<usize>,
     on_drop: EventHandler<(usize, bool)>,
 ) -> Element {
-    const KEY: &str = "font-mono w-1/2 text-xs";
+    const KEY: &str = "font-mono w-36 text-xs";
     const VALUE: &str = "font-mono text-xs flex-1 overflow-hidden text-ellipsis";
     const DIV: &str = "flex items-center space-x-1";
 
@@ -473,6 +490,7 @@ fn ActionItem(
             position:
                 Position {
                     x,
+                    x_random_range,
                     y,
                     allow_adjusting,
                 },
@@ -494,6 +512,10 @@ fn ActionItem(
             div { class: DIV,
                 span { class: KEY, "Position" }
                 span { class: VALUE, "{x}, {y}" }
+            }
+            div { class: DIV,
+                span { class: KEY, "Position x random" }
+                span { class: VALUE, "{x_random_range}" }
             }
             div { class: DIV,
                 span { class: KEY, "Adjust" }
@@ -521,16 +543,30 @@ fn ActionItem(
             direction,
             with,
             wait_before_use_millis,
+            wait_before_use_millis_random_range,
             wait_after_use_millis,
+            wait_after_use_millis_random_range,
             queue_to_front,
         } = action;
         let wait_before_use_millis_id =
             use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
+        let wait_before_use_millis_random_range_id =
+            use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
         let wait_after_use_millis_id = use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
+        let wait_after_use_millis_random_range_id =
+            use_memo(|| Alphanumeric.sample_string(&mut rand::rng(), 8));
 
         use_auto_numeric(
             wait_before_use_millis_id,
             wait_before_use_millis.to_string(),
+            None,
+            "0".to_string(),
+            u64::MAX.to_string(),
+            "ms".to_string(),
+        );
+        use_auto_numeric(
+            wait_before_use_millis_random_range_id,
+            wait_before_use_millis_random_range.to_string(),
             None,
             "0".to_string(),
             u64::MAX.to_string(),
@@ -544,12 +580,24 @@ fn ActionItem(
             u64::MAX.to_string(),
             "ms".to_string(),
         );
+        use_auto_numeric(
+            wait_after_use_millis_random_range_id,
+            wait_after_use_millis_random_range.to_string(),
+            None,
+            "0".to_string(),
+            u64::MAX.to_string(),
+            "ms".to_string(),
+        );
 
         rsx! {
-            if let Some(Position { x, y, allow_adjusting }) = position {
+            if let Some(Position { x, x_random_range, y, allow_adjusting }) = position {
                 div { class: DIV,
                     span { class: KEY, "Position" }
                     span { class: VALUE, "{x}, {y}" }
+                }
+                div { class: DIV,
+                    span { class: KEY, "Position x range" }
+                    span { class: VALUE, "{x_random_range}" }
                 }
                 div { class: DIV,
                     span { class: KEY, "Adjust" }
@@ -587,8 +635,19 @@ fn ActionItem(
                 span { id: wait_before_use_millis_id(), class: VALUE }
             }
             div { class: DIV,
+                span { class: KEY, "Wait before random" }
+                span {
+                    id: wait_before_use_millis_random_range_id(),
+                    class: VALUE,
+                }
+            }
+            div { class: DIV,
                 span { class: KEY, "Wait after" }
                 span { id: wait_after_use_millis_id(), class: VALUE }
+            }
+            div { class: DIV,
+                span { class: KEY, "Wait after random" }
+                span { id: wait_after_use_millis_random_range_id(), class: VALUE }
             }
             if let Some(queue_to_front) = queue_to_front {
                 div { class: DIV,
@@ -740,6 +799,7 @@ fn PositionInput(
 ) -> Element {
     let Position {
         x,
+        x_random_range,
         y,
         allow_adjusting,
     } = value;
@@ -757,6 +817,20 @@ fn PositionInput(
                 on_input(Position { x, ..value });
             },
             value: x,
+        }
+        NumberInputI32 {
+            label: "X random range",
+            div_class: DIV_CLASS,
+            label_class: LABEL_CLASS,
+            input_class: "{INPUT_CLASS} p-1",
+            disabled,
+            on_input: move |x_random_range| {
+                on_input(Position {
+                    x_random_range,
+                    ..value
+                });
+            },
+            value: x_random_range,
         }
         PositionNumberInput {
             label: "Y",
@@ -857,7 +931,9 @@ fn ActionKeyInput(
         direction,
         with,
         wait_before_use_millis,
+        wait_before_use_millis_random_range,
         wait_after_use_millis,
+        wait_after_use_millis_random_range,
         queue_to_front,
     } = value;
 
@@ -1019,6 +1095,19 @@ fn ActionKeyInput(
                 value: wait_before_use_millis,
             }
             ActionMillisInput {
+                label: "Wait before random range",
+                on_input: move |wait_before_use_millis_random_range| {
+                    on_input(
+                        Action::Key(ActionKey {
+                            wait_before_use_millis_random_range,
+                            ..value
+                        }),
+                    );
+                },
+                disabled,
+                value: wait_before_use_millis_random_range,
+            }
+            ActionMillisInput {
                 label: "Wait after action",
                 on_input: move |wait_after_use_millis| {
                     on_input(
@@ -1030,6 +1119,19 @@ fn ActionKeyInput(
                 },
                 disabled,
                 value: wait_after_use_millis,
+            }
+            ActionMillisInput {
+                label: "Wait after random range",
+                on_input: move |wait_after_use_millis_random_range| {
+                    on_input(
+                        Action::Key(ActionKey {
+                            wait_after_use_millis_random_range,
+                            ..value
+                        }),
+                    );
+                },
+                disabled,
+                value: wait_after_use_millis_random_range,
             }
         }
     }

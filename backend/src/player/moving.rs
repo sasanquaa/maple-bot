@@ -25,7 +25,7 @@ pub const MOVE_TIMEOUT: u32 = 5;
 
 /// Maximum number of times [`Player::Moving`] state can be transitioned to
 /// without changing position
-const UNSTUCK_TRACKER_THRESHOLD: u32 = 7;
+const UNSTUCK_TRACKER_THRESHOLD: u32 = 10;
 
 /// Minimium y distance required to perform a fall and double jump/adjusting
 pub const ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD: i32 = 8;

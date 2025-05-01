@@ -813,9 +813,8 @@ fn ConfigHeader(
     }
 }
 
-// FIXME: remove pub, used by settings.rs
 #[component]
-pub fn ConfigEnumSelect<T: 'static + Clone + PartialEq + Display + FromStr + IntoEnumIterator>(
+fn ConfigEnumSelect<T: 'static + Clone + PartialEq + Display + FromStr + IntoEnumIterator>(
     label: String,
     on_select: EventHandler<T>,
     disabled: bool,

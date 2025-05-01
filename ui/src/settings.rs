@@ -1,5 +1,8 @@
+use std::{fmt::Display, str::FromStr};
+
 use backend::{
-    CaptureMode, InputMethod, KeyBindingConfiguration, Settings as SettingsData, record_images,
+    CaptureMode, InputMethod, IntoEnumIterator, KeyBindingConfiguration, Settings as SettingsData,
+    record_images,
 };
 #[cfg(debug_assertions)]
 use backend::{capture_image, infer_minimap, infer_rune};
@@ -7,9 +10,9 @@ use dioxus::prelude::*;
 
 use crate::{
     AppMessage,
-    configuration::ConfigEnumSelect,
     input::{Checkbox, LabeledInput},
     key::KeyBindingConfigurationInput,
+    select::EnumSelect,
 };
 
 const TOGGLE_ACTIONS: &str = "Start/Stop Actions";
@@ -70,7 +73,7 @@ pub fn Settings(
                     },
                     value: settings_view().stop_on_fail_or_change_map,
                 }
-                ConfigEnumSelect::<CaptureMode> {
+                SettingsEnumSelect::<CaptureMode> {
                     label: "Capture Mode",
                     on_select: move |capture_mode| {
                         on_settings(SettingsData {
@@ -246,7 +249,7 @@ fn SettingsInputMethodSelect(
     };
 
     rsx! {
-        ConfigEnumSelect::<InputMethod> {
+        SettingsEnumSelect::<InputMethod> {
             label: "Input Method",
             on_select: move |input_method| {
                 on_settings(SettingsData {
@@ -268,6 +271,29 @@ fn SettingsInputMethodSelect(
                 },
                 value: settings_view().input_method_rpc_server_url,
             }
+        }
+    }
+}
+
+// Dupe them till hard to manage
+#[component]
+fn SettingsEnumSelect<T: 'static + Clone + PartialEq + Display + FromStr + IntoEnumIterator>(
+    label: String,
+    on_select: EventHandler<T>,
+    disabled: bool,
+    selected: T,
+) -> Element {
+    rsx! {
+        EnumSelect {
+            label,
+            disabled,
+            div_class: "flex items-center space-x-4",
+            label_class: "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400",
+            select_class: "w-44 h-7 text-xs text-gray-700 text-ellipsis border border-gray-300 rounded outline-none disabled:cursor-not-allowed disabled:text-gray-400",
+            on_select: move |variant: T| {
+                on_select(variant);
+            },
+            selected,
         }
     }
 }

@@ -74,19 +74,35 @@ impl UseKey {
                 direction,
                 with,
                 wait_before_use_ticks,
+                wait_before_use_ticks_random_range,
                 wait_after_use_ticks,
+                wait_after_use_ticks_random_range,
                 ..
-            }) => Self {
-                key,
-                link_key,
-                count,
-                current_count: 0,
-                direction,
-                with,
-                wait_before_use_ticks,
-                wait_after_use_ticks,
-                stage: UseKeyStage::Precondition,
-            },
+            }) => {
+                let wait_before_min =
+                    wait_before_use_ticks.saturating_sub(wait_before_use_ticks_random_range);
+                let wait_before_max =
+                    wait_before_use_ticks.saturating_add(wait_before_use_ticks_random_range + 1);
+                let wait_before = rand::random_range(wait_before_min..wait_before_max);
+
+                let wait_after_min =
+                    wait_after_use_ticks.saturating_sub(wait_after_use_ticks_random_range);
+                let wait_after_max =
+                    wait_after_use_ticks.saturating_add(wait_after_use_ticks_random_range + 1);
+                let wait_after = rand::random_range(wait_after_min..wait_after_max);
+
+                Self {
+                    key,
+                    link_key,
+                    count,
+                    current_count: 0,
+                    direction,
+                    with,
+                    wait_before_use_ticks: wait_before,
+                    wait_after_use_ticks: wait_after,
+                    stage: UseKeyStage::Precondition,
+                }
+            }
             PlayerAction::AutoMob(mob) => Self {
                 key: mob.key,
                 link_key: None,

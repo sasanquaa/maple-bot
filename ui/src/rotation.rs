@@ -2,21 +2,23 @@ use backend::{AutoMobbing, Bound, RotationMode};
 use dioxus::prelude::*;
 
 use crate::{
-    input::{KeyBindingInput, MillisInput, NumberInputI32, NumberInputU32},
+    input::{Checkbox, KeyBindingInput, MillisInput, NumberInputI32, NumberInputU32},
     select::EnumSelect,
 };
 
 const DIV_CLASS: &str = "flex py-2 border-b border-gray-100 space-x-2";
 const LABEL_CLASS: &str = "flex-1 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400";
-const INPUT_CLASS: &str = "w-28 px-1.5 h-6 border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
+const INPUT_CLASS: &str = "w-36 px-1.5 h-6 border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
 
 #[component]
 pub fn Rotations(
     disabled: bool,
-    on_input: EventHandler<RotationMode>,
-    value: RotationMode,
+    on_rotation_mode: EventHandler<RotationMode>,
+    on_reset_on_erda: EventHandler<bool>,
+    rotation_mode: RotationMode,
+    reset_on_erda: bool,
 ) -> Element {
-    let auto_mobbing = if let RotationMode::AutoMobbing(mobbing) = value {
+    let auto_mobbing = if let RotationMode::AutoMobbing(mobbing) = rotation_mode {
         mobbing
     } else {
         AutoMobbing::default()
@@ -27,6 +29,9 @@ pub fn Rotations(
             ul { class: "list-disc text-xs text-gray-700 pl-4",
                 li { "Other rotation modes apply only to Any condition action" }
                 li { "Action in preset with Any condition is ignored when auto mobbing enabled" }
+                li {
+                    "When reset rotation on Erda condotion is ticked, all Any condition actions will restart from the beginning"
+                }
                 li { "Mob detected outside of bound is ignored" }
                 li { "Auto mobbing X,Y origin is top-left of minimap" }
                 li { "Overrides the below bound if auto mobbing bound by platforms enabled" }
@@ -39,14 +44,25 @@ pub fn Rotations(
                 select_class: INPUT_CLASS,
                 disabled,
                 on_select: move |selected: RotationMode| {
-                    on_input(selected);
+                    on_rotation_mode(selected);
                 },
-                selected: value,
+                selected: rotation_mode,
+            }
+            Checkbox {
+                label: "Reset Rotation On Erda Condition",
+                label_class: LABEL_CLASS,
+                div_class: DIV_CLASS,
+                input_class: "w-36 text-xs text-gray-700 text-ellipsis rounded outline-none disabled:cursor-not-allowed disabled:text-gray-400",
+                disabled,
+                on_input: move |checked| {
+                    on_reset_on_erda(checked);
+                },
+                value: reset_on_erda,
             }
             AutoMobbingInput {
-                disabled: disabled || !matches!(value, RotationMode::AutoMobbing(_)),
+                disabled: disabled || !matches!(rotation_mode, RotationMode::AutoMobbing(_)),
                 on_input: move |mobbing| {
-                    on_input(RotationMode::AutoMobbing(mobbing));
+                    on_rotation_mode(RotationMode::AutoMobbing(mobbing));
                 },
                 value: auto_mobbing,
             }
