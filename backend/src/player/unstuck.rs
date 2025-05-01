@@ -12,7 +12,7 @@ use crate::{
 const Y_IGNORE_THRESHOLD: i32 = 18;
 
 // what is gamba mode? i am disappointed if you don't know
-const GAMBA_MODE_COUNT: u32 = 3;
+const GAMBA_MODE_COUNT: u32 = 5;
 
 /// Random threshold to choose unstucking direction
 const X_TO_RIGHT_THRESHOLD: i32 = 10;

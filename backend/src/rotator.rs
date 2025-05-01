@@ -329,6 +329,7 @@ impl Rotator {
 
         if did_queue_erda_action && self.normal_actions_reset_on_erda {
             self.reset_normal_actions_queue();
+            player.reset_normal_action();
         }
     }
 

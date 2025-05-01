@@ -228,6 +228,13 @@ impl PlayerState {
         self.normal_action = Some(action);
     }
 
+    /// Removes the current normal action
+    #[inline]
+    pub fn reset_normal_action(&mut self) {
+        self.reset_to_idle_next_update = true;
+        self.normal_action = None;
+    }
+
     /// The priority action name for displaying to UI
     #[inline]
     pub fn priority_action_name(&self) -> Option<String> {
