@@ -2,10 +2,9 @@ use std::{fmt::Display, str::FromStr};
 
 use backend::{
     CaptureMode, InputMethod, IntoEnumIterator, KeyBindingConfiguration, Settings as SettingsData,
-    record_images,
 };
 #[cfg(debug_assertions)]
-use backend::{capture_image, infer_minimap, infer_rune};
+use backend::{capture_image, infer_minimap, infer_rune, record_images};
 use dioxus::prelude::*;
 
 use crate::{
