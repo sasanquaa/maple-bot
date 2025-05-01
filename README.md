@@ -30,7 +30,7 @@
 - Auto-mobbing mode for hitting random mobs
 - Auto-buff for common farming-related buffs
 - Auto-HP potion
-- Solve rune
+- Solve rune (except spinning rune)
 - Platforms pathing for auto-mobbing and rune solving
 - Usable UI
 - Work by taking an image and send key inputs
@@ -263,8 +263,8 @@ If you use the bot on a newly installed Windows, make sure [Visual C++ Redistrib
 
 ## Video guides
 1. [Basic operations](https://youtu.be/8X2CKS7bnHY?si=3yPmVPaMsFEyDD8c)
-2. Rotation modes, auto-mobbing and platforms pathing - TODO
-3. Linked key and linked actions - TODO
+2. [Auto-mobbing and platforms pathing](https://youtu.be/8r2duEz6278?si=HTHb8WXh6L7ulCoE)
+3. Rotation modes, linked key and linked actions - TODO
 
 ## Showcase
 #### Rotation
