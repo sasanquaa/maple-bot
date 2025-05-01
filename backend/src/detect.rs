@@ -9,7 +9,7 @@ use std::{
     },
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{Ok, Result, anyhow, bail};
 use dyn_clone::DynClone;
 use log::{debug, info};
 #[cfg(test)]
@@ -17,10 +17,11 @@ use mockall::mock;
 use opencv::{
     boxed_ref::BoxedRef,
     core::{
-        CMP_EQ, CMP_GT, CV_8U, CV_32FC1, CV_32FC3, CV_32S, Mat, MatExprTraitConst, MatTrait,
+        BORDER_CONSTANT, CMP_EQ, CMP_GT, CV_8U, CV_32FC3, CV_32S, Mat, MatExprTraitConst, MatTrait,
         MatTraitConst, MatTraitConstManual, ModifyInplace, Point, Point2f, Range, Rect, Scalar,
-        Size, ToInputArray, Vec4b, Vector, add, add_weighted_def, bitwise_and_def, compare,
-        divide2_def, find_non_zero, min_max_loc, no_array, subtract_def, transpose_nd,
+        Size, ToInputArray, Vec3b, Vec4b, Vector, add, add_weighted_def, bitwise_and_def, compare,
+        copy_make_border, divide2_def, extract_channel, find_non_zero, min_max_loc, no_array,
+        subtract_def, transpose_nd,
     },
     dnn::{
         ModelTrait, TextRecognitionModel, TextRecognitionModelTrait,
@@ -29,11 +30,11 @@ use opencv::{
     imgcodecs::{self, IMREAD_COLOR, IMREAD_GRAYSCALE},
     imgproc::{
         CC_STAT_AREA, CC_STAT_HEIGHT, CC_STAT_LEFT, CC_STAT_TOP, CC_STAT_WIDTH,
-        CHAIN_APPROX_SIMPLE, COLOR_BGRA2BGR, COLOR_BGRA2GRAY, COLOR_BGRA2RGB, INTER_AREA,
-        INTER_CUBIC, MORPH_RECT, RETR_EXTERNAL, THRESH_BINARY, THRESH_OTSU, TM_CCOEFF_NORMED,
-        bounding_rect, connected_components_with_stats, cvt_color_def, dilate_def,
-        find_contours_def, get_structuring_element_def, match_template, min_area_rect, resize,
-        threshold,
+        CHAIN_APPROX_SIMPLE, COLOR_BGR2HSV_FULL, COLOR_BGRA2BGR, COLOR_BGRA2GRAY, COLOR_BGRA2RGB,
+        INTER_AREA, INTER_CUBIC, MORPH_RECT, RETR_EXTERNAL, THRESH_BINARY, THRESH_OTSU,
+        TM_CCOEFF_NORMED, bounding_rect, connected_components_with_stats, cvt_color_def,
+        dilate_def, find_contours_def, get_structuring_element_def, match_template, min_area_rect,
+        resize, threshold,
     },
     traits::OpenCVIntoExternContainer,
 };
@@ -43,7 +44,44 @@ use ort::{
 };
 use platforms::windows::KeyKind;
 
-use crate::{buff::BuffKind, mat::OwnedMat};
+use crate::{array::Array, buff::BuffKind, mat::OwnedMat};
+
+const MAX_SPIN_ARROWS: usize = 2; // PRAY
+const SPIN_REGION_PAD: i32 = 16;
+
+/// Struct for storing information about the spinning arrows
+#[derive(Debug, Copy, Clone)]
+struct SpinArrow {
+    /// The centroid of the spinning arrow relative to the whole image
+    centroid: Point,
+    /// The region of the spinning arrow relative to the whole image
+    region: Rect,
+    /// The last arrow head to the centroid
+    last_arrow_head: Option<Point>,
+    final_arrow: Option<KeyKind>,
+}
+
+/// The current arrows detection/calibration state
+#[derive(Debug)]
+pub enum ArrowsState {
+    Calibrating(ArrowsCalibrating),
+    Complete([KeyKind; 4]),
+}
+
+/// Struct representing arrows calibration in-progress
+#[derive(Debug, Copy, Clone, Default)]
+pub struct ArrowsCalibrating {
+    spin_arrows: Option<Array<SpinArrow, MAX_SPIN_ARROWS>>,
+    spin_arrows_calibrated: bool,
+    rune_region: Option<Rect>,
+}
+
+impl ArrowsCalibrating {
+    #[inline]
+    pub fn has_spin_arrows(&self) -> bool {
+        self.spin_arrows_calibrated && self.spin_arrows.is_some()
+    }
+}
 
 pub trait Detector: 'static + Send + DynClone + Debug {
     fn mat(&self) -> &OwnedMat;
@@ -98,13 +136,11 @@ pub trait Detector: 'static + Send + DynClone + Debug {
     /// Detects whether the player has a buff specified by `kind`.
     fn detect_player_buff(&self, kind: BuffKind) -> bool;
 
-    /// Detects rune arrows from the given RGBA image `Mat`.
+    /// Detects arrows from the given RGBA `Mat` image.
     ///
-    /// Optional `preds` can be provided to get the prediction scores, width and height ratios.
-    fn detect_rune_arrows(
-        &self,
-        preds: Option<&mut (Vec<Vec<f32>>, f32, f32)>,
-    ) -> Result<[KeyKind; 4]>;
+    /// `calibrating` represents the previous calibrating state returned by
+    /// [`ArrowsState::Calibrating`]
+    fn detect_rune_arrows(&self, calibrating: ArrowsCalibrating) -> Result<ArrowsState>;
 
     /// Detects the Erda Shower skill from the given BGRA `Mat` image.
     fn detect_erda_shower(&self) -> Result<Rect>;
@@ -130,9 +166,9 @@ mock! {
         fn detect_player_health(&self, current_bar: Rect, max_bar: Rect) -> Result<(u32, u32)>;
         fn detect_player_buff(&self, kind: BuffKind) -> bool;
         fn detect_rune_arrows<'a>(
-            &'a self,
-            preds: Option<&'a mut (Vec<Vec<f32>>, f32, f32)>,
-        ) -> Result<[KeyKind; 4]>;
+            &self,
+            calibrating: ArrowsCalibrating,
+        ) -> Result<ArrowsState>;
         fn detect_erda_shower(&self) -> Result<Rect>;
     }
 
@@ -254,11 +290,8 @@ impl Detector for CachedDetector {
         detect_player_buff(mat, kind)
     }
 
-    fn detect_rune_arrows(
-        &self,
-        preds: Option<&mut (Vec<Vec<f32>>, f32, f32)>,
-    ) -> Result<[KeyKind; 4]> {
-        detect_rune_arrows(&*self.mat, preds)
+    fn detect_rune_arrows(&self, calibrating: ArrowsCalibrating) -> Result<ArrowsState> {
+        detect_rune_arrows(&*self.mat, calibrating)
     }
 
     fn detect_erda_shower(&self) -> Result<Rect> {
@@ -352,42 +385,16 @@ fn detect_mobs(
     }
 
     let size = mat.size().unwrap();
-    let (mat_in, w_ratio, h_ratio) = preprocess_for_yolo(mat);
+    let (mat_in, w_ratio, h_ratio, left, top) = preprocess_for_yolo(mat);
     let result = MOB_MODEL.run([norm_rgb_to_input_value(&mat_in)]).unwrap();
     let result = from_output_value(&result);
     // SAFETY: 0..result.rows() is within Mat bounds
     let points = (0..result.rows())
         .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
         .filter(|pred| pred[4] >= 0.5)
-        .map(|pred| remap_from_yolo(pred, size, w_ratio, h_ratio))
+        .map(|pred| remap_from_yolo(pred, size, w_ratio, h_ratio, left, top))
         .filter_map(|bbox| to_minimap_coordinate(bbox, minimap, bound, player, size))
         .collect::<Vec<_>>();
-    // let bboxes = (0..result.rows())
-    //     .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
-    //     .filter_map(|pred| if pred[4] > 0.5 { Some(pred) } else { None })
-    //     .map(|pred| remap_from_yolo(pred, size, w_ratio, h_ratio))
-    //     .collect::<Vec<_>>();
-    // let points = bboxes
-    //     .iter()
-    //     .copied()
-    //     .filter_map(|bbox| to_minimap_coordinate(bbox, minimap, bound, player, size))
-    //     .collect::<Vec<_>>();
-    // #[cfg(debug_assertions)]
-    // if !bboxes.is_empty() {
-    //     debug_mat(
-    //         "Test",
-    //         mat,
-    //         1,
-    //         &points
-    //             .clone()
-    //             .into_iter()
-    //             .map(|pt| minimap.tl() + Point::new(pt.x, pt.y))
-    //             .map(|pt| Rect::from_points(pt - Point::new(5, 5), pt))
-    //             .chain(bboxes)
-    //             .collect::<Vec<_>>(),
-    //         &vec![""; points.len() * 2],
-    //     );
-    // }
     Ok(points)
 }
 
@@ -478,7 +485,7 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
     }
 
     let size = mat.size().unwrap();
-    let (preprocessed, w_ratio, h_ratio) = preprocess_for_yolo(mat);
+    let (preprocessed, w_ratio, h_ratio, left, top) = preprocess_for_yolo(mat);
     let result = MINIMAP_MODEL
         .run([norm_rgb_to_input_value(&preprocessed)])
         .unwrap();
@@ -495,7 +502,7 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
         if pred[4] < 0.5 {
             None
         } else {
-            Some(remap_from_yolo(pred, size, w_ratio, h_ratio))
+            Some(remap_from_yolo(pred, size, w_ratio, h_ratio, left, top))
         }
     });
     let minimap = bbox.map(|bbox| {
@@ -990,10 +997,7 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
     }
 }
 
-fn detect_rune_arrows(
-    mat: &impl MatTraitConst,
-    preds_out: Option<&mut (Vec<Vec<f32>>, f32, f32)>,
-) -> Result<[KeyKind; 4]> {
+fn detect_rune_arrows_with_scores_regions(mat: &impl MatTraitConst) -> Vec<(Rect, KeyKind, f32)> {
     static RUNE_MODEL: LazyLock<Session> = LazyLock::new(|| {
         Session::builder()
             .and_then(|b| b.commit_from_memory(include_bytes!(env!("RUNE_MODEL"))))
@@ -1010,43 +1014,333 @@ fn detect_rune_arrows(
         }
     }
 
-    let (mat_in, w_ratio, h_ratio) = preprocess_for_yolo(mat);
+    let size = mat.size().unwrap();
+    let (mat_in, w_ratio, h_ratio, left, top) = preprocess_for_yolo(mat);
     let result = RUNE_MODEL.run([norm_rgb_to_input_value(&mat_in)]).unwrap();
     let mat_out = from_output_value(&result);
-    let mut preds = (0..mat_out.rows())
+    let mut vec = (0..mat_out.rows())
         // SAFETY: 0..outputs.rows() is within Mat bounds
         .map(|i| unsafe { mat_out.at_row_unchecked::<f32>(i).unwrap() })
-        .filter(|&pred| {
-            // pred has shapes [bbox(4) + conf + class]
-            pred[4] >= 0.8
+        .filter(|pred| pred[4] >= 0.5)
+        .map(|pred| {
+            (
+                remap_from_yolo(pred, size, w_ratio, h_ratio, left, top),
+                map_arrow(pred),
+                pred[4],
+            )
         })
         .collect::<Vec<_>>();
-    if preds.len() != 4 {
-        info!(target: "player", "failed to detect rune arrows {preds:?}");
-        return Err(anyhow!("failed to detect rune arrows"));
-    }
-    // sort by x for arrow order
-    preds.sort_by(|&a, &b| a[0].total_cmp(&b[0]));
+    vec.sort_by_key(|a| a.0.x);
+    vec
+}
 
-    if let Some(preds_out) = preds_out {
-        preds_out.0.extend(preds.iter().map(|pred| pred.to_vec()));
-        preds_out.1 = w_ratio;
-        preds_out.2 = h_ratio;
+fn detect_rune_arrows(
+    mat: &impl MatTraitConst,
+    mut calibrating: ArrowsCalibrating,
+) -> Result<ArrowsState> {
+    // Note: This commented out code is to determine rune region with hard-coded offset
+    //
+    // const RUNE_REGION_WIDTH: i32 = 260;
+    // const RUNE_REGION_HEIGHT: i32 = 130;
+    // const RUNE_REGION_Y_OFFSET: i32 = 80;
+    //
+    // TODO: Should add a separate model for detection rune region?
+    // TODO: Deal with BitBltArea
+    // let size = mat.size().unwrap();
+    // let region_x = (size.width / 2 - RUNE_REGION_WIDTH).max(0);
+    // let region_y = (size.height / 4 - RUNE_REGION_Y_OFFSET).max(0);
+    // let rune_region = Rect::new(
+    //     region_x,
+    //     region_y,
+    //     RUNE_REGION_WIDTH * 2,
+    //     RUNE_REGION_HEIGHT * 2,
+    // );
+
+    if calibrating.rune_region.is_none() {
+        calibrating.rune_region = detect_rune_arrows_with_scores_regions(mat)
+            .into_iter()
+            .map(|(r, _, _)| r)
+            .reduce(|acc, cur| acc | cur);
+    }
+    let rune_region = calibrating
+        .rune_region
+        .ok_or(anyhow!("rune region not found"))?;
+
+    // If there is no previous calibrating, try it once
+    if !calibrating.spin_arrows_calibrated {
+        calibrating.spin_arrows_calibrated = true;
+        calibrate_for_spin_arrows(mat, rune_region, &mut calibrating)?;
+        return Ok(ArrowsState::Calibrating(calibrating));
     }
 
-    let first = map_arrow(preds[0]);
-    let second = map_arrow(preds[1]);
-    let third = map_arrow(preds[2]);
-    let fourth = map_arrow(preds[3]);
-    info!(
-        target: "player",
-        "solving rune result {first:?} ({}), {second:?} ({}), {third:?} ({}), {fourth:?} ({})",
-        preds[0][4],
-        preds[1][4],
-        preds[2][4],
-        preds[3][4]
-    );
-    Ok([first, second, third, fourth])
+    if let Some(ref mut spin_arrows) = calibrating.spin_arrows
+        && spin_arrows.iter().any(|arrow| arrow.final_arrow.is_none())
+    {
+        for spin_arrow in spin_arrows
+            .iter_mut()
+            .filter(|arrow| arrow.final_arrow.is_none())
+        {
+            detect_spin_arrow(mat, spin_arrow)?;
+        }
+        return Ok(ArrowsState::Calibrating(calibrating));
+    }
+
+    let mut mat = mat.roi(rune_region)?;
+    if calibrating.spin_arrows.is_some() {
+        //  Set all spin arrow regions to black pixels
+        let mut mat_copy = mat.clone_pointee();
+        for region in calibrating
+            .spin_arrows
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|arrow| arrow.region)
+        {
+            mat_copy
+                .roi_mut(region - rune_region.tl())?
+                .set_scalar(Scalar::default())?;
+        }
+        mat = BoxedRef::from(mat_copy);
+    }
+
+    let result = detect_rune_arrows_with_scores_regions(&mat)
+        .into_iter()
+        .filter_map(|(rect, arrow, score)| (score >= 0.7).then_some((rect, arrow)))
+        .collect::<Vec<_>>();
+    // TODO: If there are spinning arrows, either set the limit internally
+    // or ensure caller only try to solve rune for a fixed time frame. Otherwise, it may
+    // return `[ArrowsState::Calibrating]` forever.
+    if calibrating.spin_arrows.is_some() {
+        if result.len() != 2 {
+            return Ok(ArrowsState::Calibrating(calibrating));
+        }
+        let mut vec = calibrating
+            .spin_arrows
+            .take()
+            .unwrap()
+            .into_iter()
+            .map(|arrow| (arrow.region - rune_region.tl(), arrow.final_arrow.unwrap()))
+            .chain(result)
+            .collect::<Vec<_>>();
+        vec.sort_by_key(|a| a.0.x);
+        return Ok(ArrowsState::Complete(extract_rune_arrows_to_slice(vec)));
+    }
+
+    if result.len() == 4 {
+        Ok(ArrowsState::Complete(extract_rune_arrows_to_slice(result)))
+    } else {
+        Err(anyhow!("no rune arrow detected"))
+    }
+}
+
+fn calibrate_for_spin_arrows(
+    mat: &impl MatTraitConst,
+    rune_region: Rect,
+    calibrating: &mut ArrowsCalibrating,
+) -> Result<()> {
+    const SPIN_ARROW_MIN_AREA_THRESHOLD: i32 = 320;
+    const SPIN_ARROW_MAX_AREA_THRESHOLD: i32 = 370;
+
+    // Extract the saturation channel and perform thresholding
+    let mut rune_region_mat = to_hsv(&mat.roi(rune_region)?);
+    unsafe {
+        rune_region_mat.modify_inplace(|mat, mat_mut| {
+            extract_channel(mat, mat_mut, 1).unwrap();
+            threshold(mat, mat_mut, 245.0, 255.0, THRESH_BINARY).unwrap();
+        });
+    }
+
+    let mut centroids = Mat::default();
+    let mut stats = Mat::default();
+    let labels_count = connected_components_with_stats(
+        &rune_region_mat,
+        &mut Mat::default(),
+        &mut stats,
+        &mut centroids,
+        8,
+        CV_32S,
+    )
+    .unwrap();
+    // Maximum number of spinning arrows is 2
+    let mut spin_arrows = Array::new();
+
+    for i in 1..labels_count {
+        let area = *stats.at_2d::<i32>(i, CC_STAT_AREA).unwrap();
+        // Spinning arrow has bigger area than normal rune
+        if !(SPIN_ARROW_MIN_AREA_THRESHOLD..=SPIN_ARROW_MAX_AREA_THRESHOLD).contains(&area) {
+            continue;
+        }
+        if spin_arrows.len() == MAX_SPIN_ARROWS {
+            debug!(target:"rune", "number of spin arrows exceeded limit, possibly false positives");
+            return Ok(());
+        }
+
+        let centroid = centroids.row(i).unwrap();
+        let centroid = centroid.data_typed::<f64>().unwrap();
+        let centroid = Point::new(
+            rune_region.x + centroid[0] as i32,
+            rune_region.y + centroid[1] as i32,
+        );
+
+        let x = *stats.at_2d::<i32>(i, CC_STAT_LEFT).unwrap();
+        let y = *stats.at_2d::<i32>(i, CC_STAT_TOP).unwrap();
+        let w = *stats.at_2d::<i32>(i, CC_STAT_WIDTH).unwrap();
+        let h = *stats.at_2d::<i32>(i, CC_STAT_HEIGHT).unwrap();
+        let padded_x = (x - SPIN_REGION_PAD).max(0);
+        let padded_y = (y - SPIN_REGION_PAD).max(0);
+        let padded_w =
+            rune_region.width - (padded_x + w + SPIN_REGION_PAD * 2).min(rune_region.width);
+        let padded_h =
+            rune_region.height - (padded_y + h + SPIN_REGION_PAD * 2).min(rune_region.height);
+
+        let rect = Rect::new(
+            rune_region.x + padded_x,
+            rune_region.y + padded_y,
+            w + padded_w,
+            h + padded_h,
+        );
+
+        spin_arrows.push(SpinArrow {
+            centroid,
+            region: rect,
+            last_arrow_head: None,
+            final_arrow: None,
+        });
+    }
+
+    if spin_arrows.len() == MAX_SPIN_ARROWS {
+        debug!(target: "rune", "{} spinning rune arrows detected, calibrating...", spin_arrows.len());
+        calibrating.spin_arrows = Some(spin_arrows);
+    }
+
+    Ok(())
+}
+
+fn detect_spin_arrow(mat: &impl MatTraitConst, spin_arrow: &mut SpinArrow) -> Result<()> {
+    const INTERPOLATE_FROM_CENTROID: f32 = 0.765;
+    const SPIN_LAG_THRESHOLD: i32 = 25;
+    const SPIN_ARROW_HUE_THRESHOLD: u8 = 20;
+
+    // Extract spin arrow region
+    let spin_arrow_mat = to_hsv(&mat.roi(spin_arrow.region)?);
+    let mut spin_arrow_thresh = Mat::default();
+    unsafe {
+        spin_arrow_thresh.modify_inplace(|mat, mat_mut| {
+            extract_channel(&spin_arrow_mat, mat_mut, 1).unwrap();
+            threshold(mat, mat_mut, 240.0, 255.0, THRESH_BINARY).unwrap();
+        })
+    }
+
+    let mut contours = Vector::<Vector<Point>>::new();
+    find_contours_def(
+        &spin_arrow_thresh,
+        &mut contours,
+        RETR_EXTERNAL,
+        CHAIN_APPROX_SIMPLE,
+    )
+    .unwrap();
+    if contours.is_empty() {
+        bail!("cannot find the spinning arrow contour")
+    }
+
+    let mut points = [Point2f::default(); 4];
+    let rect = min_area_rect(&contours.get(0).unwrap()).unwrap();
+    rect.points(&mut points).unwrap();
+
+    // Determine the two short edges of a rectangle following the points order
+    // returned by `[RotatedRect::points]`
+    let mut first_short_edge_center = Point2f::default();
+    let mut second_short_edge_center = Point2f::default();
+    if (points[0] - points[1]).norm() < (points[0] - points[3]).norm() {
+        first_short_edge_center.x = (points[0].x + points[1].x) / 2.0;
+        first_short_edge_center.y = (points[0].y + points[1].y) / 2.0;
+
+        second_short_edge_center.x = (points[3].x + points[2].x) / 2.0;
+        second_short_edge_center.y = (points[3].y + points[2].y) / 2.0;
+    } else {
+        first_short_edge_center.x = (points[0].x + points[3].x) / 2.0;
+        first_short_edge_center.y = (points[0].y + points[3].y) / 2.0;
+
+        second_short_edge_center.x = (points[2].x + points[1].x) / 2.0;
+        second_short_edge_center.y = (points[2].y + points[1].y) / 2.0;
+    }
+
+    // Determine which edge is the arrow head by first computing the collinear point
+    // from the centroid to the center point of each edges
+    let centroid = spin_arrow.centroid - spin_arrow.region.tl();
+    let first_collinear = first_short_edge_center * INTERPOLATE_FROM_CENTROID
+        + centroid.to::<f32>().unwrap() * (1.0 - INTERPOLATE_FROM_CENTROID);
+    let first_collinear = first_collinear.to::<i32>().unwrap();
+
+    let second_collinear = second_short_edge_center * INTERPOLATE_FROM_CENTROID
+        + centroid.to::<f32>().unwrap() * (1.0 - INTERPOLATE_FROM_CENTROID);
+    let second_collinear = second_collinear.to::<i32>().unwrap();
+
+    // Check the hue to determine the arrow head
+    let first_hue = spin_arrow_mat
+        .at_pt::<Vec3b>(first_collinear)
+        .unwrap()
+        .first()
+        .copied()
+        .unwrap();
+    let second_hue = spin_arrow_mat
+        .at_pt::<Vec3b>(second_collinear)
+        .unwrap()
+        .first()
+        .copied()
+        .unwrap();
+    let collinear = if first_hue <= SPIN_ARROW_HUE_THRESHOLD {
+        first_collinear
+    } else if second_hue <= SPIN_ARROW_HUE_THRESHOLD {
+        second_collinear
+    } else {
+        bail!("failed to determine spinning arrow head")
+    };
+
+    if spin_arrow.last_arrow_head.is_none() {
+        spin_arrow.last_arrow_head = Some(collinear);
+        return Ok(());
+    }
+
+    let prev_arrow_head = spin_arrow.last_arrow_head.unwrap() - centroid;
+    let cur_arrow_head = collinear - centroid;
+    // https://stackoverflow.com/a/13221874
+    let dot = prev_arrow_head.x * -cur_arrow_head.y + prev_arrow_head.y * cur_arrow_head.x;
+    if dot >= SPIN_LAG_THRESHOLD {
+        debug!(target: "rune", "spinning arrow lag detected");
+        let up = prev_arrow_head.dot(Point::new(0, -1));
+        let down = prev_arrow_head.dot(Point::new(0, 1));
+        let left = prev_arrow_head.dot(Point::new(-1, 0));
+        let right = prev_arrow_head.dot(Point::new(1, 0));
+        let results = [up, down, left, right];
+        let (index, _) = results
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, dot)| **dot)
+            .unwrap();
+        let arrow = match index {
+            0 => KeyKind::Up,
+            1 => KeyKind::Down,
+            2 => KeyKind::Left,
+            3 => KeyKind::Right,
+            _ => unreachable!(),
+        };
+        debug!(target: "rune", "spinning arrow result {arrow:?} {results:?}");
+        spin_arrow.final_arrow = Some(arrow);
+    }
+    spin_arrow.last_arrow_head = Some(collinear);
+    Ok(())
+}
+
+#[inline]
+fn extract_rune_arrows_to_slice(vec: Vec<(Rect, KeyKind)>) -> [KeyKind; 4] {
+    debug_assert!(vec.len() == 4);
+    let first = vec[0].1;
+    let second = vec[1].1;
+    let third = vec[2].1;
+    let fourth = vec[3].1;
+    info!( target: "player", "solving rune result {first:?} {second:?} {third:?} {fourth:?}");
+    [first, second, third, fourth]
 }
 
 fn detect_erda_shower(mat: &impl MatTraitConst) -> Result<Rect> {
@@ -1141,10 +1435,6 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
     }
 
     let mut filter = Vec::new();
-    let zeros = Mat::zeros(template_size.height, template_size.width, CV_32FC1)
-        .unwrap()
-        .to_mat()
-        .unwrap();
     for _ in 0..max_matches {
         let match_result = match_one(&result, offset, template_size, threshold);
         if match_result.is_err() {
@@ -1152,8 +1442,11 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
             continue;
         }
         let (rect, score) = match_result.unwrap();
-        let mut roi = result.roi_mut(rect).unwrap();
-        zeros.copy_to(&mut roi).unwrap();
+        result
+            .roi_mut(rect)
+            .unwrap()
+            .set_scalar(Scalar::default())
+            .unwrap();
         filter.push(Ok((rect, score)));
     }
     filter
@@ -1368,11 +1661,26 @@ fn extract_text_bboxes(
 }
 
 #[inline]
-fn remap_from_yolo(pred: &[f32], size: Size, w_ratio: f32, h_ratio: f32) -> Rect {
-    let tl_x = (pred[0] * w_ratio).max(0.0).min(size.width as f32);
-    let tl_y = (pred[1] * h_ratio).max(0.0).min(size.height as f32);
-    let br_x = (pred[2] * w_ratio).max(0.0).min(size.width as f32);
-    let br_y = (pred[3] * h_ratio).max(0.0).min(size.height as f32);
+fn remap_from_yolo(
+    pred: &[f32],
+    size: Size,
+    w_ratio: f32,
+    h_ratio: f32,
+    left: i32,
+    top: i32,
+) -> Rect {
+    let tl_x = ((pred[0] - left as f32) / w_ratio)
+        .max(0.0)
+        .min(size.width as f32);
+    let tl_y = ((pred[1] - top as f32) / h_ratio)
+        .max(0.0)
+        .min(size.height as f32);
+    let br_x = ((pred[2] - left as f32) / w_ratio)
+        .max(0.0)
+        .min(size.width as f32);
+    let br_y = ((pred[3] - top as f32) / h_ratio)
+        .max(0.0)
+        .min(size.height as f32);
     Rect::from_points(
         Point::new(tl_x as i32, tl_y as i32),
         Point::new(br_x as i32, br_y as i32),
@@ -1382,21 +1690,55 @@ fn remap_from_yolo(pred: &[f32], size: Size, w_ratio: f32, h_ratio: f32) -> Rect
 /// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32`
 /// for YOLO detection.
 ///
-/// Returns a triplet of `(Mat, width_ratio, height_ratio)` with the ratios calculed from
-/// `old_size / new_size`.
+/// Returns a triplet of `(Mat, width_ratio, height_ratio, left, top)`
 #[inline]
-fn preprocess_for_yolo(mat: &impl MatTraitConst) -> (Mat, f32, f32) {
+fn preprocess_for_yolo(mat: &impl MatTraitConst) -> (Mat, f32, f32, i32, i32) {
+    // https://github.com/ultralytics/ultralytics/blob/main/ultralytics/data/augment.py
     let mut mat = mat.try_clone().unwrap();
-    let (w_ratio, h_ratio) = resize_w_h_ratio(mat.size().unwrap(), 640.0, 640.0);
+
+    let size = mat.size().unwrap();
+    let (w_ratio, h_ratio) = (640.0 / size.width as f32, 640.0 / size.height as f32);
+    let min_ratio = w_ratio.min(h_ratio).min(1.0);
+
+    let w = (size.width as f32 * min_ratio).round();
+    let h = (size.height as f32 * min_ratio).round();
+
+    let pad_w = (640.0 - w) / 2.0;
+    let pad_h = (640.0 - h) / 2.0;
+
+    let top = (pad_h - 0.1).round() as i32;
+    let bottom = (pad_h + 0.1).round() as i32;
+    let left = (pad_w - 0.1).round() as i32;
+    let right = (pad_w + 0.1).round() as i32;
+
     // SAFETY: all of the functions below can be called in place.
     unsafe {
         mat.modify_inplace(|mat, mat_mut| {
             cvt_color_def(mat, mat_mut, COLOR_BGRA2RGB).unwrap();
-            resize(mat, mat_mut, Size::new(640, 640), 0.0, 0.0, INTER_AREA).unwrap();
+            resize(
+                mat,
+                mat_mut,
+                Size::new(w as i32, h as i32),
+                0.0,
+                0.0,
+                INTER_AREA,
+            )
+            .unwrap();
+            copy_make_border(
+                mat,
+                mat_mut,
+                top,
+                bottom,
+                left,
+                right,
+                BORDER_CONSTANT,
+                Scalar::all(114.0),
+            )
+            .unwrap();
             mat.convert_to(mat_mut, CV_32FC3, 1.0 / 255.0, 0.0).unwrap();
         });
     }
-    (mat, w_ratio, h_ratio)
+    (mat, min_ratio, min_ratio, left, top)
 }
 
 /// Preprocesses a BGRA `Mat` image to a normalized and resized RGB `Mat` image with type `f32`
@@ -1444,10 +1786,18 @@ fn preprocess_for_text_bboxes(mat: &impl MatTraitConst) -> (Mat, f32, f32) {
     (mat, resize_w_ratio, resize_h_ratio)
 }
 
-/// Retrieves `(width, height)` ratios for resizing.
+/// Converts an BGRA `Mat` image to HSV.
 #[inline]
-fn resize_w_h_ratio(from: Size, to_w: f32, to_h: f32) -> (f32, f32) {
-    (from.width as f32 / to_w, from.height as f32 / to_h)
+fn to_hsv(mat: &impl MatTraitConst) -> Mat {
+    let mut mat = mat.try_clone().unwrap();
+    unsafe {
+        // SAFETY: can be modified inplace
+        mat.modify_inplace(|mat, mat_mut| {
+            cvt_color_def(mat, mat_mut, COLOR_BGRA2BGR).unwrap();
+            cvt_color_def(mat, mat_mut, COLOR_BGR2HSV_FULL).unwrap();
+        });
+    }
+    mat
 }
 
 /// Converts an BGRA `Mat` image to BGR.

@@ -153,7 +153,7 @@ pub(crate) trait RequestHandler {
     fn on_capture_image(&self, is_grayscale: bool);
 
     #[cfg(debug_assertions)]
-    fn on_infer_rune(&self);
+    fn on_infer_rune(&mut self);
 
     #[cfg(debug_assertions)]
     fn on_infer_minimap(&self);

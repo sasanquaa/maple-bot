@@ -1,17 +1,20 @@
+use anyhow::Result;
 use platforms::windows::KeyKind;
 
 use super::{Player, PlayerState, actions::PlayerAction};
 use crate::{
     context::Context,
+    detect::{ArrowsCalibrating, ArrowsState},
     player::{
         on_action_state_mut,
         state::MAX_RUNE_FAILED_COUNT,
         timeout::{Timeout, update_with_timeout},
     },
-    task::{Update, update_detection_task},
+    task::{Task, Update, update_task},
 };
 
-const TIMEOUT: u32 = 155;
+const TIMEOUT: u32 = 185;
+const SOLVE_START_TICK: u32 = 30;
 
 const PRESS_KEY_INTERVAL: u32 = 8;
 
@@ -20,6 +23,7 @@ pub struct SolvingRune {
     timeout: Timeout,
     keys: Option<[KeyKind; 4]>,
     key_index: usize,
+    calibrating: ArrowsCalibrating,
 }
 
 /// Updates the [`Player::SolvingRune`] contextual state
@@ -37,48 +41,34 @@ pub fn update_solving_rune_context(
     debug_assert!(state.rune_validate_timeout.is_none());
     debug_assert!(state.rune_failed_count < MAX_RUNE_FAILED_COUNT);
     debug_assert!(!state.rune_cash_shop);
+
+    let update_timeout = |timeout| {
+        Player::SolvingRune(SolvingRune {
+            timeout,
+            ..solving_rune
+        })
+    };
     let next = update_with_timeout(
         solving_rune.timeout,
         TIMEOUT,
         |timeout| {
             let _ = context.keys.send(state.config.interact_key);
-            Player::SolvingRune(SolvingRune {
-                timeout,
-                ..solving_rune
-            })
+            update_timeout(timeout)
         },
         || {
             // likely a spinning rune if the bot can't detect and timeout
             Player::Idle
         },
         |timeout| {
+            if timeout.total <= SOLVE_START_TICK {
+                return update_timeout(timeout);
+            }
             if solving_rune.keys.is_none() {
-                let Update::Ok(keys) =
-                    update_detection_task(context, 500, &mut state.rune_task, move |detector| {
-                        detector.detect_rune_arrows(None)
-                    })
-                else {
-                    return Player::SolvingRune(SolvingRune {
-                        timeout,
-                        ..solving_rune
-                    });
-                };
-                return Player::SolvingRune(SolvingRune {
-                    // reset current timeout for pressing keys
-                    timeout: Timeout {
-                        current: 1, // starts at 1 instead of 0 to avoid immediate key press
-                        total: 1,
-                        started: true,
-                    },
-                    keys: Some(keys),
-                    ..solving_rune
-                });
+                return calibrate_rune_arrows(context, timeout, &mut state.rune_task, solving_rune)
+                    .unwrap_or(update_timeout(timeout));
             }
             if timeout.current % PRESS_KEY_INTERVAL != 0 {
-                return Player::SolvingRune(SolvingRune {
-                    timeout,
-                    ..solving_rune
-                });
+                return update_timeout(timeout);
             }
             debug_assert!(solving_rune.key_index != 0 || timeout.current == PRESS_KEY_INTERVAL);
             debug_assert!(
@@ -122,4 +112,59 @@ pub fn update_solving_rune_context(
         },
         || next,
     )
+}
+
+fn calibrate_rune_arrows(
+    context: &Context,
+    timeout: Timeout,
+    task: &mut Option<Task<Result<ArrowsState>>>,
+    solving_rune: SolvingRune,
+) -> Option<Player> {
+    let state = if solving_rune.calibrating.has_spin_arrows() {
+        // When there are spinning arrows, detect immediately on the main thread
+        // so that there is no frame skip
+        context
+            .detector_unwrap()
+            .detect_rune_arrows(solving_rune.calibrating)
+            .ok()?
+    } else {
+        calibrate_rune_arrows_async(context, task, solving_rune.calibrating)?
+    };
+
+    let next = match state {
+        ArrowsState::Calibrating(calibrating) => Player::SolvingRune(SolvingRune {
+            timeout,
+            calibrating,
+            ..solving_rune
+        }),
+        ArrowsState::Complete(keys) => {
+            Player::SolvingRune(SolvingRune {
+                // reset current timeout for pressing keys
+                timeout: Timeout {
+                    current: 1, // starts at 1 instead of 0 to avoid immediate key press
+                    ..timeout
+                },
+                keys: Some(keys),
+                ..solving_rune
+            })
+        }
+    };
+    Some(next)
+}
+
+#[inline]
+fn calibrate_rune_arrows_async(
+    context: &Context,
+    task: &mut Option<Task<Result<ArrowsState>>>,
+    calibrating: ArrowsCalibrating,
+) -> Option<ArrowsState> {
+    match update_task(
+        500,
+        task,
+        || (context.detector_cloned_unwrap(), calibrating),
+        move |(detector, calibrating)| detector.detect_rune_arrows(calibrating),
+    ) {
+        Update::Ok(state) => Some(state),
+        Update::Err(_) | Update::Pending => None,
+    }
 }
