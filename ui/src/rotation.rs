@@ -8,7 +8,7 @@ use crate::{
 
 const DIV_CLASS: &str = "flex py-2 border-b border-gray-100 space-x-2";
 const LABEL_CLASS: &str = "flex-1 text-xs text-gray-700 inline-block data-[disabled]:text-gray-400";
-const INPUT_CLASS: &str = "w-28 px-1.5 h-6 border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
+const INPUT_CLASS: &str = "w-36 px-1.5 h-6 border border-gray-300 rounded text-xs text-ellipsis outline-none disabled:text-gray-400 disabled:cursor-not-allowed";
 
 #[component]
 pub fn Rotations(
@@ -50,9 +50,9 @@ pub fn Rotations(
             }
             Checkbox {
                 label: "Reset Rotation On Erda Condition",
-                div_class: DIV_CLASS,
                 label_class: LABEL_CLASS,
-                input_class: INPUT_CLASS,
+                div_class: DIV_CLASS,
+                input_class: "w-36 text-xs text-gray-700 text-ellipsis rounded outline-none disabled:cursor-not-allowed disabled:text-gray-400",
                 disabled,
                 on_input: move |checked| {
                     on_reset_on_erda(checked);

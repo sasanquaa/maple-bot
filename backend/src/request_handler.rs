@@ -9,8 +9,7 @@ use tokio::sync::broadcast;
 use crate::debug::{save_image_for_training, save_minimap_for_training, save_rune_for_training};
 use crate::{
     Action, ActionCondition, ActionKey, Bound, Configuration, GameState, KeyBinding,
-    KeyBindingConfiguration, Minimap as MinimapData, PotionMode, RequestHandler, RotatorMode,
-    Settings,
+    KeyBindingConfiguration, Minimap as MinimapData, PotionMode, RequestHandler, Settings,
     bridge::{ImageCapture, ImageCaptureKind, KeySenderMethod},
     buff::{BuffKind, BuffState},
     context::Context,
@@ -48,7 +47,19 @@ impl DefaultRequestHandler<'_> {
         poll_key(self);
     }
 
-    fn update_rotator_actions(&mut self, mode: RotatorMode) {
+    fn update_rotator_actions(&mut self) {
+        let mode = self
+            .minimap
+            .data()
+            .map(|minimap| minimap.rotation_mode)
+            .unwrap_or_default()
+            .into();
+        let reset_on_erda = self
+            .minimap
+            .data()
+            .map(|minimap| minimap.actions_any_reset_on_erda_condition)
+            .unwrap_or_default();
+
         self.rotator.build_actions(
             mode,
             config_actions(self.config)
@@ -59,6 +70,7 @@ impl DefaultRequestHandler<'_> {
             self.buffs,
             self.config.potion_key.key,
             self.settings.enable_rune_solving,
+            reset_on_erda,
         );
     }
 }
@@ -106,7 +118,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         *self.actions = preset
             .and_then(|preset| minimap.actions.get(&preset).cloned())
             .unwrap_or_default();
-        self.update_rotator_actions(minimap.rotation_mode.into());
+        self.update_rotator_actions();
     }
 
     fn on_update_configuration(&mut self, config: Configuration) {
@@ -130,13 +142,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         self.buff_states.iter_mut().for_each(|state| {
             state.update_enabled_state(self.config, self.settings);
         });
-        self.update_rotator_actions(
-            self.minimap
-                .data()
-                .map(|minimap| minimap.rotation_mode)
-                .unwrap_or_default()
-                .into(),
-        );
+        self.update_rotator_actions();
     }
 
     fn on_update_settings(&mut self, settings: Settings) {
@@ -167,13 +173,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         self.buff_states.iter_mut().for_each(|state| {
             state.update_enabled_state(self.config, self.settings);
         });
-        self.update_rotator_actions(
-            self.minimap
-                .data()
-                .map(|minimap| minimap.rotation_mode)
-                .unwrap_or_default()
-                .into(),
-        );
+        self.update_rotator_actions();
     }
 
     #[inline]

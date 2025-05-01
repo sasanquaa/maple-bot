@@ -119,6 +119,7 @@ pub struct Rotator {
     normal_index: usize,
     /// Whether [`Self::normal_actions`] is being accessed from the end
     normal_actions_backward: bool,
+    normal_actions_reset_on_erda: bool,
     normal_rotate_mode: RotatorMode,
     /// The [`Task`] used when [`Self::normal_rotate_mode`] is [`RotatorMode::AutoMobbing`]
     auto_mob_task: Option<Task<Result<Vec<Point>>>>,
@@ -139,11 +140,13 @@ impl Rotator {
         buffs: &[(BuffKind, KeyBinding)],
         potion_key: KeyBinding,
         enable_rune_solving: bool,
+        reset_normal_actions_on_erda: bool,
     ) {
         debug!(target: "rotator", "preparing actions {actions:?} {buffs:?}");
         self.reset_queue();
         self.normal_actions.clear();
         self.normal_rotate_mode = mode;
+        self.normal_actions_reset_on_erda = reset_normal_actions_on_erda;
         self.priority_actions.clear();
 
         let mut i = 0;
@@ -201,10 +204,15 @@ impl Rotator {
     #[inline]
     pub fn reset_queue(&mut self) {
         self.normal_actions_backward = false;
-        self.normal_index = 0;
-        self.normal_queuing_linked_action = None;
+        self.reset_normal_actions_queue();
         self.priority_actions_queue.clear();
         self.priority_queuing_linked_action = None;
+    }
+
+    #[inline]
+    fn reset_normal_actions_queue(&mut self) {
+        self.normal_index = 0;
+        self.normal_queuing_linked_action = None;
     }
 
     #[inline]
@@ -277,6 +285,7 @@ impl Rotator {
         // Keeps ignoring while there is any type of erda condition action inside the queue
         let has_erda_action = self.has_erda_action_queuing_or_executing(player);
         let ids = self.priority_actions.keys().copied().collect::<Vec<_>>(); // why?
+        let mut did_queue_erda_action = false;
         for id in ids {
             // Ignores for as long as the action is a linked action that is queuing
             // or executing
@@ -309,7 +318,17 @@ impl Rotator {
                     self.priority_actions_queue.push_back(id);
                 }
                 action.last_queued_time = Some(Instant::now());
+                if !did_queue_erda_action {
+                    did_queue_erda_action = matches!(
+                        action.condition_kind,
+                        Some(ActionCondition::ErdaShowerOffCooldown)
+                    );
+                }
             }
+        }
+
+        if did_queue_erda_action && self.normal_actions_reset_on_erda {
+            self.reset_normal_actions_queue();
         }
     }
 
@@ -853,6 +872,7 @@ mod tests {
             &buffs,
             KeyBinding::A,
             true,
+            false,
         );
         assert_eq!(rotator.priority_actions.len(), 7);
         assert_eq!(rotator.normal_actions.len(), 2);
