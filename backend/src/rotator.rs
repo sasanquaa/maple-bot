@@ -461,6 +461,7 @@ impl Rotator {
                 wait_after_ticks: (key_wait_after_millis / MS_PER_TICK) as u32,
                 position: Position {
                     x: point.x,
+                    x_random_range: 0,
                     y: idle.bbox.height - point.y,
                     allow_adjusting: false,
                 },
@@ -645,7 +646,9 @@ fn elite_boss_potion_spam_priority_action(key: KeyBinding) -> PriorityAction {
             direction: ActionKeyDirection::Any,
             with: ActionKeyWith::Any,
             wait_before_use_ticks: 5,
+            wait_before_use_ticks_random_range: 0,
             wait_after_use_ticks: 0,
+            wait_after_use_ticks_random_range: 0,
         })),
         queue_to_front: true,
         ignoring: false,
@@ -705,7 +708,9 @@ fn buff_priority_action(buff: BuffKind, key: KeyBinding) -> PriorityAction {
             direction: ActionKeyDirection::Any,
             with: ActionKeyWith::Stationary,
             wait_before_use_ticks: 10,
+            wait_before_use_ticks_random_range: 0,
             wait_after_use_ticks: 10,
+            wait_after_use_ticks_random_range: 0,
         })),
         queue_to_front: true,
         ignoring: false,
@@ -762,6 +767,7 @@ mod tests {
     const NORMAL_ACTION: Action = Action::Move(ActionMove {
         position: Position {
             x: 0,
+            x_random_range: 0,
             y: 0,
             allow_adjusting: false,
         },
@@ -771,6 +777,7 @@ mod tests {
     const PRIORITY_ACTION: Action = Action::Move(ActionMove {
         position: Position {
             x: 0,
+            x_random_range: 0,
             y: 0,
             allow_adjusting: false,
         },

@@ -52,13 +52,10 @@ fn on_player_action(
             false,
         )),
         PlayerAction::Move(PlayerActionMove { position, .. }) => {
-            debug!(target: "player", "handling move: {} {}", position.x, position.y);
+            let x = get_x_destination(position);
+            debug!(target: "player", "handling move: {} {}", x, position.y);
             Some((
-                Player::Moving(
-                    Point::new(position.x, position.y),
-                    position.allow_adjusting,
-                    None,
-                ),
+                Player::Moving(Point::new(x, position.y), position.allow_adjusting, None),
                 false,
             ))
         }
@@ -66,13 +63,10 @@ fn on_player_action(
             position: Some(position),
             ..
         }) => {
-            debug!(target: "player", "handling move: {} {}", position.x, position.y);
+            let x = get_x_destination(position);
+            debug!(target: "player", "handling move: {} {}", x, position.y);
             Some((
-                Player::Moving(
-                    Point::new(position.x, position.y),
-                    position.allow_adjusting,
-                    None,
-                ),
+                Player::Moving(Point::new(x, position.y), position.allow_adjusting, None),
                 false,
             ))
         }
@@ -131,6 +125,12 @@ fn on_player_action(
             Some((Player::Idle, true))
         }
     }
+}
+
+fn get_x_destination(position: Position) -> i32 {
+    let x_min = position.x.saturating_sub(position.x_random_range).max(0);
+    let x_max = position.x.saturating_add(position.x_random_range + 1);
+    rand::random_range(x_min..x_max)
 }
 
 fn ensure_reachable_auto_mob_y(

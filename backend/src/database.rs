@@ -298,7 +298,9 @@ impl From<ActionConfiguration> for Action {
             },
             queue_to_front: Some(true),
             wait_before_use_millis: value.wait_before_use_millis,
+            wait_before_use_millis_random_range: 0,
             wait_after_use_millis: value.wait_after_use_millis,
+            wait_after_use_millis_random_range: 0,
         })
     }
 }
@@ -396,6 +398,7 @@ pub struct Minimap {
     pub auto_mob_platforms_pathing: bool,
     pub auto_mob_platforms_pathing_up_jump_only: bool,
     pub auto_mob_platforms_bound: bool,
+    pub actions_any_reset_on_erda_condition: bool,
     pub actions: HashMap<String, Vec<Action>>,
 }
 
@@ -425,6 +428,7 @@ impl From<Platform> for pathing::Platform {
 #[derive(Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Position {
     pub x: i32,
+    pub x_random_range: i32,
     pub y: i32,
     pub allow_adjusting: bool,
 }
@@ -448,7 +452,9 @@ pub struct ActionKey {
     pub direction: ActionKeyDirection,
     pub with: ActionKeyWith,
     pub wait_before_use_millis: u64,
+    pub wait_before_use_millis_random_range: u64,
     pub wait_after_use_millis: u64,
+    pub wait_after_use_millis_random_range: u64,
     pub queue_to_front: Option<bool>,
 }
 
@@ -463,7 +469,9 @@ impl Default for ActionKey {
             direction: ActionKeyDirection::default(),
             with: ActionKeyWith::default(),
             wait_before_use_millis: 0,
+            wait_before_use_millis_random_range: 0,
             wait_after_use_millis: 0,
+            wait_after_use_millis_random_range: 0,
             queue_to_front: None,
         }
     }

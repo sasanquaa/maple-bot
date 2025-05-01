@@ -55,10 +55,10 @@ fn main() {
     LogTracer::init().unwrap();
     backend::init();
     let window = WindowBuilder::new()
-        .with_inner_size(Size::Physical(PhysicalSize::new(448, 900)))
+        .with_inner_size(Size::Physical(PhysicalSize::new(540, 864)))
         .with_inner_size_constraints(WindowSizeConstraints::new(
-            Some(PixelUnit::Physical(448.into())),
-            Some(PixelUnit::Physical(820.into())),
+            Some(PixelUnit::Physical(540.into())),
+            Some(PixelUnit::Physical(864.into())),
             None,
             None,
         ))
@@ -165,7 +165,7 @@ fn App() -> Element {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         document::Script { src: AUTO_NUMERIC_JS }
         if script_loaded() {
-            div { class: "flex flex-col max-w-xl h-screen mx-auto space-y-2",
+            div { class: "flex flex-col max-w-2xl h-screen mx-auto space-y-2",
                 Minimap {
                     minimap_rx,
                     minimap,

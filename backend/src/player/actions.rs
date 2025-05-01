@@ -27,7 +27,9 @@ pub struct PlayerActionKey {
     pub direction: ActionKeyDirection,
     pub with: ActionKeyWith,
     pub wait_before_use_ticks: u32,
+    pub wait_before_use_ticks_random_range: u32,
     pub wait_after_use_ticks: u32,
+    pub wait_after_use_ticks_random_range: u32,
 }
 
 impl From<ActionKey> for PlayerActionKey {
@@ -40,7 +42,9 @@ impl From<ActionKey> for PlayerActionKey {
             direction,
             with,
             wait_before_use_millis,
+            wait_before_use_millis_random_range,
             wait_after_use_millis,
+            wait_after_use_millis_random_range,
             ..
         }: ActionKey,
     ) -> Self {
@@ -52,7 +56,11 @@ impl From<ActionKey> for PlayerActionKey {
             direction,
             with,
             wait_before_use_ticks: (wait_before_use_millis / MS_PER_TICK) as u32,
+            wait_before_use_ticks_random_range: (wait_before_use_millis_random_range / MS_PER_TICK)
+                as u32,
             wait_after_use_ticks: (wait_after_use_millis / MS_PER_TICK) as u32,
+            wait_after_use_ticks_random_range: (wait_after_use_millis_random_range / MS_PER_TICK)
+                as u32,
         }
     }
 }
