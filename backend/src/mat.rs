@@ -29,7 +29,7 @@ impl OwnedMat {
     }
 }
 
-#[cfg(test)]
+#[cfg(debug_assertions)]
 impl From<Mat> for OwnedMat {
     fn from(value: Mat) -> Self {
         Self {

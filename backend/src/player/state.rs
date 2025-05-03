@@ -14,6 +14,7 @@ use crate::{
     ActionKeyDirection, Class,
     buff::{Buff, BuffKind},
     context::Context,
+    detect::ArrowsState,
     minimap::Minimap,
     network::NotificationKind,
     player::timeout::update_with_timeout,
@@ -22,7 +23,7 @@ use crate::{
 
 /// The maximum number of times rune solving can fail before transition to
 /// `Player::CashShopThenExit`
-pub const MAX_RUNE_FAILED_COUNT: u32 = 2;
+pub const MAX_RUNE_FAILED_COUNT: u32 = 5;
 
 /// The number of times a reachable y must successfuly ensures the player moves to that exact y
 /// Once the count is reached, it is considered "solidified" and guaranteed the reachable y is
@@ -173,7 +174,7 @@ pub struct PlayerState {
     /// Unstuck task for detecting settings when mis-pressing ESC key
     pub(super) unstuck_task: Option<Task<Result<bool>>>,
     /// Rune solving task
-    pub(super) rune_task: Option<Task<Result<[KeyKind; 4]>>>,
+    pub(super) rune_task: Option<Task<Result<ArrowsState>>>,
     /// The number of times [`Player::SolvingRune`] failed
     pub(super) rune_failed_count: u32,
     /// Indicates the state will be transitioned to [`Player::CashShopThenExit`] in the next tick

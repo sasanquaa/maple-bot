@@ -57,7 +57,10 @@ impl Ord for VisitingPlatform {
 }
 
 /// Finds a rectangular bound that contains all the provided platforms
-pub fn find_platforms_bound(minimap: Rect, platforms: &[PlatformWithNeighbors]) -> Option<Rect> {
+pub fn find_platforms_bound(
+    minimap: Rect,
+    platforms: &Array<PlatformWithNeighbors, MAX_PLATFORMS_COUNT>,
+) -> Option<Rect> {
     platforms
         .iter()
         .map(|platform| {
@@ -110,7 +113,7 @@ pub fn find_neighbors(
 }
 
 pub fn find_points_with(
-    platforms: &[PlatformWithNeighbors],
+    platforms: &Array<PlatformWithNeighbors, MAX_PLATFORMS_COUNT>,
     from: Point,
     to: Point,
     double_jump_threshold: i32,

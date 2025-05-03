@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use log::debug;
 use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
 use platforms::windows::{KeyInputKind, KeyKind, KeyReceiver};
@@ -6,7 +8,10 @@ use rand::distr::{Alphanumeric, SampleString};
 use tokio::sync::broadcast;
 
 #[cfg(debug_assertions)]
-use crate::debug::{save_image_for_training, save_minimap_for_training, save_rune_for_training};
+use crate::debug::{
+    save_image_for_training, save_image_for_training_to, save_minimap_for_training,
+};
+use crate::detect::ArrowsState;
 use crate::{
     Action, ActionCondition, ActionKey, Bound, Configuration, GameState, KeyBinding,
     KeyBindingConfiguration, Minimap as MinimapData, PotionMode, RequestHandler, Settings,
@@ -14,6 +19,7 @@ use crate::{
     buff::{BuffKind, BuffState},
     context::Context,
     database::InputMethod,
+    detect::ArrowsCalibrating,
     minimap::{Minimap, MinimapState},
     player::PlayerState,
     poll_request,
@@ -36,6 +42,8 @@ pub struct DefaultRequestHandler<'a> {
     pub image_capture: &'a mut ImageCapture,
     #[cfg(debug_assertions)]
     pub recording_images_id: &'a mut Option<String>,
+    #[cfg(debug_assertions)]
+    pub infering_rune: &'a mut Option<(ArrowsCalibrating, Instant)>,
 }
 
 impl DefaultRequestHandler<'_> {
@@ -45,6 +53,44 @@ impl DefaultRequestHandler<'_> {
 
     pub fn poll_key(&mut self) {
         poll_key(self);
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn poll_debug(&mut self) {
+        if let Some((calibrating, instant)) = self.infering_rune.as_ref().copied() {
+            if instant.elapsed().as_secs() >= 10 {
+                debug!(target: "debug", "infer rune timed out");
+                *self.infering_rune = None;
+            } else {
+                match self
+                    .context
+                    .detector_unwrap()
+                    .detect_rune_arrows(calibrating)
+                {
+                    Ok(ArrowsState::Complete(arrows)) => {
+                        debug!(target: "debug", "infer rune result {arrows:?}");
+                        // TODO: Save
+                        *self.infering_rune = None;
+                    }
+                    Ok(ArrowsState::Calibrating(calibrating)) => {
+                        *self.infering_rune = Some((calibrating, instant));
+                    }
+                    Err(_) => {
+                        debug!(target: "debug", "infer rune failed");
+                        *self.infering_rune = None;
+                    }
+                }
+            }
+        }
+
+        if let Some(id) = self.recording_images_id.clone() {
+            save_image_for_training_to(
+                self.context.detector_unwrap().mat(),
+                Some(id),
+                false,
+                false,
+            );
+        }
     }
 
     fn update_rotator_actions(&mut self) {
@@ -234,14 +280,8 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     #[cfg(debug_assertions)]
-    fn on_infer_rune(&self) {
-        if let Some(ref detector) = self.context.detector {
-            let mut result = Some((Vec::new(), 0f32, 0f32));
-            if let Ok(arrows) = detector.detect_rune_arrows(result.as_mut()) {
-                let (preds, w_ratio, h_ratio) = result.unwrap();
-                save_rune_for_training(detector.mat(), &preds, &arrows, w_ratio, h_ratio);
-            }
-        }
+    fn on_infer_rune(&mut self) {
+        *self.infering_rune = Some((ArrowsCalibrating::default(), Instant::now()));
     }
 
     #[cfg(debug_assertions)]

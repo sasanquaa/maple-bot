@@ -10,7 +10,6 @@ use std::{
 };
 
 use dyn_clone::clone_box;
-use log::info;
 use opencv::{
     core::{Vector, VectorToVec},
     imgcodecs::imencode_def,
@@ -19,8 +18,6 @@ use platforms::windows::{self, Handle, KeyInputKind, KeyReceiver};
 use strum::IntoEnumIterator;
 use tokio::sync::broadcast;
 
-#[cfg(debug_assertions)]
-use crate::debug::save_image_for_training_to;
 use crate::{
     Action, RequestHandler,
     bridge::{DefaultKeySender, ImageCapture, ImageCaptureKind, KeySender, KeySenderMethod},
@@ -202,8 +199,11 @@ fn update_loop() {
     buff_states.iter_mut().for_each(|state| {
         state.update_enabled_state(&config, &settings.borrow());
     });
+
     #[cfg(debug_assertions)]
     let mut recording_images_id = None;
+    #[cfg(debug_assertions)]
+    let mut infering_rune = None;
 
     loop_with_fps(FPS, || {
         let mat = image_capture.grab().map(OwnedMat::new);
@@ -227,11 +227,6 @@ fn update_loop() {
             }
             // Rotating action must always be done last
             rotator.rotate_action(&context, &mut player_state);
-
-            #[cfg(debug_assertions)]
-            if let Some(id) = recording_images_id.clone() {
-                save_image_for_training_to(context.detector_unwrap().mat(), Some(id), false, false);
-            }
         }
 
         // Poll requests, keys and update scheduled notifications frames
@@ -252,9 +247,13 @@ fn update_loop() {
             image_capture: &mut image_capture,
             #[cfg(debug_assertions)]
             recording_images_id: &mut recording_images_id,
+            #[cfg(debug_assertions)]
+            infering_rune: &mut infering_rune,
         };
         handler.poll_request();
         handler.poll_key();
+        #[cfg(debug_assertions)]
+        handler.poll_debug();
         handler.context.notification.update_scheduled_frames(|| {
             to_png(
                 handler
@@ -317,8 +316,6 @@ fn loop_with_fps(fps: u32, mut on_tick: impl FnMut()) {
         let elapsed_nanos = now.duration_since(start).as_nanos();
         if elapsed_nanos <= nanos_per_frame {
             thread::sleep(Duration::new(0, (nanos_per_frame - elapsed_nanos) as u32));
-        } else {
-            info!(target: "context", "ticking running late at {}ms", (elapsed_nanos - nanos_per_frame) / 1_000_000);
         }
     }
 }

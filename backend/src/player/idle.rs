@@ -12,7 +12,7 @@ use super::{
     use_key::UseKey,
 };
 use crate::{
-    ActionKeyDirection, ActionKeyWith, Position,
+    ActionKeyDirection, ActionKeyWith, MAX_PLATFORMS_COUNT, Position,
     array::Array,
     context::Context,
     minimap::Minimap,
@@ -209,7 +209,7 @@ fn populate_auto_mob_reachable_y(context: &Context, state: &mut PlayerState) {
 
 #[inline]
 fn find_points(
-    platforms: &[PlatformWithNeighbors],
+    platforms: &Array<PlatformWithNeighbors, MAX_PLATFORMS_COUNT>,
     cur_pos: Point,
     dest: Point,
     exact: bool,
