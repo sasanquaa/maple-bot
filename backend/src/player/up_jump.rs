@@ -244,8 +244,51 @@ mod tests {
                 ..
             })
         );
+    }
 
-        // TODO
-        // more tests
+    #[test]
+    fn up_jump_demon_slayer() {
+        let pos = Point::new(10, 10);
+        let dest = Point::new(10, 20);
+        let mut moving = Moving {
+            pos,
+            dest,
+            ..Default::default()
+        };
+        let mut state = PlayerState::default();
+        state.config.upjump_key = Some(KeyKind::Up); // Demon Slayer uses Up
+        state.config.jump_key = KeyKind::Space;
+        state.last_known_pos = Some(pos);
+
+        let mut keys = MockKeySender::new();
+        keys.expect_send_down()
+            .withf(|key| *key == KeyKind::Up)
+            .never();
+        keys.expect_send()
+            .withf(|key| *key == KeyKind::Space)
+            .once()
+            .returning(|_| Ok(()));
+        let mut context = Context::new(None, None);
+        context.keys = Box::new(keys);
+
+        // Start by sending Space only
+        update_up_jumping_context(&context, &mut state, moving);
+        let _ = context.keys;
+
+        // Update by sending Up
+        let mut keys = MockKeySender::new();
+        moving.timeout.total = 7; // SPAM_DELAY
+        moving.timeout.started = true;
+        keys.expect_send()
+            .withf(|key| *key == KeyKind::Up)
+            .times(2)
+            .returning(|_| Ok(()));
+        keys.expect_send()
+            .withf(|key| *key == KeyKind::Space)
+            .never();
+        context.keys = Box::new(keys);
+        update_up_jumping_context(&context, &mut state, moving);
+        update_up_jumping_context(&context, &mut state, moving);
+        let _ = context.keys;
     }
 }
