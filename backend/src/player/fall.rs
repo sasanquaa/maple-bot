@@ -20,6 +20,8 @@ const STOP_DOWN_KEY_TICK: u32 = 3;
 
 const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
 
+const TELEPORT_FALL_THRESHOLD: i32 = 14;
+
 /// Updates the [`Player::Falling`] contextual state
 ///
 /// This state will perform a drop down `Down Key + Jump Key`
@@ -32,8 +34,10 @@ pub fn update_falling_context(
     let cur_pos = state.last_known_pos.unwrap();
     let y_changed = cur_pos.y - anchor.y;
     let (x_distance, _) = moving.x_distance_direction_from(true, cur_pos);
+    let (y_distance, _) = moving.y_distance_direction_from(true, cur_pos);
     let is_stationary = state.is_stationary;
     let jump_key = state.config.jump_key;
+    let teleport_key = state.config.teleport_key;
     if !moving.timeout.started {
         state.last_movement = Some(LastMovement::Falling);
     }
@@ -45,7 +49,13 @@ pub fn update_falling_context(
         |moving| {
             if is_stationary {
                 let _ = context.keys.send_down(KeyKind::Down);
-                let _ = context.keys.send(jump_key);
+                if let Some(key) = teleport_key
+                    && y_distance <= TELEPORT_FALL_THRESHOLD
+                {
+                    let _ = context.keys.send(key);
+                } else {
+                    let _ = context.keys.send(jump_key);
+                }
             }
             Player::Falling(moving, anchor)
         },

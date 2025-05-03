@@ -85,7 +85,12 @@ pub fn update_up_jumping_context(
                         // above a threshold as sending jump key twice
                         // doesn't work
                         if moving.timeout.total >= SPAM_DELAY {
-                            let _ = context.keys.send(jump_key);
+                            // This up jump key is Up for Demon Slayer
+                            if let Some(key) = up_jump_key {
+                                let _ = context.keys.send(key);
+                            } else {
+                                let _ = context.keys.send(jump_key);
+                            }
                         }
                     } else {
                         moving = moving.completed(true);
