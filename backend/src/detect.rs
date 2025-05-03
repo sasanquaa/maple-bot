@@ -9,7 +9,7 @@ use std::{
     },
 };
 
-use anyhow::{Ok, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use dyn_clone::DynClone;
 use log::{debug, info};
 #[cfg(test)]
@@ -1188,16 +1188,14 @@ fn calibrate_for_spin_arrows(
         let h = *stats.at_2d::<i32>(i, CC_STAT_HEIGHT).unwrap();
         let padded_x = (x - SPIN_REGION_PAD).max(0);
         let padded_y = (y - SPIN_REGION_PAD).max(0);
-        let padded_w =
-            rune_region.width - (padded_x + w + SPIN_REGION_PAD * 2).min(rune_region.width);
-        let padded_h =
-            rune_region.height - (padded_y + h + SPIN_REGION_PAD * 2).min(rune_region.height);
+        let padded_w = (padded_x + w + SPIN_REGION_PAD * 2).min(rune_region.width) - padded_x;
+        let padded_h = (padded_y + h + SPIN_REGION_PAD * 2).min(rune_region.height) - padded_y;
 
         let rect = Rect::new(
             rune_region.x + padded_x,
             rune_region.y + padded_y,
-            w + padded_w,
-            h + padded_h,
+            padded_w,
+            padded_h,
         );
 
         spin_arrows.push(SpinArrow {
