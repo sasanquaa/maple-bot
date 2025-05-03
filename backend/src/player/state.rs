@@ -23,7 +23,7 @@ use crate::{
 
 /// The maximum number of times rune solving can fail before transition to
 /// `Player::CashShopThenExit`
-pub const MAX_RUNE_FAILED_COUNT: u32 = 5;
+pub const MAX_RUNE_FAILED_COUNT: u32 = 8;
 
 /// The number of times a reachable y must successfuly ensures the player moves to that exact y
 /// Once the count is reached, it is considered "solidified" and guaranteed the reachable y is

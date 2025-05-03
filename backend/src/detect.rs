@@ -1021,7 +1021,7 @@ fn detect_rune_arrows_with_scores_regions(mat: &impl MatTraitConst) -> Vec<(Rect
     let mut vec = (0..mat_out.rows())
         // SAFETY: 0..outputs.rows() is within Mat bounds
         .map(|i| unsafe { mat_out.at_row_unchecked::<f32>(i).unwrap() })
-        .filter(|pred| pred[4] >= 0.4)
+        .filter(|pred| pred[4] >= 0.3)
         .map(|pred| {
             (
                 remap_from_yolo(pred, size, w_ratio, h_ratio, left, top),
@@ -1056,11 +1056,17 @@ fn detect_rune_arrows(
     //     RUNE_REGION_HEIGHT * 2,
     // );
 
+    /// The minimum region width required to contain 4 arrows
+    ///
+    /// Based on the rectangular region in-game with round border when detecting arrows.
+    const RUNE_REGION_MIN_WIDTH: i32 = 300;
+
     if calibrating.rune_region.is_none() {
         calibrating.rune_region = detect_rune_arrows_with_scores_regions(mat)
             .into_iter()
             .map(|(r, _, _)| r)
-            .reduce(|acc, cur| acc | cur);
+            .reduce(|acc, cur| acc | cur)
+            .filter(|region| region.area() >= RUNE_REGION_MIN_WIDTH);
     }
     let rune_region = calibrating
         .rune_region

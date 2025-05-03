@@ -59,6 +59,10 @@ pub struct MinimapIdle {
     pub partially_overlapping: bool,
     /// The rune position
     pub rune: Option<Point>,
+    /// Rune detection fail count from having a rune
+    ///
+    /// If fail count reaches a threshold, rune is considered no longer on the minimap
+    rune_fail_count: u32,
     /// Whether there is an elite boss
     ///
     /// This does not belong to minimap though...
@@ -128,6 +132,7 @@ fn update_detecting_context(context: &Context, state: &mut MinimapState) -> Mini
         bbox,
         partially_overlapping: false,
         rune: None,
+        rune_fail_count: 0,
         has_elite_boss: false,
         portals: Array::new(),
         platforms,
@@ -147,6 +152,7 @@ fn update_idle_context(
         anchors,
         bbox,
         rune,
+        rune_fail_count,
         has_elite_boss,
         portals,
         mut platforms,
@@ -167,7 +173,8 @@ fn update_idle_context(
         return None;
     }
     let partially_overlapping = (tl_match && !br_match) || (!tl_match && br_match);
-    let rune = update_rune_task(context, &mut state.rune_task, bbox, rune);
+    let (rune, rune_fail_count) =
+        update_rune_task(context, &mut state.rune_task, bbox, rune, rune_fail_count);
     let has_elite_boss =
         update_elite_boss_task(context, &mut state.has_elite_boss_task, has_elite_boss);
     let portals = update_portals_task(context, &mut state.portals_task, portals, bbox);
@@ -183,6 +190,7 @@ fn update_idle_context(
     Some(Minimap::Idle(MinimapIdle {
         partially_overlapping,
         rune,
+        rune_fail_count,
         has_elite_boss,
         portals,
         platforms,
@@ -208,7 +216,10 @@ fn update_rune_task(
     task: &mut Option<Task<Result<Point>>>,
     minimap: Rect,
     rune: Option<Point>,
-) -> Option<Point> {
+    rune_fail_count: u32,
+) -> (Option<Point>, u32) {
+    const MAX_RUNE_FAIL_COUNT: u32 = 3;
+
     let was_none = rune.is_none();
     let update = if matches!(context.player, Player::SolvingRune(_)) && rune.is_some() {
         Update::Pending
@@ -226,10 +237,20 @@ fn update_rune_task(
                     .notification
                     .schedule_notification(NotificationKind::RuneAppear);
             }
-            Some(rune)
+            (Some(rune), 0)
         }
-        Update::Err(_) => None,
-        Update::Pending => rune,
+        Update::Err(_) => {
+            if !was_none {
+                if rune_fail_count >= MAX_RUNE_FAIL_COUNT {
+                    (None, 0)
+                } else {
+                    (rune, rune_fail_count + 1)
+                }
+            } else {
+                (rune, rune_fail_count)
+            }
+        }
+        Update::Pending => (rune, rune_fail_count),
     }
 }
 
@@ -439,6 +460,7 @@ mod tests {
             bbox,
             partially_overlapping: false,
             rune: None,
+            rune_fail_count: 0,
             has_elite_boss: false,
             portals: Array::new(),
             platforms: Array::new(),
