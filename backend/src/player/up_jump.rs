@@ -61,9 +61,16 @@ pub fn update_up_jumping_context(
         cur_pos,
         TIMEOUT,
         |moving| {
-            let _ = context.keys.send_down(KeyKind::Up);
-            if up_jump_key.is_none() || (up_jump_key.is_some() && has_teleport_key) {
-                let _ = context.keys.send(jump_key);
+            // Only send Up key when the key is not of a Demon Slayer
+            if !matches!(up_jump_key, Some(KeyKind::Up)) {
+                let _ = context.keys.send_down(KeyKind::Up);
+            }
+            match (up_jump_key, has_teleport_key) {
+                // This is a generic class, a mage or a Demon Slayer
+                (None, _) | (Some(_), true) | (Some(KeyKind::Up), false) => {
+                    let _ = context.keys.send(jump_key);
+                }
+                _ => (),
             }
             Player::UpJumping(moving)
         },
@@ -71,15 +78,11 @@ pub fn update_up_jumping_context(
             let _ = context.keys.send_up(KeyKind::Up);
         }),
         |mut moving| {
-            match (moving.completed, up_jump_key) {
-                (false, Some(key)) => {
-                    let _ = context.keys.send(key);
-                    moving = moving.completed(true);
-                }
-                (false, None) => {
+            match (moving.completed, up_jump_key, has_teleport_key) {
+                (false, None, true) | (false, Some(KeyKind::Up), false) | (false, None, false) => {
                     if y_changed <= UP_JUMPED_THRESHOLD {
-                        // spamming space until the player y changes
-                        // above a threshold as sending space twice
+                        // Spam jump key until the player y changes
+                        // above a threshold as sending jump key twice
                         // doesn't work
                         if moving.timeout.total >= SPAM_DELAY {
                             let _ = context.keys.send(jump_key);
@@ -88,8 +91,14 @@ pub fn update_up_jumping_context(
                         moving = moving.completed(true);
                     }
                 }
-                (true, _) => {
-                    // this is when up jump like blaster or mage still requires up key
+                (false, Some(key), _) => {
+                    if !has_teleport_key || moving.timeout.total >= SPAM_DELAY {
+                        let _ = context.keys.send(key);
+                        moving = moving.completed(true);
+                    }
+                }
+                (true, _, _) => {
+                    // This is when up jump like Blaster or mage still requires up key
                     // cancel early to avoid stucking to a rope
                     if up_jump_key.is_some() && moving.timeout.total == STOP_UP_KEY_TICK {
                         let _ = context.keys.send_up(KeyKind::Up);
