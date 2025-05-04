@@ -31,7 +31,7 @@ pub const MAX_RUNE_FAILED_COUNT: u32 = 8;
 pub const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 4;
 
 /// The maximum of number points for auto mobbing to periodically move to
-pub const AUTO_MOB_MAX_PATHING_POINTS: usize = 7;
+pub const AUTO_MOB_MAX_PATHING_POINTS: usize = 3;
 
 /// The acceptable y range above and below the detected mob position when matched with a reachable y
 pub const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 10;
