@@ -30,7 +30,7 @@
 - Auto-mobbing mode for hitting random mobs
 - Auto-buff for common farming-related buffs
 - Auto-HP potion
-- Solve rune (except spinning rune)
+- Solve rune (from v0.8 spinning rune can now be solved)
 - Platforms pathing for auto-mobbing and rune solving
 - Usable UI
 - Work by taking an image and send key inputs
@@ -110,6 +110,7 @@ Action `Key` configurations:
 - `Wait before action`/`Wait after action`:
   - Wait for the specified amount of millseconds after/before using the key
   - Waiting is applied on each repeat of `Count`
+- `Wait before random range`/`Wait after random range`: Applies randomization to the delay in the range `delay - range` to `delay + range`
 
 Actions added in the list below can be dragged/dropped/reordered.
 
@@ -173,6 +174,8 @@ When `AutoMobbing` is used:
 - The bounds should be the rectangle where you can move around (two edges of the map)
 - While this mode ignores all `Any` condition actions, it is still possible to use other conditions
 - For platforms pathing, see [Platforms Pathing](#platforms-pathing)
+- From v0.8.0, `AutoMobbing` behavior has been improved and will now try to utilize platforms as pathing points if provided
+  - Pathing point is to help `AutoMobbing` moves to area with more mobs to detect
 
 ![Auto Mobbing](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/automobbing.png?raw=true)
 
@@ -213,8 +216,12 @@ v0.6.0 add some supports for remote control. It is currently tested against Suns
 4. Use BitBltArea and drag over to the client game
 5. Tested against some dark/bright maps and using skills with fancy effects
 
-I think this is the lowest settings the bot can run at. Tested against using windowed/minimized Moonlight but it does
-not detect well. Both host and client should have matching resolutions.
+Another Sunshine/Moonlight setup tested using Windowed mode:
+1. Have the Moonlight settings to 1366x768, FPS of your choice but increase the Video bitrate around 20Mbps so the images can be clearer
+2. When connecting to the Sunshine host, make sure you don't resize the Moonlight window but only drag it around
+3. Set your MapleStory game in Sunshine host to 1366x768 full screen
+
+There has been confirmation about working well when GeForce NOW.
 
 ## Troubleshooting
 #### Wrong map detection
@@ -259,7 +266,7 @@ If you use the bot on a newly installed Windows, make sure [Visual C++ Redistrib
 
 ## Contact
 - You can reach me by creating an issue on Github or by joining the [Discord](https://discord.gg/ReTp6MHgF6)
-- The Discord is just a simple messaging channel if you have quick questions related to the bot
+- The Discord contains other guide resources
 
 ## Video guides
 1. [Basic operations](https://youtu.be/8X2CKS7bnHY?si=3yPmVPaMsFEyDD8c)
