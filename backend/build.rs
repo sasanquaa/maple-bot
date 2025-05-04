@@ -37,6 +37,7 @@ fn main() {
     let hp_separator_2 = dir.join("hp_separator_ideal_ratio_2.png");
     let hp_shield = dir.join("hp_shield_ideal_ratio.png");
     let hp_end = dir.join("hp_end_ideal_ratio.png");
+    let spin_test = dir.join("spin_test_2");
 
     let mob_model = dir.join("mob_nms.onnx");
     let rune_model = dir.join("rune_nms.onnx");
@@ -180,6 +181,10 @@ fn main() {
     println!(
         "cargo:rustc-env=HP_END_TEMPLATE={}",
         hp_end.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=SPIN_TEST_DIR={}",
+        spin_test.to_str().unwrap()
     );
 
     println!(

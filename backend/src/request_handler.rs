@@ -1,7 +1,18 @@
+#[cfg(debug_assertions)]
+use std::sync::LazyLock;
+#[cfg(debug_assertions)]
 use std::time::Instant;
 
+#[cfg(debug_assertions)]
+use include_dir::{Dir, include_dir};
 use log::debug;
 use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
+#[cfg(debug_assertions)]
+use opencv::{
+    core::{Mat, ModifyInplace, Vector},
+    imgcodecs::{IMREAD_COLOR, imdecode},
+    imgproc::{COLOR_BGR2BGRA, cvt_color_def},
+};
 use platforms::windows::{KeyInputKind, KeyKind, KeyReceiver};
 #[cfg(debug_assertions)]
 use rand::distr::{Alphanumeric, SampleString};
@@ -11,7 +22,10 @@ use tokio::sync::broadcast;
 use crate::debug::{
     save_image_for_training, save_image_for_training_to, save_minimap_for_training,
 };
-use crate::detect::ArrowsState;
+#[cfg(debug_assertions)]
+use crate::detect::{ArrowsCalibrating, ArrowsState, CachedDetector, Detector};
+#[cfg(debug_assertions)]
+use crate::mat::OwnedMat;
 use crate::{
     Action, ActionCondition, ActionKey, Bound, Configuration, GameState, KeyBinding,
     KeyBindingConfiguration, Minimap as MinimapData, PotionMode, RequestHandler, Settings,
@@ -19,7 +33,6 @@ use crate::{
     buff::{BuffKind, BuffState},
     context::Context,
     database::InputMethod,
-    detect::ArrowsCalibrating,
     minimap::{Minimap, MinimapState},
     player::PlayerState,
     poll_request,
@@ -75,8 +88,8 @@ impl DefaultRequestHandler<'_> {
                     Ok(ArrowsState::Calibrating(calibrating)) => {
                         *self.infering_rune = Some((calibrating, instant));
                     }
-                    Err(_) => {
-                        debug!(target: "debug", "infer rune failed");
+                    Err(err) => {
+                        debug!(target: "debug", "infer rune failed {err}");
                         *self.infering_rune = None;
                     }
                 }
@@ -301,6 +314,46 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         } else {
             None
         };
+    }
+
+    #[cfg(debug_assertions)]
+    fn on_test_spin_rune(&self) {
+        static SPIN_TEST_DIR: Dir<'static> = include_dir!("$SPIN_TEST_DIR");
+        static SPIN_TEST_IMAGES: LazyLock<Vec<Mat>> = LazyLock::new(|| {
+            let mut files = SPIN_TEST_DIR.files().collect::<Vec<_>>();
+            files.sort_by_key(|file| file.path().to_str().unwrap());
+            files
+                .into_iter()
+                .map(|file| {
+                    let vec = Vector::from_slice(file.contents());
+                    let mut mat = imdecode(&vec, IMREAD_COLOR).unwrap();
+                    unsafe {
+                        mat.modify_inplace(|mat, mat_mut| {
+                            cvt_color_def(mat, mat_mut, COLOR_BGR2BGRA).unwrap();
+                        });
+                    }
+                    mat
+                })
+                .collect()
+        });
+
+        let mut calibrating = ArrowsCalibrating::default();
+        calibrating.enable_spin_test();
+
+        for mat in &*SPIN_TEST_IMAGES {
+            match CachedDetector::new(OwnedMat::from(mat.clone())).detect_rune_arrows(calibrating) {
+                Ok(ArrowsState::Complete(arrows)) => {
+                    debug!(target: "test", "spin test completed {arrows:?}");
+                }
+                Ok(ArrowsState::Calibrating(new_calibrating)) => {
+                    calibrating = new_calibrating;
+                }
+                Err(err) => {
+                    debug!(target: "test", "spin test error {err}");
+                    break;
+                }
+            }
+        }
     }
 }
 
