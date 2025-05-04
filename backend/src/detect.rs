@@ -920,17 +920,15 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
     });
 
     let threshold = match kind {
-        BuffKind::AureliaElixir => 0.8,
+        BuffKind::Rune | BuffKind::AureliaElixir => 0.8,
         BuffKind::LegionWealth => 0.76,
-        BuffKind::Rune
-        | BuffKind::SayramElixir
+        BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => 0.5, // TODO
+        BuffKind::SayramElixir
         | BuffKind::ExpCouponX3
         | BuffKind::BonusExpCoupon
         | BuffKind::LegionLuck
         | BuffKind::ExtremeRedPotion
         | BuffKind::ExtremeBluePotion
-        | BuffKind::WealthAcquisitionPotion
-        | BuffKind::ExpAccumulationPotion
         | BuffKind::ExtremeGreenPotion
         | BuffKind::ExtremeGoldPotion => 0.75,
     };
@@ -1108,7 +1106,7 @@ fn detect_rune_arrows(
                     let intersection = (arrow_region & region).area() as f32;
                     let union = (arrow_region | region).area() as f32;
                     let iou = intersection / union;
-                    if iou >= 0.4 {
+                    if iou >= 0.5 {
                         use_arrow = false;
                         debug!(target: "rune", "skip using cached result for normal {arrow_region:?} and spin {region:?} with IoU {iou}");
                         break;
@@ -1491,8 +1489,14 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
             continue;
         }
         let (rect, score) = match_result.unwrap();
+        let roi_rect = Rect::new(
+            rect.x - offset.x,
+            rect.y - offset.y,
+            rect.width.min(result.cols()),
+            rect.height.min(result.rows()),
+        );
         result
-            .roi_mut(rect)
+            .roi_mut(roi_rect)
             .unwrap()
             .set_scalar(Scalar::default())
             .unwrap();

@@ -19,7 +19,7 @@ use crate::{
 };
 
 /// The total number of ticks for changing direction before timing out
-const CHANGE_DIRECTION_TIMEOUT: u32 = 2;
+const CHANGE_DIRECTION_TIMEOUT: u32 = 3;
 
 /// The tick to which the actual key will be pressed for [`LinkKeyBinding::Along`]
 const LINK_ALONG_PRESS_TICK: u32 = 2;

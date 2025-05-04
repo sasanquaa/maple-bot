@@ -15,7 +15,7 @@ use crate::{
 
 const BUFF_FAIL_NORMAL_MAX_COUNT: u32 = 5;
 // TODO: Test to see if this is reasonable
-const BUFF_FAIL_HIGH_MAX_COUNT: u32 = 7; // Meant for WAP / EAP
+const BUFF_FAIL_HIGH_MAX_COUNT: u32 = 35; // Meant for WAP / EAP
 
 #[derive(Debug)]
 pub struct BuffState {
@@ -68,8 +68,10 @@ impl BuffState {
             BuffKind::BonusExpCoupon => config.bonus_exp_key.enabled,
             BuffKind::LegionWealth => config.legion_wealth_key.enabled,
             BuffKind::LegionLuck => config.legion_luck_key.enabled,
-            BuffKind::WealthAcquisitionPotion => config.wealth_acquisition_potion_key.enabled,
-            BuffKind::ExpAccumulationPotion => config.exp_accumulation_potion_key.enabled,
+            // BuffKind::WealthAcquisitionPotion => config.wealth_acquisition_potion_key.enabled,
+            // BuffKind::ExpAccumulationPotion => config.exp_accumulation_potion_key.enabled,
+            // TODO: Disable until have better way to do this...
+            BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => false,
             BuffKind::ExtremeRedPotion => config.extreme_red_potion_key.enabled,
             BuffKind::ExtremeBluePotion => config.extreme_blue_potion_key.enabled,
             BuffKind::ExtremeGreenPotion => config.extreme_green_potion_key.enabled,

@@ -373,7 +373,7 @@ impl Rotator {
         if self.priority_actions_queue.is_empty() && self.priority_queuing_linked_action.is_none() {
             return;
         }
-        if !can_override_player_state(context)
+        if !context.player.can_action_override_current_state()
             || self.has_normal_linked_action_queuing_or_executing(player)
             || self.has_priority_linked_action_executing(player)
         {
@@ -736,14 +736,6 @@ fn buff_priority_action(buff: BuffKind, key: KeyBinding) -> PriorityAction {
         ignoring: false,
         last_queued_time: None,
     }
-}
-
-#[inline]
-fn can_override_player_state(context: &Context) -> bool {
-    !matches!(
-        context.player,
-        Player::UseKey(_) | Player::Stalling(_, _) | Player::DoubleJumping(_, false, _)
-    )
 }
 
 #[inline]

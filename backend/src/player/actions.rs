@@ -10,7 +10,7 @@ use crate::{
 };
 
 /// The minimum x distance required to transition to [`Player::UseKey`] in auto mob action
-const AUTO_MOB_USE_KEY_X_THRESHOLD: i32 = 20;
+const AUTO_MOB_USE_KEY_X_THRESHOLD: i32 = 16;
 
 /// The minimum y distance required to transition to [`Player::UseKey`] in auto mob action
 const AUTO_MOB_USE_KEY_Y_THRESHOLD: i32 = 8;
