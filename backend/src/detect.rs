@@ -46,8 +46,8 @@ use platforms::windows::KeyKind;
 
 use crate::{array::Array, buff::BuffKind, mat::OwnedMat};
 
+const MAX_ARROWS: usize = 4;
 const MAX_SPIN_ARROWS: usize = 2; // PRAY
-const SPIN_REGION_PAD: i32 = 16;
 
 /// Struct for storing information about the spinning arrows
 #[derive(Debug, Copy, Clone)]
@@ -65,7 +65,7 @@ struct SpinArrow {
 #[derive(Debug)]
 pub enum ArrowsState {
     Calibrating(ArrowsCalibrating),
-    Complete([KeyKind; 4]),
+    Complete([KeyKind; MAX_ARROWS]),
 }
 
 /// Struct representing arrows calibration in-progress
@@ -74,6 +74,7 @@ pub struct ArrowsCalibrating {
     spin_arrows: Option<Array<SpinArrow, MAX_SPIN_ARROWS>>,
     spin_arrows_calibrated: bool,
     rune_region: Option<Rect>,
+    normal_arrows: Option<Array<(Rect, KeyKind), MAX_ARROWS>>,
 }
 
 impl ArrowsCalibrating {
@@ -919,17 +920,15 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
     });
 
     let threshold = match kind {
-        BuffKind::AureliaElixir => 0.8,
+        BuffKind::Rune | BuffKind::AureliaElixir => 0.8,
         BuffKind::LegionWealth => 0.76,
-        BuffKind::Rune
-        | BuffKind::SayramElixir
+        BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => 0.5, // TODO
+        BuffKind::SayramElixir
         | BuffKind::ExpCouponX3
         | BuffKind::BonusExpCoupon
         | BuffKind::LegionLuck
         | BuffKind::ExtremeRedPotion
         | BuffKind::ExtremeBluePotion
-        | BuffKind::WealthAcquisitionPotion
-        | BuffKind::ExpAccumulationPotion
         | BuffKind::ExtremeGreenPotion
         | BuffKind::ExtremeGoldPotion => 0.75,
     };
@@ -1021,7 +1020,7 @@ fn detect_rune_arrows_with_scores_regions(mat: &impl MatTraitConst) -> Vec<(Rect
     let mut vec = (0..mat_out.rows())
         // SAFETY: 0..outputs.rows() is within Mat bounds
         .map(|i| unsafe { mat_out.at_row_unchecked::<f32>(i).unwrap() })
-        .filter(|pred| pred[4] >= 0.5)
+        .filter(|pred| pred[4] >= 0.3)
         .map(|pred| {
             (
                 remap_from_yolo(pred, size, w_ratio, h_ratio, left, top),
@@ -1038,29 +1037,29 @@ fn detect_rune_arrows(
     mat: &impl MatTraitConst,
     mut calibrating: ArrowsCalibrating,
 ) -> Result<ArrowsState> {
-    // Note: This commented out code is to determine rune region with hard-coded offset
-    //
-    // const RUNE_REGION_WIDTH: i32 = 260;
-    // const RUNE_REGION_HEIGHT: i32 = 130;
-    // const RUNE_REGION_Y_OFFSET: i32 = 80;
-    //
-    // TODO: Should add a separate model for detection rune region?
-    // TODO: Deal with BitBltArea
-    // let size = mat.size().unwrap();
-    // let region_x = (size.width / 2 - RUNE_REGION_WIDTH).max(0);
-    // let region_y = (size.height / 4 - RUNE_REGION_Y_OFFSET).max(0);
-    // let rune_region = Rect::new(
-    //     region_x,
-    //     region_y,
-    //     RUNE_REGION_WIDTH * 2,
-    //     RUNE_REGION_HEIGHT * 2,
-    // );
+    /// The minimum region width required to contain 4 arrows
+    ///
+    /// Based on the rectangular region in-game with round border when detecting arrows.
+    const RUNE_REGION_MIN_WIDTH: i32 = 300;
+    const SCORE_THRESHOLD: f32 = 0.8;
 
     if calibrating.rune_region.is_none() {
-        calibrating.rune_region = detect_rune_arrows_with_scores_regions(mat)
+        let result = detect_rune_arrows_with_scores_regions(mat);
+        calibrating.rune_region = result
+            .clone()
             .into_iter()
             .map(|(r, _, _)| r)
-            .reduce(|acc, cur| acc | cur);
+            .reduce(|acc, cur| acc | cur)
+            .filter(|region| region.width >= RUNE_REGION_MIN_WIDTH);
+
+        // Cache result for later
+        let filtered = result
+            .into_iter()
+            .filter_map(|(rect, arrow, score)| (score >= SCORE_THRESHOLD).then_some((rect, arrow)))
+            .collect::<Vec<_>>();
+        if !filtered.is_empty() && filtered.len() <= MAX_ARROWS {
+            calibrating.normal_arrows = Some(Array::from_iter(filtered));
+        }
     }
     let rune_region = calibrating
         .rune_region
@@ -1073,6 +1072,7 @@ fn detect_rune_arrows(
         return Ok(ArrowsState::Calibrating(calibrating));
     }
 
+    // After calibration is complete and there are spin arrows, prioritize its detection
     if let Some(ref mut spin_arrows) = calibrating.spin_arrows
         && spin_arrows.iter().any(|arrow| arrow.final_arrow.is_none())
     {
@@ -1085,6 +1085,51 @@ fn detect_rune_arrows(
         return Ok(ArrowsState::Calibrating(calibrating));
     }
 
+    // Reuse cached result if any
+    if let Some(arrows) = calibrating.normal_arrows.take() {
+        if calibrating.spin_arrows.is_none() && arrows.len() == MAX_ARROWS {
+            debug!(target: "rune", "reuse cached arrows result");
+            return Ok(ArrowsState::Complete(extract_rune_arrows_to_slice(
+                arrows.into_iter().collect::<Vec<_>>(),
+            )));
+        }
+
+        if let Some(ref spin_arrows) = calibrating.spin_arrows {
+            let mut final_arrows = Vec::new();
+
+            for arrow in spin_arrows {
+                final_arrows.push((arrow.region, arrow.final_arrow.unwrap()));
+            }
+            for (arrow_region, arrow) in arrows {
+                let mut use_arrow = true;
+                for region in spin_arrows.iter().map(|arrow| arrow.region) {
+                    let intersection = (arrow_region & region).area() as f32;
+                    let union = (arrow_region | region).area() as f32;
+                    let iou = intersection / union;
+                    if iou >= 0.5 {
+                        use_arrow = false;
+                        debug!(target: "rune", "skip using cached result for normal {arrow_region:?} and spin {region:?} with IoU {iou}");
+                        break;
+                    }
+                }
+                if use_arrow {
+                    final_arrows.push((arrow_region, arrow));
+                }
+            }
+
+            if final_arrows.len() == MAX_ARROWS {
+                debug!(target: "rune", "reuse cached arrows result with spin arrows");
+                final_arrows.sort_by_key(|(region, _)| region.x);
+                return Ok(ArrowsState::Complete(extract_rune_arrows_to_slice(
+                    final_arrows,
+                )));
+            }
+        }
+
+        debug!(target: "rune", "cached result not used");
+    }
+
+    // Normal detection path
     let mut mat = mat.roi(rune_region)?;
     if calibrating.spin_arrows.is_some() {
         //  Set all spin arrow regions to black pixels
@@ -1105,13 +1150,13 @@ fn detect_rune_arrows(
 
     let result = detect_rune_arrows_with_scores_regions(&mat)
         .into_iter()
-        .filter_map(|(rect, arrow, score)| (score >= 0.7).then_some((rect, arrow)))
+        .filter_map(|(rect, arrow, score)| (score >= SCORE_THRESHOLD).then_some((rect, arrow)))
         .collect::<Vec<_>>();
     // TODO: If there are spinning arrows, either set the limit internally
     // or ensure caller only try to solve rune for a fixed time frame. Otherwise, it may
     // return `[ArrowsState::Calibrating]` forever.
     if calibrating.spin_arrows.is_some() {
-        if result.len() != 2 {
+        if result.len() != MAX_ARROWS / 2 {
             return Ok(ArrowsState::Calibrating(calibrating));
         }
         let mut vec = calibrating
@@ -1126,7 +1171,7 @@ fn detect_rune_arrows(
         return Ok(ArrowsState::Complete(extract_rune_arrows_to_slice(vec)));
     }
 
-    if result.len() == 4 {
+    if result.len() == MAX_ARROWS {
         Ok(ArrowsState::Complete(extract_rune_arrows_to_slice(result)))
     } else {
         Err(anyhow!("no rune arrow detected"))
@@ -1138,6 +1183,7 @@ fn calibrate_for_spin_arrows(
     rune_region: Rect,
     calibrating: &mut ArrowsCalibrating,
 ) -> Result<()> {
+    const SPIN_REGION_PAD: i32 = 16;
     const SPIN_ARROW_MIN_AREA_THRESHOLD: i32 = 320;
     const SPIN_ARROW_MAX_AREA_THRESHOLD: i32 = 370;
 
@@ -1170,7 +1216,7 @@ fn calibrate_for_spin_arrows(
         if !(SPIN_ARROW_MIN_AREA_THRESHOLD..=SPIN_ARROW_MAX_AREA_THRESHOLD).contains(&area) {
             continue;
         }
-        if spin_arrows.len() == MAX_SPIN_ARROWS {
+        if spin_arrows.len() >= MAX_SPIN_ARROWS {
             debug!(target:"rune", "number of spin arrows exceeded limit, possibly false positives");
             return Ok(());
         }
@@ -1186,6 +1232,9 @@ fn calibrate_for_spin_arrows(
         let y = *stats.at_2d::<i32>(i, CC_STAT_TOP).unwrap();
         let w = *stats.at_2d::<i32>(i, CC_STAT_WIDTH).unwrap();
         let h = *stats.at_2d::<i32>(i, CC_STAT_HEIGHT).unwrap();
+
+        // Pad to ensure the region always contain the spin arrow even when it rotates
+        // horitzontally or vertically
         let padded_x = (x - SPIN_REGION_PAD).max(0);
         let padded_y = (y - SPIN_REGION_PAD).max(0);
         let padded_w = (padded_x + w + SPIN_REGION_PAD * 2).min(rune_region.width) - padded_x;
@@ -1331,7 +1380,7 @@ fn detect_spin_arrow(mat: &impl MatTraitConst, spin_arrow: &mut SpinArrow) -> Re
 }
 
 #[inline]
-fn extract_rune_arrows_to_slice(vec: Vec<(Rect, KeyKind)>) -> [KeyKind; 4] {
+fn extract_rune_arrows_to_slice(vec: Vec<(Rect, KeyKind)>) -> [KeyKind; MAX_ARROWS] {
     debug_assert!(vec.len() == 4);
     let first = vec[0].1;
     let second = vec[1].1;
@@ -1440,8 +1489,14 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
             continue;
         }
         let (rect, score) = match_result.unwrap();
+        let roi_rect = Rect::new(
+            rect.x - offset.x,
+            rect.y - offset.y,
+            rect.width.min(result.cols()),
+            rect.height.min(result.rows()),
+        );
         result
-            .roi_mut(rect)
+            .roi_mut(roi_rect)
             .unwrap()
             .set_scalar(Scalar::default())
             .unwrap();

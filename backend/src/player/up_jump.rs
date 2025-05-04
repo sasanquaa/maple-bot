@@ -61,9 +61,16 @@ pub fn update_up_jumping_context(
         cur_pos,
         TIMEOUT,
         |moving| {
-            let _ = context.keys.send_down(KeyKind::Up);
-            if up_jump_key.is_none() || (up_jump_key.is_some() && has_teleport_key) {
-                let _ = context.keys.send(jump_key);
+            // Only send Up key when the key is not of a Demon Slayer
+            if !matches!(up_jump_key, Some(KeyKind::Up)) {
+                let _ = context.keys.send_down(KeyKind::Up);
+            }
+            match (up_jump_key, has_teleport_key) {
+                // This is a generic class, a mage or a Demon Slayer
+                (None, _) | (Some(_), true) | (Some(KeyKind::Up), false) => {
+                    let _ = context.keys.send(jump_key);
+                }
+                _ => (),
             }
             Player::UpJumping(moving)
         },
@@ -71,25 +78,32 @@ pub fn update_up_jumping_context(
             let _ = context.keys.send_up(KeyKind::Up);
         }),
         |mut moving| {
-            match (moving.completed, up_jump_key) {
-                (false, Some(key)) => {
-                    let _ = context.keys.send(key);
-                    moving = moving.completed(true);
-                }
-                (false, None) => {
+            match (moving.completed, up_jump_key, has_teleport_key) {
+                (false, None, true) | (false, Some(KeyKind::Up), false) | (false, None, false) => {
                     if y_changed <= UP_JUMPED_THRESHOLD {
-                        // spamming space until the player y changes
-                        // above a threshold as sending space twice
+                        // Spam jump key until the player y changes
+                        // above a threshold as sending jump key twice
                         // doesn't work
                         if moving.timeout.total >= SPAM_DELAY {
-                            let _ = context.keys.send(jump_key);
+                            // This up jump key is Up for Demon Slayer
+                            if let Some(key) = up_jump_key {
+                                let _ = context.keys.send(key);
+                            } else {
+                                let _ = context.keys.send(jump_key);
+                            }
                         }
                     } else {
                         moving = moving.completed(true);
                     }
                 }
-                (true, _) => {
-                    // this is when up jump like blaster or mage still requires up key
+                (false, Some(key), _) => {
+                    if !has_teleport_key || moving.timeout.total >= SPAM_DELAY {
+                        let _ = context.keys.send(key);
+                        moving = moving.completed(true);
+                    }
+                }
+                (true, _, _) => {
+                    // This is when up jump like Blaster or mage still requires up key
                     // cancel early to avoid stucking to a rope
                     if up_jump_key.is_some() && moving.timeout.total == STOP_UP_KEY_TICK {
                         let _ = context.keys.send_up(KeyKind::Up);
@@ -230,8 +244,119 @@ mod tests {
                 ..
             })
         );
+    }
 
-        // TODO
-        // more tests
+    #[test]
+    fn up_jump_demon_slayer() {
+        let pos = Point::new(10, 10);
+        let dest = Point::new(10, 20);
+        let mut moving = Moving {
+            pos,
+            dest,
+            ..Default::default()
+        };
+        let mut state = PlayerState::default();
+        state.config.upjump_key = Some(KeyKind::Up); // Demon Slayer uses Up
+        state.config.jump_key = KeyKind::Space;
+        state.last_known_pos = Some(pos);
+
+        let mut keys = MockKeySender::new();
+        keys.expect_send_down()
+            .withf(|key| *key == KeyKind::Up)
+            .never();
+        keys.expect_send()
+            .withf(|key| *key == KeyKind::Space)
+            .once()
+            .returning(|_| Ok(()));
+        let mut context = Context::new(None, None);
+        context.keys = Box::new(keys);
+
+        // Start by sending Space only
+        update_up_jumping_context(&context, &mut state, moving);
+        let _ = context.keys;
+
+        // Update by sending Up
+        let mut keys = MockKeySender::new();
+        moving.timeout.total = 7; // SPAM_DELAY
+        moving.timeout.started = true;
+        keys.expect_send()
+            .withf(|key| *key == KeyKind::Up)
+            .times(2)
+            .returning(|_| Ok(()));
+        keys.expect_send()
+            .withf(|key| *key == KeyKind::Space)
+            .never();
+        context.keys = Box::new(keys);
+        update_up_jumping_context(&context, &mut state, moving);
+        update_up_jumping_context(&context, &mut state, moving);
+        let _ = context.keys;
+    }
+
+    #[test]
+    fn up_jump_mage() {
+        let pos = Point::new(10, 10);
+        let dest = Point::new(10, 20);
+        let mut moving = Moving {
+            pos,
+            dest,
+            ..Default::default()
+        };
+        let mut state = PlayerState::default();
+        // Setting up jump key the same as teleport key
+        // means that the mage doesn't have a dedicated up jump like up arrow + space
+        state.config.upjump_key = Some(KeyKind::Shift);
+        state.config.teleport_key = Some(KeyKind::Shift);
+        state.config.jump_key = KeyKind::Space;
+        state.last_known_pos = Some(pos);
+
+        let mut keys = MockKeySender::new();
+        keys.expect_send_down()
+            .withf(|key| *key == KeyKind::Up)
+            .once()
+            .returning(|_| Ok(()));
+        keys.expect_send()
+            .withf(|key| *key == KeyKind::Space)
+            .once()
+            .returning(|_| Ok(()));
+        let mut context = Context::new(None, None);
+        context.keys = Box::new(keys);
+
+        // Start by sending Up and Space
+        update_up_jumping_context(&context, &mut state, moving);
+        let _ = context.keys;
+
+        // Change to started
+        moving.timeout.started = true;
+
+        // Not sending any key before delay
+        let mut keys = MockKeySender::new();
+        moving.timeout.total = 4; // Before SPAM_DELAY
+        keys.expect_send().never();
+        context.keys = Box::new(keys);
+        assert_matches!(
+            update_up_jumping_context(&context, &mut state, moving),
+            Player::UpJumping(Moving {
+                completed: false,
+                ..
+            })
+        );
+        let _ = context.keys;
+
+        // Send key after delay
+        let mut keys = MockKeySender::new();
+        moving.timeout.total = 7; // At SPAM_DELAY
+        keys.expect_send()
+            .withf(|key| *key == KeyKind::Shift)
+            .once()
+            .returning(|_| Ok(()));
+        context.keys = Box::new(keys);
+        assert_matches!(
+            update_up_jumping_context(&context, &mut state, moving),
+            Player::UpJumping(Moving {
+                completed: true,
+                ..
+            })
+        );
+        let _ = context.keys;
     }
 }

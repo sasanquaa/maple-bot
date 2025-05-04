@@ -84,6 +84,29 @@ pub enum Player {
     CashShopThenExit(Timeout, CashShop),
 }
 
+impl Player {
+    #[inline]
+    pub fn can_action_override_current_state(&self) -> bool {
+        match self {
+            Player::Detecting
+            | Player::Idle
+            | Player::Moving(_, _, _)
+            | Player::DoubleJumping(_, false, _)
+            | Player::Adjusting(_) => true,
+            Player::Grappling(moving)
+            | Player::Jumping(moving)
+            | Player::UpJumping(moving)
+            | Player::Falling(moving, _) => moving.completed,
+            Player::SolvingRune(_)
+            | Player::CashShopThenExit(_, _)
+            | Player::Unstucking(_, _)
+            | Player::DoubleJumping(_, true, _)
+            | Player::UseKey(_)
+            | Player::Stalling(_, _) => false,
+        }
+    }
+}
+
 impl Contextual for Player {
     type Persistent = PlayerState;
 

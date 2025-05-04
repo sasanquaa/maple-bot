@@ -68,6 +68,7 @@ pub fn update_double_jumping_context(
             && y_direction < 0
             && y_distance >= ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD
             && !is_intermediate
+            && state.is_stationary
         {
             return Player::Falling(moving.pos(cur_pos), cur_pos);
         }

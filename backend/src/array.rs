@@ -30,6 +30,11 @@ impl<T, const N: usize> Array<T, N> {
     }
 
     #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[inline]
     pub fn iter(&self) -> Iter<'_, T, N> {
         Iter {
             array: self,

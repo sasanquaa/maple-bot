@@ -107,16 +107,22 @@ fn App() -> Element {
             while let Some(msg) = rx.next().await {
                 match msg {
                     AppMessage::UpdateConfig(mut new_config, save) => {
-                        config.set(Some(new_config.clone()));
-                        update_configuration(new_config.clone()).await;
+                        let mut id = None;
                         if save {
-                            spawn_blocking(move || {
+                            let mut new_config = new_config.clone();
+                            id = spawn_blocking(move || {
                                 upsert_config(&mut new_config).unwrap();
+                                new_config.id
                             })
                             .await
                             .unwrap();
-                            configs.restart();
                         }
+                        if id.is_some() && new_config.id.is_none() {
+                            new_config.id = id;
+                        }
+                        config.set(Some(new_config.clone()));
+                        update_configuration(new_config.clone()).await;
+                        configs.restart();
                     }
                     AppMessage::UpdateMinimap(minimap) => {
                         let _ = minimap_tx

@@ -38,8 +38,8 @@ fn main() {
     let hp_shield = dir.join("hp_shield_ideal_ratio.png");
     let hp_end = dir.join("hp_end_ideal_ratio.png");
 
-    let mob_model = dir.join("mob.onnx");
-    let rune_model = dir.join("rune.onnx");
+    let mob_model = dir.join("mob_nms.onnx");
+    let rune_model = dir.join("rune_nms.onnx");
     let minimap_model = dir.join("minimap_nms.onnx");
     let onnx_runtime = dir.join("onnxruntime.dll");
     let text_detection_model = dir.join("text_detection.onnx");
