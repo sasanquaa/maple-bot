@@ -11,6 +11,7 @@ use opencv::core::Size;
 use opencv::core::add_weighted_def;
 use opencv::core::{Mat, ToInputArray};
 use opencv::core::{MatTraitConst, Vector};
+use opencv::highgui::destroy_all_windows;
 use opencv::imgproc::cvt_color_def;
 use opencv::imgproc::line_def;
 use opencv::imgproc::rectangle;
@@ -70,13 +71,13 @@ pub fn debug_spinning_arrows(
     draw_contours_def(&mut mat, &contours, 0, Scalar::new(255.0, 0.0, 0.0, 0.0));
     circle_def(
         &mut mat,
-        spin_arrow_last_head + spin_arrow_region.tl(),
+        spin_arrow_last_head + spin_arrow_centroid,
         3,
         Scalar::new(0.0, 255.0, 0.0, 0.0),
     );
     circle_def(
         &mut mat,
-        spin_arrow_cur_head + spin_arrow_region.tl(),
+        spin_arrow_cur_head + spin_arrow_centroid,
         3,
         Scalar::new(255.0, 0.0, 0.0, 0.0),
     );
@@ -133,7 +134,9 @@ pub fn debug_mat(name: &str, mat: &impl MatTraitConst, wait: i32, bboxes: &[(Rec
         );
     }
     imshow(name, &mat).unwrap();
-    wait_key(wait).unwrap()
+    let result = wait_key(wait).unwrap();
+    destroy_all_windows().unwrap();
+    result
 }
 
 #[allow(unused)]

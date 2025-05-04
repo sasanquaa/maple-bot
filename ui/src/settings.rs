@@ -4,7 +4,7 @@ use backend::{
     CaptureMode, InputMethod, IntoEnumIterator, KeyBindingConfiguration, Settings as SettingsData,
 };
 #[cfg(debug_assertions)]
-use backend::{capture_image, infer_minimap, infer_rune, record_images};
+use backend::{capture_image, infer_minimap, infer_rune, record_images, test_spin_rune};
 use dioxus::prelude::*;
 
 use crate::{
@@ -169,6 +169,12 @@ pub fn Settings(
                                 let current = *recording.peek();
                                 record_images(!current).await;
                                 recording.set(!current);
+                            },
+                        }
+                        SettingsDebugButton {
+                            label: "Sandbox Spin Rune Test",
+                            on_click: move |_| async {
+                                test_spin_rune().await;
                             },
                         }
                     }

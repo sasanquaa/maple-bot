@@ -31,7 +31,7 @@ use opencv::{
     imgproc::{
         CC_STAT_AREA, CC_STAT_HEIGHT, CC_STAT_LEFT, CC_STAT_TOP, CC_STAT_WIDTH,
         CHAIN_APPROX_SIMPLE, COLOR_BGR2HSV_FULL, COLOR_BGRA2BGR, COLOR_BGRA2GRAY, COLOR_BGRA2RGB,
-        INTER_AREA, INTER_CUBIC, MORPH_RECT, RETR_EXTERNAL, THRESH_BINARY, THRESH_OTSU,
+        INTER_CUBIC, INTER_LINEAR, MORPH_RECT, RETR_EXTERNAL, THRESH_BINARY, THRESH_OTSU,
         TM_CCOEFF_NORMED, bounding_rect, connected_components_with_stats, cvt_color_def,
         dilate_def, find_contours_def, get_structuring_element_def, match_template, min_area_rect,
         resize, threshold,
@@ -44,6 +44,8 @@ use ort::{
 };
 use platforms::windows::KeyKind;
 
+#[cfg(debug_assertions)]
+use crate::debug::{debug_mat, debug_spinning_arrows};
 use crate::{array::Array, buff::BuffKind, mat::OwnedMat};
 
 const MAX_ARROWS: usize = 4;
@@ -56,9 +58,11 @@ struct SpinArrow {
     centroid: Point,
     /// The region of the spinning arrow relative to the whole image
     region: Rect,
-    /// The last arrow head to the centroid
+    /// The last arrow head relative to the centroid
     last_arrow_head: Option<Point>,
     final_arrow: Option<KeyKind>,
+    #[cfg(debug_assertions)]
+    is_spin_testing: bool,
 }
 
 /// The current arrows detection/calibration state
@@ -75,12 +79,19 @@ pub struct ArrowsCalibrating {
     spin_arrows_calibrated: bool,
     rune_region: Option<Rect>,
     normal_arrows: Option<Array<(Rect, KeyKind), MAX_ARROWS>>,
+    #[cfg(debug_assertions)]
+    is_spin_testing: bool,
 }
 
 impl ArrowsCalibrating {
     #[inline]
     pub fn has_spin_arrows(&self) -> bool {
         self.spin_arrows_calibrated && self.spin_arrows.is_some()
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn enable_spin_test(&mut self) {
+        self.is_spin_testing = true;
     }
 }
 
@@ -1020,7 +1031,7 @@ fn detect_rune_arrows_with_scores_regions(mat: &impl MatTraitConst) -> Vec<(Rect
     let mut vec = (0..mat_out.rows())
         // SAFETY: 0..outputs.rows() is within Mat bounds
         .map(|i| unsafe { mat_out.at_row_unchecked::<f32>(i).unwrap() })
-        .filter(|pred| pred[4] >= 0.3)
+        .filter(|pred| pred[4] >= 0.2)
         .map(|pred| {
             (
                 remap_from_yolo(pred, size, w_ratio, h_ratio, left, top),
@@ -1061,6 +1072,12 @@ fn detect_rune_arrows(
             calibrating.normal_arrows = Some(Array::from_iter(filtered));
         }
     }
+
+    #[cfg(debug_assertions)]
+    if calibrating.is_spin_testing {
+        calibrating.rune_region = Some(Rect::new(0, 0, mat.cols(), mat.rows()));
+    }
+
     let rune_region = calibrating
         .rune_region
         .ok_or(anyhow!("rune region not found"))?;
@@ -1086,7 +1103,9 @@ fn detect_rune_arrows(
     }
 
     // Reuse cached result if any
-    if let Some(arrows) = calibrating.normal_arrows.take() {
+    if let Some(arrows) = calibrating.normal_arrows {
+        calibrating.normal_arrows = None;
+
         if calibrating.spin_arrows.is_none() && arrows.len() == MAX_ARROWS {
             debug!(target: "rune", "reuse cached arrows result");
             return Ok(ArrowsState::Complete(extract_rune_arrows_to_slice(
@@ -1184,16 +1203,25 @@ fn calibrate_for_spin_arrows(
     calibrating: &mut ArrowsCalibrating,
 ) -> Result<()> {
     const SPIN_REGION_PAD: i32 = 16;
-    const SPIN_ARROW_MIN_AREA_THRESHOLD: i32 = 320;
-    const SPIN_ARROW_MAX_AREA_THRESHOLD: i32 = 370;
+    const SPIN_ARROW_AREA_PIXEL_THRESHOLD: i32 = 200;
+    const SPIN_ARROW_AREA_THRESHOLD: i32 = 520;
 
     // Extract the saturation channel and perform thresholding
     let mut rune_region_mat = to_hsv(&mat.roi(rune_region)?);
     unsafe {
         rune_region_mat.modify_inplace(|mat, mat_mut| {
             extract_channel(mat, mat_mut, 1).unwrap();
+            #[cfg(debug_assertions)]
+            if calibrating.is_spin_testing {
+                debug_mat("Rune Region Before Thresh", mat, 0, &[]);
+            }
             threshold(mat, mat_mut, 245.0, 255.0, THRESH_BINARY).unwrap();
         });
+    }
+
+    #[cfg(debug_assertions)]
+    if calibrating.is_spin_testing {
+        debug_mat("Rune Region", &rune_region_mat, 0, &[]);
     }
 
     let mut centroids = Mat::default();
@@ -1212,8 +1240,10 @@ fn calibrate_for_spin_arrows(
 
     for i in 1..labels_count {
         let area = *stats.at_2d::<i32>(i, CC_STAT_AREA).unwrap();
+        let w = *stats.at_2d::<i32>(i, CC_STAT_WIDTH).unwrap();
+        let h = *stats.at_2d::<i32>(i, CC_STAT_HEIGHT).unwrap();
         // Spinning arrow has bigger area than normal rune
-        if !(SPIN_ARROW_MIN_AREA_THRESHOLD..=SPIN_ARROW_MAX_AREA_THRESHOLD).contains(&area) {
+        if area < SPIN_ARROW_AREA_PIXEL_THRESHOLD && (w * h) < SPIN_ARROW_AREA_THRESHOLD {
             continue;
         }
         if spin_arrows.len() >= MAX_SPIN_ARROWS {
@@ -1230,8 +1260,6 @@ fn calibrate_for_spin_arrows(
 
         let x = *stats.at_2d::<i32>(i, CC_STAT_LEFT).unwrap();
         let y = *stats.at_2d::<i32>(i, CC_STAT_TOP).unwrap();
-        let w = *stats.at_2d::<i32>(i, CC_STAT_WIDTH).unwrap();
-        let h = *stats.at_2d::<i32>(i, CC_STAT_HEIGHT).unwrap();
 
         // Pad to ensure the region always contain the spin arrow even when it rotates
         // horitzontally or vertically
@@ -1247,11 +1275,23 @@ fn calibrate_for_spin_arrows(
             padded_h,
         );
 
+        #[cfg(debug_assertions)]
+        if calibrating.is_spin_testing {
+            debug_mat(
+                "Spin Arrow",
+                &rune_region_mat,
+                0,
+                &[(rect - rune_region.tl(), "Region")],
+            );
+        }
+
         spin_arrows.push(SpinArrow {
             centroid,
             region: rect,
             last_arrow_head: None,
             final_arrow: None,
+            #[cfg(debug_assertions)]
+            is_spin_testing: calibrating.is_spin_testing,
         });
     }
 
@@ -1264,17 +1304,19 @@ fn calibrate_for_spin_arrows(
 }
 
 fn detect_spin_arrow(mat: &impl MatTraitConst, spin_arrow: &mut SpinArrow) -> Result<()> {
-    const INTERPOLATE_FROM_CENTROID: f32 = 0.765;
+    const INTERPOLATE_FROM_CENTROID: f32 = 0.785;
     const SPIN_LAG_THRESHOLD: i32 = 25;
-    const SPIN_ARROW_HUE_THRESHOLD: u8 = 20;
+    const SPIN_ARROW_HUE_THRESHOLD: u8 = 30;
 
     // Extract spin arrow region
     let spin_arrow_mat = to_hsv(&mat.roi(spin_arrow.region)?);
+    let kernel = get_structuring_element_def(MORPH_RECT, Size::new(3, 3)).unwrap();
     let mut spin_arrow_thresh = Mat::default();
     unsafe {
         spin_arrow_thresh.modify_inplace(|mat, mat_mut| {
             extract_channel(&spin_arrow_mat, mat_mut, 1).unwrap();
-            threshold(mat, mat_mut, 240.0, 255.0, THRESH_BINARY).unwrap();
+            threshold(mat, mat_mut, 245.0, 255.0, THRESH_BINARY).unwrap();
+            dilate_def(mat, mat_mut, &kernel).unwrap();
         })
     }
 
@@ -1323,25 +1365,33 @@ fn detect_spin_arrow(mat: &impl MatTraitConst, spin_arrow: &mut SpinArrow) -> Re
         + centroid.to::<f32>().unwrap() * (1.0 - INTERPOLATE_FROM_CENTROID);
     let second_collinear = second_collinear.to::<i32>().unwrap();
 
-    // Check the hue to determine the arrow head
-    let first_hue = spin_arrow_mat
-        .at_pt::<Vec3b>(first_collinear)
-        .unwrap()
-        .first()
-        .copied()
-        .unwrap();
-    let second_hue = spin_arrow_mat
-        .at_pt::<Vec3b>(second_collinear)
-        .unwrap()
-        .first()
-        .copied()
-        .unwrap();
-    let collinear = if first_hue <= SPIN_ARROW_HUE_THRESHOLD {
-        first_collinear
-    } else if second_hue <= SPIN_ARROW_HUE_THRESHOLD {
-        second_collinear
+    let collinear = if let Some(last_collinear) = spin_arrow.last_arrow_head {
+        if (last_collinear - centroid).dot(first_collinear - centroid) > 0 {
+            first_collinear
+        } else {
+            second_collinear
+        }
     } else {
-        bail!("failed to determine spinning arrow head")
+        // Check the hue to determine the arrow head
+        let first_hue = spin_arrow_mat
+            .at_pt::<Vec3b>(first_collinear)
+            .unwrap()
+            .first()
+            .copied()
+            .unwrap();
+        let second_hue = spin_arrow_mat
+            .at_pt::<Vec3b>(second_collinear)
+            .unwrap()
+            .first()
+            .copied()
+            .unwrap();
+        if first_hue <= SPIN_ARROW_HUE_THRESHOLD {
+            first_collinear
+        } else if second_hue <= SPIN_ARROW_HUE_THRESHOLD {
+            second_collinear
+        } else {
+            bail!("failed to determine spinning arrow head")
+        }
     };
 
     if spin_arrow.last_arrow_head.is_none() {
@@ -1376,6 +1426,19 @@ fn detect_spin_arrow(mat: &impl MatTraitConst, spin_arrow: &mut SpinArrow) -> Re
         spin_arrow.final_arrow = Some(arrow);
     }
     spin_arrow.last_arrow_head = Some(collinear);
+
+    #[cfg(debug_assertions)]
+    if spin_arrow.is_spin_testing {
+        debug_spinning_arrows(
+            mat,
+            &contours,
+            spin_arrow.region,
+            prev_arrow_head,
+            cur_arrow_head,
+            spin_arrow.centroid,
+        );
+    }
+
     Ok(())
 }
 
@@ -1751,7 +1814,7 @@ fn preprocess_for_yolo(mat: &impl MatTraitConst) -> (Mat, f32, f32, i32, i32) {
 
     let size = mat.size().unwrap();
     let (w_ratio, h_ratio) = (640.0 / size.width as f32, 640.0 / size.height as f32);
-    let min_ratio = w_ratio.min(h_ratio).min(1.0);
+    let min_ratio = w_ratio.min(h_ratio);
 
     let w = (size.width as f32 * min_ratio).round();
     let h = (size.height as f32 * min_ratio).round();
@@ -1774,7 +1837,7 @@ fn preprocess_for_yolo(mat: &impl MatTraitConst) -> (Mat, f32, f32, i32, i32) {
                 Size::new(w as i32, h as i32),
                 0.0,
                 0.0,
-                INTER_AREA,
+                INTER_LINEAR,
             )
             .unwrap();
             copy_make_border(

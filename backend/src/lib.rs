@@ -97,6 +97,8 @@ enum Request {
     InferMinimap,
     #[cfg(debug_assertions)]
     RecordImages(bool),
+    #[cfg(debug_assertions)]
+    TestSpinRune,
 }
 
 /// Represents response to UI [`Request`]
@@ -124,6 +126,8 @@ enum Response {
     InferMinimap,
     #[cfg(debug_assertions)]
     RecordImages,
+    #[cfg(debug_assertions)]
+    TestSpinRune,
 }
 
 pub(crate) trait RequestHandler {
@@ -160,6 +164,9 @@ pub(crate) trait RequestHandler {
 
     #[cfg(debug_assertions)]
     fn on_record_images(&mut self, start: bool);
+
+    #[cfg(debug_assertions)]
+    fn on_test_spin_rune(&self);
 }
 
 #[derive(Debug, Clone)]
@@ -268,6 +275,11 @@ pub async fn record_images(start: bool) {
     )
 }
 
+#[cfg(debug_assertions)]
+pub async fn test_spin_rune() {
+    expect_unit_variant!(request(Request::TestSpinRune).await, Response::TestSpinRune)
+}
+
 pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
     if let Ok((request, sender)) = LazyLock::force(&REQUESTS).1.lock().unwrap().try_recv() {
         let result = match request {
@@ -322,6 +334,11 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
             Request::RecordImages(start) => {
                 handler.on_record_images(start);
                 Response::RecordImages
+            }
+            #[cfg(debug_assertions)]
+            Request::TestSpinRune => {
+                handler.on_test_spin_rune();
+                Response::TestSpinRune
             }
         };
         let _ = sender.send(result);
