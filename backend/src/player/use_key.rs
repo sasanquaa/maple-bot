@@ -331,12 +331,31 @@ fn populate_auto_mob_pathing_points(context: &Context, state: &mut PlayerState) 
     {
         return;
     }
-    // The idea is to pick a pathing point with a different y from existing points and with x
-    // within 70% on both sides from the middle of the minimap
-    let minimap_width = match context.minimap {
-        Minimap::Idle(idle) => idle.bbox.width,
+
+    let (minimap_width, platforms) = match context.minimap {
+        Minimap::Idle(idle) => (idle.bbox.width, idle.platforms),
         _ => unreachable!(),
     };
+    // Flip a coin, use platform as pathing point
+    if state.config.auto_mob_platforms_pathing && !platforms.is_empty() && rand::random_bool(0.5) {
+        let platform = platforms[rand::random_range(0..platforms.len())];
+        let xs = platform.xs();
+        let y = platform.y();
+        let point = Point::new(xs.start.midpoint(xs.end), y);
+        // Platform pathing point can bypass y restriction
+        if !state
+            .auto_mob_pathing_points
+            .iter()
+            .any(|pt| pt.y == point.y && pt.x == point.x)
+        {
+            state.auto_mob_pathing_points.push(point);
+            debug!(target: "player", "auto mob pathing point from platform {:?}", point);
+            return;
+        }
+    }
+
+    // The idea is to pick a pathing point with a different y from existing points and with x
+    // within 70% on both sides from the middle of the minimap
     let minimap_mid = minimap_width / 2;
     let minimap_threshold = (minimap_mid as f32 * 0.7) as i32;
     let pos = state.last_known_pos.unwrap();

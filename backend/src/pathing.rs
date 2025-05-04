@@ -32,6 +32,11 @@ pub struct PlatformWithNeighbors {
 
 impl PlatformWithNeighbors {
     #[inline]
+    pub fn xs(&self) -> Range<i32> {
+        self.inner.xs
+    }
+
+    #[inline]
     pub fn y(&self) -> i32 {
         self.inner.y
     }
