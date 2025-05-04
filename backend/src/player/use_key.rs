@@ -562,8 +562,8 @@ mod tests {
         let mut player = Player::UseKey(UseKey {
             stage: UseKeyStage::ChangingDirection(Timeout {
                 started: true,
-                current: 2,
-                total: 2,
+                current: 3,
+                total: 3,
             }),
             ..use_key
         });
