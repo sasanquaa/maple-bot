@@ -291,4 +291,72 @@ mod tests {
         update_up_jumping_context(&context, &mut state, moving);
         let _ = context.keys;
     }
+
+    #[test]
+    fn up_jump_mage() {
+        let pos = Point::new(10, 10);
+        let dest = Point::new(10, 20);
+        let mut moving = Moving {
+            pos,
+            dest,
+            ..Default::default()
+        };
+        let mut state = PlayerState::default();
+        // Setting up jump key the same as teleport key
+        // means that the mage doesn't have a dedicated up jump like up arrow + space
+        state.config.upjump_key = Some(KeyKind::Shift);
+        state.config.teleport_key = Some(KeyKind::Shift);
+        state.config.jump_key = KeyKind::Space;
+        state.last_known_pos = Some(pos);
+
+        let mut keys = MockKeySender::new();
+        keys.expect_send_down()
+            .withf(|key| *key == KeyKind::Up)
+            .once()
+            .returning(|_| Ok(()));
+        keys.expect_send()
+            .withf(|key| *key == KeyKind::Space)
+            .once()
+            .returning(|_| Ok(()));
+        let mut context = Context::new(None, None);
+        context.keys = Box::new(keys);
+
+        // Start by sending Up and Space
+        update_up_jumping_context(&context, &mut state, moving);
+        let _ = context.keys;
+
+        // Change to started
+        moving.timeout.started = true;
+
+        // Not sending any key before delay
+        let mut keys = MockKeySender::new();
+        moving.timeout.total = 4; // Before SPAM_DELAY
+        keys.expect_send().never();
+        context.keys = Box::new(keys);
+        assert_matches!(
+            update_up_jumping_context(&context, &mut state, moving),
+            Player::UpJumping(Moving {
+                completed: false,
+                ..
+            })
+        );
+        let _ = context.keys;
+
+        // Send key after delay
+        let mut keys = MockKeySender::new();
+        moving.timeout.total = 7; // At SPAM_DELAY
+        keys.expect_send()
+            .withf(|key| *key == KeyKind::Shift)
+            .once()
+            .returning(|_| Ok(()));
+        context.keys = Box::new(keys);
+        assert_matches!(
+            update_up_jumping_context(&context, &mut state, moving),
+            Player::UpJumping(Moving {
+                completed: true,
+                ..
+            })
+        );
+        let _ = context.keys;
+    }
 }
