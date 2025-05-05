@@ -332,18 +332,21 @@ fn detect_mobs(
             .expect("unable to build mob detection session")
     });
 
-    /// This function approximates the delta (dx, dy) that the player needs to move
-    /// in relative to the minimap coordinate in order to reach the mob. And returns
-    /// the exact mob coordinate on the minimap.
+    /// Approximates the mob coordinate on screen to mob coordinate on minimap.
     ///
-    /// Note: It is not that accurate but that is that and this is this
+    /// This function tries to approximate the delta (dx, dy) that the player needs to move
+    /// in relative to the minimap coordinate in order to reach the mob. Returns the mob
+    /// coordinate on the minimap by adding the delta to the player position.
+    ///
+    /// Note: It is not that accurate but that is that and this is this. Hey it seems better than
+    /// the previous alchemy.
     #[inline]
     fn to_minimap_coordinate(
-        bbox: Rect,
-        minimap: Rect,
-        bound: Rect,
+        mob_bbox: Rect,
+        minimap_bbox: Rect,
+        mobbing_bound: Rect,
         player: Point,
-        size: Size,
+        mat_size: Size,
     ) -> Option<Point> {
         // These numbers are for scaling dx/dy on the screen to dx/dy on the minimap.
         // They are approximated in 1280x720 resolution by going from one point to another point
@@ -360,21 +363,21 @@ fn detect_mobs(
         // it is centered again on the player. And when the player is near edges of the map,
         // this function is just plain wrong. For better accuracy, detecting where the player is
         // on the screen and use that as the basis is required.
-        let x_mob_mid = (bbox.x + bbox.width / 2) as f32;
-        let x_screen_delta = size.width as f32 / 2.0 - x_mob_mid;
+        let x_mob_mid = (mob_bbox.x + mob_bbox.width / 2) as f32;
+        let x_screen_delta = mat_size.width as f32 / 2.0 - x_mob_mid;
         let x_minimap_delta = (x_screen_delta * X_SCALE) as i32;
 
         // For dy, if the whole mob bounding box is above the screen mid point, then the
         // box top edge is used to increase the dy distance as to help the player move up. The same
         // goes for moving down. If the bounding box overlaps with the screen mid point, the box
         // mid point is used as to to help the player stay in place.
-        let y_screen_mid = size.height / 2;
-        let y_mob = if bbox.y + bbox.height < y_screen_mid {
-            bbox.y
-        } else if bbox.y > y_screen_mid {
-            bbox.y + bbox.height
+        let y_screen_mid = mat_size.height / 2;
+        let y_mob = if mob_bbox.y + mob_bbox.height < y_screen_mid {
+            mob_bbox.y
+        } else if mob_bbox.y > y_screen_mid {
+            mob_bbox.y + mob_bbox.height
         } else {
-            bbox.y + bbox.height / 2
+            mob_bbox.y + mob_bbox.height / 2
         };
         let y_screen_delta = y_screen_mid - y_mob;
         let y_minimap_delta = (y_screen_delta as f32 * Y_SCALE) as i32;
@@ -382,20 +385,19 @@ fn detect_mobs(
         let point_x = if x_minimap_delta > 0 {
             (player.x - x_minimap_delta).max(0)
         } else {
-            (player.x - x_minimap_delta).min(minimap.width)
+            (player.x - x_minimap_delta).min(minimap_bbox.width)
         };
-        let point_y = player.y + y_minimap_delta;
+        let point_y = (player.y + y_minimap_delta).max(0).min(minimap_bbox.height);
         // Minus the y by minimap height to make it relative to the minimap top edge
-        let point = Point::new(point_x, minimap.height - point_y);
-        if point.y < 0
-            || point.x < bound.x
-            || point.x > bound.x + bound.width
-            || point.y < bound.y
-            || point.y > bound.y + bound.height
+        let point = Point::new(point_x, minimap_bbox.height - point_y);
+        if point.x < mobbing_bound.x
+            || point.x > mobbing_bound.x + mobbing_bound.width
+            || point.y < mobbing_bound.y
+            || point.y > mobbing_bound.y + mobbing_bound.height
         {
             None
         } else {
-            debug!(target: "mob", "found mob {point:?} in bound {bound:?}");
+            debug!(target: "mob", "found mob {point:?} in bound {mobbing_bound:?}");
             Some(point)
         }
     }
