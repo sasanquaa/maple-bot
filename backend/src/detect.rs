@@ -569,14 +569,27 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
     unsafe {
         // SAFETY: threshold can be called in place.
         minimap_thresh.modify_inplace(|mat, mat_mut| {
-            threshold(mat, mat_mut, 150.0, 255.0, THRESH_BINARY).unwrap()
+            threshold(mat, mat_mut, border_threshold as f64, 255.0, THRESH_BINARY).unwrap()
         });
     }
 
-    // Scan the 4 borders and crop
-    let contour_bbox = bounding_rect(&minimap_thresh).unwrap();
-    let minimap = mat.roi(contour_bbox + minimap_bbox.tl()).unwrap();
+    // Find the contours with largest area
+    let mut contours = Vector::<Vector<Point>>::new();
+    find_contours_def(
+        &minimap_thresh,
+        &mut contours,
+        RETR_EXTERNAL,
+        CHAIN_APPROX_SIMPLE,
+    )
+    .unwrap();
+    let contour_bbox = contours
+        .into_iter()
+        .map(|contour| bounding_rect(&contour).unwrap())
+        .max_by_key(|bbox| bbox.area())
+        .ok_or(anyhow!("minimap contours is empty"))?;
 
+    // Scan the 4 borders and crop
+    let minimap = mat.roi(contour_bbox + minimap_bbox.tl()).unwrap();
     let top = scan_border(&minimap, Border::Top, border_threshold);
     let bottom = scan_border(&minimap, Border::Bottom, border_threshold);
     let left = scan_border(&minimap, Border::Left, border_threshold);
