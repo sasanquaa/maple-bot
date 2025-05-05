@@ -146,12 +146,14 @@ fn ensure_reachable_auto_mob_y(
         populate_auto_mob_reachable_y(context, state);
     }
     debug_assert!(!state.auto_mob_reachable_y_map.is_empty());
+
     let y = state
         .auto_mob_reachable_y_map
         .keys()
         .copied()
         .min_by_key(|y| (mob_pos.y - y).abs())
         .filter(|y| (mob_pos.y - y).abs() <= AUTO_MOB_REACHABLE_Y_THRESHOLD);
+
     let point = Point::new(mob_pos.x, y.unwrap_or(mob_pos.y));
     let intermediates = if state.config.auto_mob_platforms_pathing {
         match context.minimap {
@@ -168,6 +170,7 @@ fn ensure_reachable_auto_mob_y(
         None
     };
     debug!(target: "player", "auto mob reachable y {:?} {:?}", y, state.auto_mob_reachable_y_map);
+
     state.auto_mob_reachable_y = y;
     state.last_destinations = intermediates
         .map(|intermediates| {

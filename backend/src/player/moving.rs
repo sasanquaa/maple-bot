@@ -25,7 +25,7 @@ pub const MOVE_TIMEOUT: u32 = 5;
 
 /// Maximum number of times [`Player::Moving`] state can be transitioned to
 /// without changing position
-const UNSTUCK_TRACKER_THRESHOLD: u32 = 10;
+const UNSTUCK_TRACKER_THRESHOLD: u32 = 7;
 
 /// Minimium y distance required to perform a fall and double jump/adjusting
 pub const ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD: i32 = 8;
@@ -290,8 +290,8 @@ pub fn update_moving_context(
 fn abort_action_on_state_repeat(next: Player, state: &mut PlayerState) -> Player {
     const HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 20;
     const VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 8;
-    const AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 6;
-    const AUTO_MOB_VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 5;
+    const AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 4;
+    const AUTO_MOB_VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 3;
 
     if let Some(last_movement) = state.last_movement {
         let count_map = if state.has_priority_action() {

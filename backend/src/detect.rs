@@ -332,66 +332,72 @@ fn detect_mobs(
             .expect("unable to build mob detection session")
     });
 
-    /// This function approximates the delta (dx, dy) that the player needs to move
-    /// in relative to the minimap coordinate in order to reach the mob. And returns
-    /// the exact mob coordinate on the minimap.
+    /// Approximates the mob coordinate on screen to mob coordinate on minimap.
     ///
-    /// Note: It is not that accurate but that is that and this is this
+    /// This function tries to approximate the delta (dx, dy) that the player needs to move
+    /// in relative to the minimap coordinate in order to reach the mob. Returns the mob
+    /// coordinate on the minimap by adding the delta to the player position.
+    ///
+    /// Note: It is not that accurate but that is that and this is this. Hey it seems better than
+    /// the previous alchemy.
     #[inline]
     fn to_minimap_coordinate(
-        bbox: Rect,
-        minimap: Rect,
-        bound: Rect,
+        mob_bbox: Rect,
+        minimap_bbox: Rect,
+        mobbing_bound: Rect,
         player: Point,
-        size: Size,
+        mat_size: Size,
     ) -> Option<Point> {
-        // this is the linear transformation from screen coordinate
-        // to minimap coordinate that I cooked up using alchemy
-        // Is it correct? I don't know, tried others but only this sort of work
-        // [ A1 A2 ]
-        // [ B1 B2 ]
-        const A1: f32 = 0.065_789_476;
-        const A2: f32 = 0.120_621_44;
-        const A: Point2f = Point2f::new(A1, A2);
-        const B1: f32 = 0.0;
-        const B2: f32 = 0.072_635_14;
-        const B: Point2f = Point2f::new(B1, B2);
+        // These numbers are for scaling dx/dy on the screen to dx/dy on the minimap.
+        // They are approximated in 1280x720 resolution by going from one point to another point
+        // from the middle of the screen with both points visible on screen before traveling. Take
+        // the distance traveled on the minimap and divide it by half of the resolution
+        // (e.g. tralveled minimap x / 640). Whether it is correct or not, time will tell.
+        const X_SCALE: f32 = 0.059_375;
+        const Y_SCALE: f32 = 0.036_111;
 
-        // the main idea is to calculate the offset of the detected mob
-        // from the middle of screen and use that distance as dx to move the player
-        // for dy, it is calculated as offset from the bottom of the screen
-        // minus some number
-        // point_x is relative to middle of the screen
-        let point_x = (bbox.x + bbox.width / 2) as f32;
-        let point_x = size.width as f32 / 2.0 - point_x;
-        let is_left = point_x > 0.0;
-        let point_x = Point2f::new(point_x.abs(), 0.0);
+        // The main idea is to calculate the offset of the detected mob from the middle of screen
+        // and use that distance as dx/dy to move the player. This assumes the player will
+        // most of the time be near or very close to the middle of the screen. This is already
+        // not accurate in the sense that the camera will have a bit of lag before
+        // it is centered again on the player. And when the player is near edges of the map,
+        // this function is just plain wrong. For better accuracy, detecting where the player is
+        // on the screen and use that as the basis is required.
+        let x_mob_mid = (mob_bbox.x + mob_bbox.width / 2) as f32;
+        let x_screen_delta = mat_size.width as f32 / 2.0 - x_mob_mid;
+        let x_minimap_delta = (x_screen_delta * X_SCALE) as i32;
 
-        // point_y is relative to top of the screen
-        let point_y = (bbox.y + bbox.height) as f32;
-        let point_y = Point2f::new(0.0, size.height as f32 - point_y);
-
-        // transform to minimap coordinate
-        // 20.0 is a based random number
-        let point = Point2f::new(point_x.dot(A), point_y.dot(B) - 20.0)
-            .to::<i32>()
-            .unwrap();
-        let point = if is_left {
-            Point::new(player.x - point.x, player.y + point.y)
+        // For dy, if the whole mob bounding box is above the screen mid point, then the
+        // box top edge is used to increase the dy distance as to help the player move up. The same
+        // goes for moving down. If the bounding box overlaps with the screen mid point, the box
+        // mid point is used as to to help the player stay in place.
+        let y_screen_mid = mat_size.height / 2;
+        let y_mob = if mob_bbox.y + mob_bbox.height < y_screen_mid {
+            mob_bbox.y
+        } else if mob_bbox.y > y_screen_mid {
+            mob_bbox.y + mob_bbox.height
         } else {
-            Point::new(player.x + point.x, player.y + point.y)
+            mob_bbox.y + mob_bbox.height / 2
         };
-        let point = Point::new(point.x, minimap.height - point.y);
-        if point.x < 0
-            || point.y < 0
-            || point.x < bound.x
-            || point.x > bound.x + bound.width
-            || point.y < bound.y
-            || point.y > bound.y + bound.height
+        let y_screen_delta = y_screen_mid - y_mob;
+        let y_minimap_delta = (y_screen_delta as f32 * Y_SCALE) as i32;
+
+        let point_x = if x_minimap_delta > 0 {
+            (player.x - x_minimap_delta).max(0)
+        } else {
+            (player.x - x_minimap_delta).min(minimap_bbox.width)
+        };
+        let point_y = (player.y + y_minimap_delta).max(0).min(minimap_bbox.height);
+        // Minus the y by minimap height to make it relative to the minimap top edge
+        let point = Point::new(point_x, minimap_bbox.height - point_y);
+        if point.x < mobbing_bound.x
+            || point.x > mobbing_bound.x + mobbing_bound.width
+            || point.y < mobbing_bound.y
+            || point.y > mobbing_bound.y + mobbing_bound.height
         {
             None
         } else {
-            debug!(target: "mob", "found mob {point:?} in bound {bound:?}");
+            debug!(target: "mob", "found mob {point:?} in bound {mobbing_bound:?}");
             Some(point)
         }
     }

@@ -90,6 +90,36 @@ pub fn debug_spinning_arrows(
     debug_mat("Spin Arrow", &mat, 0, &[]);
 }
 
+// TODO: This debug doesn't really show correct image
+#[allow(unused)]
+pub fn debug_auto_mob_coordinates(
+    mat: &impl MatTraitConst,
+    minimap: Rect,
+    mobs: &[Rect],
+    points: &[Point],
+) {
+    let mut mat = mat.try_clone().unwrap();
+    for point in points {
+        circle_def(
+            &mut mat,
+            minimap.tl() + *point,
+            2,
+            Scalar::new(0.0, 255.0, 0.0, 0.0),
+        )
+        .unwrap();
+    }
+    debug_mat(
+        "Auto Mobbing",
+        &mat,
+        0,
+        mobs.iter()
+            .map(|mob| (*mob, "Mob"))
+            .chain([(minimap, "Minimap")])
+            .collect::<Vec<_>>()
+            .as_slice(),
+    );
+}
+
 #[allow(unused)]
 pub fn debug_pathing_points(mat: &impl MatTraitConst, minimap: Rect, points: &[Point]) {
     let mut mat = mat.roi(minimap).unwrap().clone_pointee();
