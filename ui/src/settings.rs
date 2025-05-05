@@ -315,8 +315,12 @@ fn SettingsCaptureHandleSelect(settings_view: Memo<SettingsData>) -> Element {
     const HANDLE_NOT_SELECTED: usize = usize::MAX;
     const HANDLES_REFRESH: usize = usize::MAX - 1;
 
-    let mut capture_handles = use_resource(|| async { query_capture_handles().await });
     let mut selected_capture_handle = use_signal(|| None);
+    let mut capture_handles = use_resource(move || async move {
+        let (names, selected) = query_capture_handles().await;
+        selected_capture_handle.set(selected);
+        names
+    });
 
     use_effect(move || {
         let index = selected_capture_handle();
@@ -346,7 +350,6 @@ fn SettingsCaptureHandleSelect(settings_view: Memo<SettingsData>) -> Element {
                 if i == HANDLE_NOT_SELECTED {
                     selected_capture_handle.set(None);
                 } else if i == HANDLES_REFRESH {
-                    selected_capture_handle.set(None);
                     capture_handles.restart();
                 } else {
                     selected_capture_handle.set(Some(i));

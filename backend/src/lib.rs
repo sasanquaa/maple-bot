@@ -120,7 +120,7 @@ enum Response {
     MinimapFrame(Option<(Vec<u8>, usize, usize)>),
     MinimapPlatformsBound(Option<Bound>),
     KeyReceiver(broadcast::Receiver<KeyBinding>),
-    QueryCaptureHandles(Vec<String>),
+    QueryCaptureHandles((Vec<String>, Option<usize>)),
     SelectCaptureHandle,
     #[cfg(debug_assertions)]
     CaptureImage,
@@ -157,7 +157,7 @@ pub(crate) trait RequestHandler {
 
     fn on_key_receiver(&self) -> broadcast::Receiver<KeyBinding>;
 
-    fn on_query_capture_handles(&mut self) -> Vec<String>;
+    fn on_query_capture_handles(&mut self) -> (Vec<String>, Option<usize>);
 
     fn on_select_capture_handle(&mut self, index: Option<usize>);
 
@@ -257,7 +257,7 @@ pub async fn key_receiver() -> broadcast::Receiver<KeyBinding> {
     expect_value_variant!(request(Request::KeyReceiver).await, Response::KeyReceiver)
 }
 
-pub async fn query_capture_handles() -> Vec<String> {
+pub async fn query_capture_handles() -> (Vec<String>, Option<usize>) {
     expect_value_variant!(
         request(Request::QueryCaptureHandles).await,
         Response::QueryCaptureHandles

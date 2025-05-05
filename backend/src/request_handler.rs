@@ -225,7 +225,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
                 }
             } else if matches!(settings.input_method, InputMethod::Default) {
                 self.context.keys.set_method(KeySenderMethod::Default(
-                    self.context.handle,
+                    self.selected_capture_handle.unwrap_or(self.context.handle),
                     KeyInputKind::Fixed,
                 ));
             }
@@ -294,24 +294,43 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         self.key_sender.subscribe()
     }
 
-    fn on_query_capture_handles(&mut self) -> Vec<String> {
+    fn on_query_capture_handles(&mut self) -> (Vec<String>, Option<usize>) {
         *self.capture_handles = query_capture_handles();
-        self.capture_handles
+
+        let names = self
+            .capture_handles
             .iter()
             .map(|(name, _)| name)
             .cloned()
-            .collect()
+            .collect::<Vec<_>>();
+        let selected = if let Some(selected_handle) = self.selected_capture_handle {
+            self.capture_handles
+                .iter()
+                .enumerate()
+                .find(|(_, (_, handle))| handle == selected_handle)
+                .map(|(i, _)| i)
+        } else {
+            None
+        };
+        (names, selected)
     }
 
     fn on_select_capture_handle(&mut self, index: Option<usize>) {
         let handle = index
             .and_then(|index| self.capture_handles.get(index))
             .map(|(_, handle)| *handle);
+
         *self.selected_capture_handle = handle;
         self.image_capture.set_mode(
             handle.unwrap_or(self.context.handle),
             self.settings.capture_mode,
         );
+        if !matches!(self.settings.input_method, InputMethod::Rpc) {
+            self.context.keys.set_method(KeySenderMethod::Default(
+                handle.unwrap_or(self.context.handle),
+                KeyInputKind::Fixed,
+            ));
+        }
     }
 
     #[cfg(debug_assertions)]

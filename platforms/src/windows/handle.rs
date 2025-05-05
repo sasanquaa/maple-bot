@@ -41,13 +41,13 @@ impl HandleCell {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum HandleKind {
     Fixed(HWND),
     Dynamic(&'static str),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Handle {
     kind: HandleKind,
 }
