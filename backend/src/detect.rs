@@ -586,13 +586,21 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
         .into_iter()
         .map(|contour| bounding_rect(&contour).unwrap())
         .max_by_key(|bbox| bbox.area())
-        .ok_or(anyhow!("minimap contours is empty"))?;
+        .ok_or(anyhow!("minimap contours is empty"))?
+        + minimap_bbox.tl();
+    let intersection = (contour_bbox & minimap_bbox).area() as f32;
+    let union = (contour_bbox | minimap_bbox).area() as f32;
+    let iou = intersection / union;
+    if iou < 0.8 {
+        bail!("wrong minimap likely caused by detection during map switching")
+    }
 
     // Scan the 4 borders and crop
-    let minimap = mat.roi(contour_bbox + minimap_bbox.tl()).unwrap();
+    let minimap = mat.roi(contour_bbox).unwrap();
     let top = scan_border(&minimap, Border::Top, border_threshold);
     let bottom = scan_border(&minimap, Border::Bottom, border_threshold);
-    let left = scan_border(&minimap, Border::Left, border_threshold);
+    // Left side gets a discount because it is darker than the other three borders
+    let left = scan_border(&minimap, Border::Left, border_threshold.saturating_sub(10));
     let right = scan_border(&minimap, Border::Right, border_threshold);
 
     debug!(target: "minimap", "crop white border left {left}, top {top}, bottom {bottom}, right {right}");
@@ -605,7 +613,7 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
     );
     debug!(target: "minimap", "bbox {bbox:?}");
 
-    Ok(bbox + contour_bbox.tl() + minimap_bbox.tl())
+    Ok(bbox + contour_bbox.tl())
 }
 
 fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Result<Vec<Rect>> {
