@@ -39,7 +39,7 @@ pub fn update_unstucking_context(
     };
 
     if !timeout.started {
-        if state.unstuck_consecutive_counter + 1 < GAMBA_MODE_COUNT && has_settings.is_none() {
+        if state.unstuck_transitioned_counter + 1 < GAMBA_MODE_COUNT && has_settings.is_none() {
             let Update::Ok(has_settings) =
                 update_detection_task(context, 0, &mut state.unstuck_task, move |detector| {
                     Ok(detector.detect_esc_settings())
@@ -50,17 +50,17 @@ pub fn update_unstucking_context(
             return Player::Unstucking(timeout, Some(has_settings));
         }
         debug_assert!(
-            state.unstuck_consecutive_counter + 1 >= GAMBA_MODE_COUNT || has_settings.is_some()
+            state.unstuck_transitioned_counter + 1 >= GAMBA_MODE_COUNT || has_settings.is_some()
         );
-        if state.unstuck_consecutive_counter < GAMBA_MODE_COUNT {
-            state.unstuck_consecutive_counter += 1;
+        if state.unstuck_transitioned_counter < GAMBA_MODE_COUNT {
+            state.unstuck_transitioned_counter += 1;
         }
     }
 
     let pos = state
         .last_known_pos
         .map(|pos| Point::new(pos.x, idle.bbox.height - pos.y));
-    let is_gamba_mode = pos.is_none() || state.unstuck_consecutive_counter >= GAMBA_MODE_COUNT;
+    let is_gamba_mode = pos.is_none() || state.unstuck_transitioned_counter >= GAMBA_MODE_COUNT;
 
     update_with_timeout(
         timeout,

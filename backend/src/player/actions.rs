@@ -214,7 +214,6 @@ pub fn on_action_state_mut(
                     ..
                 }) => {
                     state.unstuck_counter = 0;
-                    state.unstuck_consecutive_counter = 0;
                 }
                 PlayerAction::Key(PlayerActionKey { position: None, .. }) => (),
             }

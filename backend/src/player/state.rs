@@ -167,10 +167,10 @@ pub struct PlayerState {
     ///
     /// Resets when a limit is reached (for unstucking) or position did change.
     pub(super) unstuck_counter: u32,
-    /// The number of consecutive times player transtioned to [`Player::Unstucking`]
+    /// The number of times player transtioned to [`Player::Unstucking`]
     ///
-    /// Resets when position did change
-    pub(super) unstuck_consecutive_counter: u32,
+    /// Resets when threshold reached or position changed
+    pub(super) unstuck_transitioned_counter: u32,
     /// Unstuck task for detecting settings when mis-pressing ESC key
     pub(super) unstuck_task: Option<Task<Result<bool>>>,
     /// Rune solving task
@@ -441,7 +441,7 @@ impl PlayerState {
         let last_known_pos = self.last_known_pos.unwrap_or(pos);
         if last_known_pos != pos {
             self.unstuck_counter = 0;
-            self.unstuck_consecutive_counter = 0;
+            self.unstuck_transitioned_counter = 0;
             self.is_stationary_timeout = Timeout::default();
         }
 
