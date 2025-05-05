@@ -12,7 +12,8 @@ fn main() {
     let tomb = dir.join("tomb_ideal_ratio.png");
     let elite_boss_bar_1 = dir.join("elite_boss_bar_1_ideal_ratio.png");
     let elite_boss_bar_2 = dir.join("elite_boss_bar_2_ideal_ratio.png");
-    let player = dir.join("player_ideal_ratio.png");
+    // let player = dir.join("player_ideal_ratio.png");
+    let player = dir.join("player_classic.png");
     let player_stranger = dir.join("player_stranger_ideal_ratio.png");
     let player_guildie = dir.join("player_guildie_ideal_ratio.png");
     let player_friend = dir.join("player_friend_ideal_ratio.png");

@@ -138,8 +138,8 @@ fn update_detecting_context(context: &Context, state: &mut MinimapState) -> Mini
         update_detection_task(context, 2000, &mut state.minimap_task, move |detector| {
             let bbox = detector.detect_minimap(MINIMAP_BORDER_WHITENESS_THRESHOLD)?;
             let size = bbox.width.min(bbox.height) as usize;
-            let tl = anchor_at(detector.mat(), bbox.tl(), size, 1)?;
-            let br = anchor_at(detector.mat(), bbox.br(), size, -1)?;
+            let tl = anchor_at(detector.mat(), bbox.tl(), size, -1)?;
+            let br = anchor_at(detector.mat(), bbox.br(), size, 1)?;
             let anchors = Anchors { tl, br };
             debug!(target: "minimap", "anchor points: {:?}", anchors);
             Ok((anchors, bbox))
