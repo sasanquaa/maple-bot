@@ -9,7 +9,7 @@ use std::{
     },
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Ok, Result, anyhow, bail};
 use dyn_clone::DynClone;
 use log::{debug, info};
 #[cfg(test)]
@@ -31,10 +31,10 @@ use opencv::{
     imgproc::{
         CC_STAT_AREA, CC_STAT_HEIGHT, CC_STAT_LEFT, CC_STAT_TOP, CC_STAT_WIDTH,
         CHAIN_APPROX_SIMPLE, COLOR_BGR2HSV_FULL, COLOR_BGRA2BGR, COLOR_BGRA2GRAY, COLOR_BGRA2RGB,
-        INTER_CUBIC, INTER_LINEAR, MORPH_RECT, RETR_EXTERNAL, THRESH_BINARY, THRESH_OTSU,
-        TM_CCOEFF_NORMED, bounding_rect, connected_components_with_stats, cvt_color_def,
-        dilate_def, find_contours_def, get_structuring_element_def, match_template, min_area_rect,
-        resize, threshold,
+        INTER_CUBIC, INTER_LINEAR, MORPH_RECT, RETR_EXTERNAL, THRESH_BINARY, TM_CCOEFF_NORMED,
+        bounding_rect, connected_components_with_stats, cvt_color_def, dilate_def,
+        find_contours_def, get_structuring_element_def, match_template, min_area_rect, resize,
+        threshold,
     },
     traits::OpenCVIntoExternContainer,
 };
@@ -484,120 +484,115 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
             .and_then(|b| b.commit_from_memory(include_bytes!(env!("MINIMAP_MODEL"))))
             .expect("unable to build minimap detection session")
     });
-    // expands out a few pixels to include the whole white border for thresholding
-    // after yolo detection
-    fn expand_bbox(bbox: &Rect) -> Rect {
-        let count = (bbox.width.max(bbox.height) as f32 * 0.008).ceil() as i32;
-        debug!(target: "minimap", "expand border by {count}");
-        let x = (bbox.x - count).max(0);
-        let y = (bbox.y - count).max(0);
-        let x_size = (bbox.x - x) * 2;
-        let y_size = (bbox.y - y) * 2;
-        Rect::new(x, y, bbox.width + x_size, bbox.height + y_size)
+
+    enum Border {
+        Top,
+        Bottom,
+        Left,
+        Right,
+    }
+
+    fn scan_border(minimap: &impl MatTraitConst, border: Border, border_threshold: u8) -> i32 {
+        let mut counts = HashMap::<u32, u32>::new();
+        match border {
+            Border::Top | Border::Bottom => {
+                let col_start = (minimap.cols() as f32 * 0.1) as i32 - 1;
+                let col_end = minimap.cols() - col_start;
+                for col in col_start..col_end {
+                    let mut count = 0;
+                    for row in 0..minimap.rows() {
+                        let row = if matches!(border, Border::Bottom) {
+                            minimap.rows() - row - 1
+                        } else {
+                            row
+                        };
+                        let pixel = minimap.at_2d::<Vec4b>(row, col).unwrap();
+                        if pixel.into_iter().all(|v| v >= border_threshold) {
+                            count += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    counts.entry(count).and_modify(|c| *c += 1).or_insert(1);
+                }
+            }
+            Border::Left | Border::Right => {
+                let row_start = (minimap.rows() as f32 * 0.1) as i32 - 1;
+                let row_end = minimap.rows() - row_start;
+                for row in row_start..row_end {
+                    let mut count = 0;
+                    for col in 0..minimap.cols() {
+                        let col = if matches!(border, Border::Right) {
+                            minimap.cols() - col - 1
+                        } else {
+                            col
+                        };
+                        let pixel = minimap.at_2d::<Vec4b>(row, col).unwrap();
+                        if pixel.into_iter().all(|v| v >= border_threshold) {
+                            count += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    counts.entry(count).and_modify(|c| *c += 1).or_insert(1);
+                }
+            }
+        };
+        counts
+            .into_iter()
+            .max_by_key(|e| e.1)
+            .map(|e| e.0)
+            .unwrap_or_default() as i32
     }
 
     let size = mat.size().unwrap();
-    let (preprocessed, w_ratio, h_ratio, left, top) = preprocess_for_yolo(mat);
+    let (mat_in, w_ratio, h_ratio, left, top) = preprocess_for_yolo(mat);
     let result = MINIMAP_MODEL
-        .run([norm_rgb_to_input_value(&preprocessed)])
+        .run([norm_rgb_to_input_value(&mat_in)])
         .unwrap();
-    let result = from_output_value(&result);
-    let pred = (0..result.rows())
+    let mat_out = from_output_value(&result);
+    let pred = (0..mat_out.rows())
         // SAFETY: 0..result.rows() is within Mat bounds
-        .map(|i| unsafe { result.at_row_unchecked::<f32>(i).unwrap() })
+        .map(|i| unsafe { mat_out.at_row_unchecked::<f32>(i).unwrap() })
         .max_by(|&a, &b| {
             // a and b have shapes [bbox(4) + class(1)]
             a[4].total_cmp(&b[4])
+        })
+        .filter(|pred| pred[4] >= 0.7)
+        .ok_or(anyhow!("minimap detection failed"))?;
+
+    debug!(target: "minimap", "yolo detection: {pred:?}");
+
+    // Extract the thresholded minimap
+    let minimap_bbox = remap_from_yolo(pred, size, w_ratio, h_ratio, left, top);
+    let mut minimap_thresh = to_grayscale(&mat.roi(minimap_bbox).unwrap(), true);
+    unsafe {
+        // SAFETY: threshold can be called in place.
+        minimap_thresh.modify_inplace(|mat, mat_mut| {
+            threshold(mat, mat_mut, 150.0, 255.0, THRESH_BINARY).unwrap()
         });
-    let bbox = pred.and_then(|pred| {
-        debug!(target: "minimap", "yolo detection: {pred:?}");
-        if pred[4] < 0.5 {
-            None
-        } else {
-            Some(remap_from_yolo(pred, size, w_ratio, h_ratio, left, top))
-        }
-    });
-    let minimap = bbox.map(|bbox| {
-        let bbox = expand_bbox(&bbox);
-        let mut minimap = to_grayscale(&mat.roi(bbox).unwrap(), true);
-        unsafe {
-            // SAFETY: threshold can be called in place.
-            minimap.modify_inplace(|mat, mat_mut| {
-                threshold(mat, mat_mut, 0.0, 255.0, THRESH_OTSU).unwrap()
-            });
-        }
-        minimap
-    });
-    // get only the outer contours
-    let contours = minimap.map(|mat| {
-        let mut vec = Vector::<Vector<Point>>::new();
-        find_contours_def(&mat, &mut vec, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE).unwrap();
-        vec
-    });
-    // pick the contour with maximum area
-    let contour = contours.and_then(|vec| {
-        debug!(target: "minimap", "contours detection: {vec:?}");
-        vec.into_iter()
-            .map(|contour| bounding_rect(&contour).unwrap())
-            .max_by(|a, b| a.area().cmp(&b.area()))
-    });
-    let contour = contour.and_then(|contour| {
-        let bbox = expand_bbox(&bbox.unwrap());
-        let contour = Rect::from_points(contour.tl() + bbox.tl(), contour.br() + bbox.tl());
-        debug!(
-            target: "minimap",
-            "yolo bbox and contour bbox areas: {:?} {:?}",
-            bbox.area(),
-            contour.area()
-        );
-        // the detected contour should be contained inside the detected yolo minimap when expanded
-        // <some value that i will probably change again the future> is a
-        // fixed value for ensuring the contour is tight to the minimap white border
-        if (bbox & contour) == contour && (bbox.area() - contour.area()) >= 1100 {
-            Some(contour)
-        } else {
-            None
-        }
-    });
-    // crop the white border
-    let crop = contour.and_then(|bound| {
-        // Offset in by 10% to avoid the round border
-        // and use top border as basis
-        let range = (bound.width as f32 * 0.1) as i32;
-        let start = bound.x + range;
-        let end = bound.x + bound.width - range + 1;
-        // Count for the number of pixels larger than threshold
-        // starting from bound's y. Use the maximum count as the number of pixels to crop.
-        let mut counts = HashMap::<i32, i32>::new();
-        for col in start..end {
-            let mut count = 0;
-            for row in bound.y..(bound.y + bound.height) {
-                if mat
-                    .at_2d::<Vec4b>(row, col)
-                    .unwrap()
-                    .iter()
-                    .all(|v| *v >= border_threshold)
-                {
-                    count += 1;
-                } else {
-                    break;
-                }
-            }
-            counts.entry(count).and_modify(|c| *c += 1).or_insert(1);
-        }
-        debug!(target: "minimap", "border pixel count {:?}", counts);
-        counts.into_iter().max_by(|a, b| a.1.cmp(&b.1)).map(|e| e.0)
-    });
-    crop.map(|count| {
-        let contour = contour.unwrap();
-        Rect::new(
-            contour.x + count,
-            contour.y + count,
-            contour.width - count * 2,
-            contour.height - count * 2,
-        )
-    })
-    .ok_or(anyhow!("minimap not found"))
+    }
+
+    // Scan the 4 borders and crop
+    let contour_bbox = bounding_rect(&minimap_thresh).unwrap();
+    let minimap = mat.roi(contour_bbox + minimap_bbox.tl()).unwrap();
+
+    let top = scan_border(&minimap, Border::Top, border_threshold);
+    let bottom = scan_border(&minimap, Border::Bottom, border_threshold);
+    let left = scan_border(&minimap, Border::Left, border_threshold);
+    let right = scan_border(&minimap, Border::Right, border_threshold);
+
+    debug!(target: "minimap", "crop white border left {left}, top {top}, bottom {bottom}, right {right}");
+
+    let bbox = Rect::new(
+        left,
+        top,
+        minimap.cols() - right - left,
+        minimap.rows() - bottom - top,
+    );
+    debug!(target: "minimap", "bbox {bbox:?}");
+
+    Ok(bbox + contour_bbox.tl() + minimap_bbox.tl())
 }
 
 fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Result<Vec<Rect>> {
