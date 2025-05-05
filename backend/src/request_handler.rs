@@ -13,7 +13,7 @@ use opencv::{
     imgcodecs::{IMREAD_COLOR, imdecode},
     imgproc::{COLOR_BGR2BGRA, cvt_color_def},
 };
-use platforms::windows::{KeyInputKind, KeyKind, KeyReceiver};
+use platforms::windows::{Handle, KeyInputKind, KeyKind, KeyReceiver, query_capture_handles};
 #[cfg(debug_assertions)]
 use rand::distr::{Alphanumeric, SampleString};
 use tokio::sync::broadcast;
@@ -53,6 +53,8 @@ pub struct DefaultRequestHandler<'a> {
     pub key_sender: &'a broadcast::Sender<KeyBinding>,
     pub key_receiver: &'a mut KeyReceiver,
     pub image_capture: &'a mut ImageCapture,
+    pub capture_handles: &'a mut Vec<(String, Handle)>,
+    pub selected_capture_handle: &'a mut Option<Handle>,
     #[cfg(debug_assertions)]
     pub recording_images_id: &'a mut Option<String>,
     #[cfg(debug_assertions)]
@@ -205,29 +207,36 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_update_settings(&mut self, settings: Settings) {
-        self.image_capture
-            .set_mode(self.context.handle, settings.capture_mode);
+        if settings.capture_mode != self.settings.capture_mode {
+            self.image_capture.set_mode(
+                self.selected_capture_handle.unwrap_or(self.context.handle),
+                settings.capture_mode,
+            );
+        }
 
-        if let ImageCaptureKind::BitBltArea(capture) = self.image_capture.kind() {
-            *self.key_receiver = KeyReceiver::new(capture.handle(), KeyInputKind::Foreground);
-            if matches!(settings.input_method, InputMethod::Default) {
+        if settings.input_method != self.settings.input_method {
+            if let ImageCaptureKind::BitBltArea(capture) = self.image_capture.kind() {
+                *self.key_receiver = KeyReceiver::new(capture.handle(), KeyInputKind::Foreground);
+                if matches!(settings.input_method, InputMethod::Default) {
+                    self.context.keys.set_method(KeySenderMethod::Default(
+                        capture.handle(),
+                        KeyInputKind::Foreground,
+                    ));
+                }
+            } else if matches!(settings.input_method, InputMethod::Default) {
                 self.context.keys.set_method(KeySenderMethod::Default(
-                    capture.handle(),
-                    KeyInputKind::Foreground,
+                    self.context.handle,
+                    KeyInputKind::Fixed,
                 ));
             }
-        } else if matches!(settings.input_method, InputMethod::Default) {
-            self.context.keys.set_method(KeySenderMethod::Default(
-                self.context.handle,
-                KeyInputKind::Fixed,
-            ));
+
+            if let InputMethod::Rpc = settings.input_method {
+                self.context.keys.set_method(KeySenderMethod::Rpc(
+                    settings.input_method_rpc_server_url.clone(),
+                ));
+            }
         }
 
-        if let InputMethod::Rpc = settings.input_method {
-            self.context.keys.set_method(KeySenderMethod::Rpc(
-                settings.input_method_rpc_server_url.clone(),
-            ));
-        }
         *self.settings = settings;
         self.buff_states.iter_mut().for_each(|state| {
             state.update_enabled_state(self.config, self.settings);
@@ -283,6 +292,26 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     #[inline]
     fn on_key_receiver(&self) -> broadcast::Receiver<KeyBinding> {
         self.key_sender.subscribe()
+    }
+
+    fn on_query_capture_handles(&mut self) -> Vec<String> {
+        *self.capture_handles = query_capture_handles();
+        self.capture_handles
+            .iter()
+            .map(|(name, _)| name)
+            .cloned()
+            .collect()
+    }
+
+    fn on_select_capture_handle(&mut self, index: Option<usize>) {
+        let handle = index
+            .and_then(|index| self.capture_handles.get(index))
+            .map(|(_, handle)| *handle);
+        *self.selected_capture_handle = handle;
+        self.image_capture.set_mode(
+            handle.unwrap_or(self.context.handle),
+            self.settings.capture_mode,
+        );
     }
 
     #[cfg(debug_assertions)]

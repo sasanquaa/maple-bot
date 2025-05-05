@@ -2,6 +2,7 @@ use std::{fmt::Display, str::FromStr};
 
 use backend::{
     CaptureMode, InputMethod, IntoEnumIterator, KeyBindingConfiguration, Settings as SettingsData,
+    query_capture_handles, select_capture_handle,
 };
 #[cfg(debug_assertions)]
 use backend::{capture_image, infer_minimap, infer_rune, record_images, test_spin_rune};
@@ -11,13 +12,18 @@ use crate::{
     AppMessage,
     input::{Checkbox, LabeledInput},
     key::KeyBindingConfigurationInput,
-    select::EnumSelect,
+    select::{EnumSelect, Select},
 };
 
 const TOGGLE_ACTIONS: &str = "Start/Stop Actions";
 const PLATFORM_START: &str = "Mark Platform Start";
 const PLATFORM_END: &str = "Mark Platform End";
 const PLATFORM_ADD: &str = "Add Platform";
+
+const SELECT_DIV_CLASS: &str = "flex items-center space-x-4";
+const SELECT_LABEL_CLASS: &str =
+    "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400";
+const SELECT_CLASS: &str = "w-44 h-7 text-xs text-gray-700 text-ellipsis border border-gray-300 rounded outline-none disabled:cursor-not-allowed disabled:text-gray-400";
 
 #[component]
 pub fn Settings(
@@ -83,6 +89,7 @@ pub fn Settings(
                     disabled: false,
                     selected: settings_view().capture_mode,
                 }
+                SettingsCaptureHandleSelect { settings_view }
                 SettingsInputMethodSelect { app_coroutine, settings_view }
                 KeyBindingConfigurationInput {
                     label: TOGGLE_ACTIONS,
@@ -292,13 +299,60 @@ fn SettingsEnumSelect<T: 'static + Clone + PartialEq + Display + FromStr + IntoE
         EnumSelect {
             label,
             disabled,
-            div_class: "flex items-center space-x-4",
-            label_class: "text-xs text-gray-700 flex-1 inline-block data-[disabled]:text-gray-400",
-            select_class: "w-44 h-7 text-xs text-gray-700 text-ellipsis border border-gray-300 rounded outline-none disabled:cursor-not-allowed disabled:text-gray-400",
+            div_class: SELECT_DIV_CLASS,
+            label_class: SELECT_LABEL_CLASS,
+            select_class: SELECT_CLASS,
             on_select: move |variant: T| {
                 on_select(variant);
             },
             selected,
+        }
+    }
+}
+
+#[component]
+fn SettingsCaptureHandleSelect(settings_view: Memo<SettingsData>) -> Element {
+    const HANDLE_NOT_SELECTED: usize = usize::MAX;
+    const HANDLES_REFRESH: usize = usize::MAX - 1;
+
+    let mut capture_handles = use_resource(|| async { query_capture_handles().await });
+    let mut selected_capture_handle = use_signal(|| None);
+
+    use_effect(move || {
+        let index = selected_capture_handle();
+        spawn(async move {
+            select_capture_handle(index).await;
+        });
+    });
+
+    rsx! {
+        Select::<usize> {
+            label: "Capture Handle",
+            div_class: SELECT_DIV_CLASS,
+            label_class: SELECT_LABEL_CLASS,
+            select_class: SELECT_CLASS,
+            options: match capture_handles() {
+                Some(names) => {
+                    [(HANDLE_NOT_SELECTED, "Default".to_string())]
+                        .into_iter()
+                        .chain(names.into_iter().enumerate())
+                        .chain([(HANDLES_REFRESH, "Refresh handles...".to_string())])
+                        .collect()
+                }
+                None => vec![],
+            },
+            disabled: matches!(settings_view().capture_mode, CaptureMode::BitBltArea),
+            on_select: move |(_, i)| {
+                if i == HANDLE_NOT_SELECTED {
+                    selected_capture_handle.set(None);
+                } else if i == HANDLES_REFRESH {
+                    selected_capture_handle.set(None);
+                    capture_handles.restart();
+                } else {
+                    selected_capture_handle.set(Some(i));
+                }
+            },
+            selected: selected_capture_handle().unwrap_or(HANDLE_NOT_SELECTED),
         }
     }
 }
