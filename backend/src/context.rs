@@ -167,6 +167,8 @@ fn update_loop() {
     let key_sender = broadcast::channel::<KeyBinding>(1).0; // Callback to UI
     let mut key_receiver = KeyReceiver::new(handle, KeyInputKind::Fixed);
 
+    let mut capture_handles = Vec::<(String, Handle)>::new();
+    let mut selected_capture_handle = None;
     let mut image_capture = ImageCapture::new(handle, settings.capture_mode);
     if let ImageCaptureKind::BitBltArea(capture) = image_capture.kind() {
         key_receiver = KeyReceiver::new(capture.handle(), KeyInputKind::Foreground);
@@ -245,6 +247,8 @@ fn update_loop() {
             key_sender: &key_sender,
             key_receiver: &mut key_receiver,
             image_capture: &mut image_capture,
+            capture_handles: &mut capture_handles,
+            selected_capture_handle: &mut selected_capture_handle,
             #[cfg(debug_assertions)]
             recording_images_id: &mut recording_images_id,
             #[cfg(debug_assertions)]

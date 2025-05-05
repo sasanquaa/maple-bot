@@ -89,6 +89,8 @@ enum Request {
     MinimapFrame,
     MinimapPlatformsBound,
     KeyReceiver,
+    QueryCaptureHandles,
+    SelectCaptureHandle(Option<usize>),
     #[cfg(debug_assertions)]
     CaptureImage(bool),
     #[cfg(debug_assertions)]
@@ -118,6 +120,8 @@ enum Response {
     MinimapFrame(Option<(Vec<u8>, usize, usize)>),
     MinimapPlatformsBound(Option<Bound>),
     KeyReceiver(broadcast::Receiver<KeyBinding>),
+    QueryCaptureHandles((Vec<String>, Option<usize>)),
+    SelectCaptureHandle,
     #[cfg(debug_assertions)]
     CaptureImage,
     #[cfg(debug_assertions)]
@@ -152,6 +156,10 @@ pub(crate) trait RequestHandler {
     fn on_minimap_platforms_bound(&self) -> Option<Bound>;
 
     fn on_key_receiver(&self) -> broadcast::Receiver<KeyBinding>;
+
+    fn on_query_capture_handles(&mut self) -> (Vec<String>, Option<usize>);
+
+    fn on_select_capture_handle(&mut self, index: Option<usize>);
 
     #[cfg(debug_assertions)]
     fn on_capture_image(&self, is_grayscale: bool);
@@ -249,6 +257,20 @@ pub async fn key_receiver() -> broadcast::Receiver<KeyBinding> {
     expect_value_variant!(request(Request::KeyReceiver).await, Response::KeyReceiver)
 }
 
+pub async fn query_capture_handles() -> (Vec<String>, Option<usize>) {
+    expect_value_variant!(
+        request(Request::QueryCaptureHandles).await,
+        Response::QueryCaptureHandles
+    )
+}
+
+pub async fn select_capture_handle(index: Option<usize>) {
+    expect_unit_variant!(
+        request(Request::SelectCaptureHandle(index)).await,
+        Response::SelectCaptureHandle
+    )
+}
+
 #[cfg(debug_assertions)]
 pub async fn capture_image(is_grayscale: bool) {
     expect_unit_variant!(
@@ -315,6 +337,13 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
                 Response::MinimapPlatformsBound(handler.on_minimap_platforms_bound())
             }
             Request::KeyReceiver => Response::KeyReceiver(handler.on_key_receiver()),
+            Request::QueryCaptureHandles => {
+                Response::QueryCaptureHandles(handler.on_query_capture_handles())
+            }
+            Request::SelectCaptureHandle(index) => {
+                handler.on_select_capture_handle(index);
+                Response::SelectCaptureHandle
+            }
             #[cfg(debug_assertions)]
             Request::CaptureImage(is_grayscale) => {
                 handler.on_capture_image(is_grayscale);
