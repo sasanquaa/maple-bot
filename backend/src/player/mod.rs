@@ -73,7 +73,7 @@ pub enum Player {
     /// Performs an up jump action
     UpJumping(Moving),
     /// Performs a falling action
-    Falling(Moving, Point),
+    Falling(Moving, Point, bool),
     /// Unstucks when inside non-detecting position or because of [`PlayerState::unstuck_counter`]
     Unstucking(Timeout, Option<bool>),
     /// Stalls for time and return to [`Player::Idle`] or [`PlayerState::stalling_timeout_state`]
@@ -96,7 +96,7 @@ impl Player {
             Player::Grappling(moving)
             | Player::Jumping(moving)
             | Player::UpJumping(moving)
-            | Player::Falling(moving, _) => moving.completed,
+            | Player::Falling(moving, _, _) => moving.completed,
             Player::SolvingRune(_)
             | Player::CashShopThenExit(_, _)
             | Player::Unstucking(_, _)
@@ -216,7 +216,7 @@ fn update_non_positional_context(
         | Player::Grappling(_)
         | Player::Jumping(_)
         | Player::UpJumping(_)
-        | Player::Falling(_, _) => None,
+        | Player::Falling(_, _, _) => None,
     }
 }
 
@@ -240,7 +240,9 @@ fn update_positional_context(
         Player::Grappling(moving) => update_grappling_context(context, state, moving),
         Player::UpJumping(moving) => update_up_jumping_context(context, state, moving),
         Player::Jumping(moving) => update_jumping_context(context, state, moving),
-        Player::Falling(moving, anchor) => update_falling_context(context, state, moving, anchor),
+        Player::Falling(moving, anchor, timeout_on_complete) => {
+            update_falling_context(context, state, moving, anchor, timeout_on_complete)
+        }
         Player::UseKey(_)
         | Player::Unstucking(_, _)
         | Player::Stalling(_, _)

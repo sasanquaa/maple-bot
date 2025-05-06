@@ -363,9 +363,21 @@ fn detect_mobs(
         // it is centered again on the player. And when the player is near edges of the map,
         // this function is just plain wrong. For better accuracy, detecting where the player is
         // on the screen and use that as the basis is required.
-        let x_mob_mid = (mob_bbox.x + mob_bbox.width / 2) as f32;
-        let x_screen_delta = mat_size.width as f32 / 2.0 - x_mob_mid;
-        let x_minimap_delta = (x_screen_delta * X_SCALE) as i32;
+        //
+        // For dx, if the whole mob bounding box is to the right the screen mid point, then the
+        // box right edge is used to increase the dx distance as to reach potential platform. The
+        // same goes for the left side. If the bounding box overlaps with the screen mid point, the
+        // box mid point is used as to to help the player stay in place.
+        let x_screen_mid = mat_size.width / 2;
+        let x_mob = if mob_bbox.x > x_screen_mid {
+            mob_bbox.x + mob_bbox.width
+        } else if mob_bbox.x + mob_bbox.width < x_screen_mid {
+            mob_bbox.x
+        } else {
+            mob_bbox.x + mob_bbox.width / 2
+        };
+        let x_screen_delta = x_screen_mid - x_mob;
+        let x_minimap_delta = (x_screen_delta as f32 * X_SCALE) as i32;
 
         // For dy, if the whole mob bounding box is above the screen mid point, then the
         // box top edge is used to increase the dy distance as to help the player move up. The same

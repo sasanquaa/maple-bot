@@ -48,7 +48,7 @@ pub fn update_adjusting_context(
             && !is_intermediate
             && state.is_stationary
         {
-            return Player::Falling(moving.pos(cur_pos), cur_pos);
+            return Player::Falling(moving.pos(cur_pos), cur_pos, false);
         }
         state.last_movement = Some(LastMovement::Adjusting);
     }

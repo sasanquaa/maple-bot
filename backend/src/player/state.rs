@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, range::Range};
 
 use anyhow::Result;
 use log::debug;
@@ -26,9 +26,20 @@ use crate::{
 pub const MAX_RUNE_FAILED_COUNT: u32 = 8;
 
 /// The number of times a reachable y must successfuly ensures the player moves to that exact y
+///
 /// Once the count is reached, it is considered "solidified" and guaranteed the reachable y is
 /// always a y that has platform(s)
 pub const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 4;
+
+/// The number of times an auto-mob position has made the player aborted the auto-mob action
+///
+/// If the count is reached, subsequent auto-mob position falling within the x range will be ignored
+pub const AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT: u32 = 3;
+
+/// The range an ignored auto-mob x position spans
+///
+/// If an auto-mob x position is 5, then the range is [2, 8]
+pub const AUTO_MOB_IGNORE_XS_RANGE: u32 = 3;
 
 /// The maximum of number points for auto mobbing to periodically move to
 pub const AUTO_MOB_MAX_PATHING_POINTS: usize = 3;
@@ -158,6 +169,10 @@ pub struct PlayerState {
     pub(super) auto_mob_reachable_y_map: HashMap<i32, u32>,
     /// The matched reachable y and also the key in [`Self::auto_mob_reachable_y_map`]
     pub(super) auto_mob_reachable_y: Option<i32>,
+    /// Tracks a map of reachable y to x ranges that can be ignored
+    ///
+    /// This will help auto-mobbing ignores positions that are known to be not reachable
+    pub(super) auto_mob_ignore_xs_map: HashMap<i32, (Range<i32>, u32)>,
     /// Stores points to periodically move to when auto mobbing
     ///
     /// Helps changing location for detecting more mobs. It is populated in terminal state of

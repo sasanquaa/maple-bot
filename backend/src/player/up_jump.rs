@@ -8,32 +8,34 @@ use crate::{
     player::{
         MOVE_TIMEOUT, PlayerAction,
         actions::{on_action, on_auto_mob_use_key_action},
-        adjust::ADJUSTING_MEDIUM_THRESHOLD,
         state::LastMovement,
         timeout::{ChangeAxis, update_moving_axis_context},
     },
 };
 
+const SPAM_DELAY: u32 = 7;
+const STOP_UP_KEY_TICK: u32 = 3;
+const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
+const UP_JUMPED_THRESHOLD: i32 = 5;
+
 /// Updates the [`Player::UpJumping`] contextual state
 ///
 /// This state can only be transitioned via [`Player::Moving`] when the
-/// player has reached the destination x-wise.
-///
-/// This state will:
-/// - Abort the action if the player is near a portal
-/// - Perform an up jump
+/// player has reached the destination x-wise. Before performing an up jump, it will check for
+/// stationary state and whether the player is currently near a portal. If the player is near
+/// a portal, this action is aborted. The up jump action is made to be adapted for various classes
+/// that has different up jump key combination.
 pub fn update_up_jumping_context(
     context: &Context,
     state: &mut PlayerState,
     moving: Moving,
 ) -> Player {
-    const SPAM_DELAY: u32 = 7;
-    const STOP_UP_KEY_TICK: u32 = 3;
-    const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
-    const UP_JUMPED_THRESHOLD: i32 = 5;
-
     let cur_pos = state.last_known_pos.unwrap();
     if !moving.timeout.started {
+        // Wait until stationary before doing an up jump
+        if !state.is_stationary {
+            return Player::UpJumping(moving.pos(cur_pos));
+        }
         if let Minimap::Idle(idle) = context.minimap {
             for portal in idle.portals {
                 if portal.x <= cur_pos.x
@@ -51,7 +53,6 @@ pub fn update_up_jumping_context(
     }
 
     let y_changed = (cur_pos.y - moving.pos.y).abs();
-    let (x_distance, _) = moving.x_distance_direction_from(true, cur_pos);
     let up_jump_key = state.config.upjump_key;
     let jump_key = state.config.jump_key;
     let has_teleport_key = state.config.teleport_key.is_some();
@@ -107,11 +108,6 @@ pub fn update_up_jumping_context(
                     // cancel early to avoid stucking to a rope
                     if up_jump_key.is_some() && moving.timeout.total == STOP_UP_KEY_TICK {
                         let _ = context.keys.send_up(KeyKind::Up);
-                    }
-                    if x_distance >= ADJUSTING_MEDIUM_THRESHOLD
-                        && moving.timeout.current >= MOVE_TIMEOUT
-                    {
-                        moving = moving.timeout_current(TIMEOUT);
                     }
                 }
             }

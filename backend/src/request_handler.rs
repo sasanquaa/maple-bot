@@ -207,11 +207,11 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_update_settings(&mut self, settings: Settings) {
+        let handle_or_default = self.selected_capture_handle.unwrap_or(self.context.handle);
+
         if settings.capture_mode != self.settings.capture_mode {
-            self.image_capture.set_mode(
-                self.selected_capture_handle.unwrap_or(self.context.handle),
-                settings.capture_mode,
-            );
+            self.image_capture
+                .set_mode(handle_or_default, settings.capture_mode);
         }
 
         if settings.input_method != self.settings.input_method {
@@ -225,7 +225,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
                 }
             } else if matches!(settings.input_method, InputMethod::Default) {
                 self.context.keys.set_method(KeySenderMethod::Default(
-                    self.selected_capture_handle.unwrap_or(self.context.handle),
+                    handle_or_default,
                     KeyInputKind::Fixed,
                 ));
             }
@@ -319,17 +319,17 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         let handle = index
             .and_then(|index| self.capture_handles.get(index))
             .map(|(_, handle)| *handle);
+        let handle_or_default = handle.unwrap_or(self.context.handle);
 
         *self.selected_capture_handle = handle;
-        self.image_capture.set_mode(
-            handle.unwrap_or(self.context.handle),
-            self.settings.capture_mode,
-        );
+        self.image_capture
+            .set_mode(handle_or_default, self.settings.capture_mode);
         if !matches!(self.settings.input_method, InputMethod::Rpc) {
             self.context.keys.set_method(KeySenderMethod::Default(
-                handle.unwrap_or(self.context.handle),
+                handle_or_default,
                 KeyInputKind::Fixed,
             ));
+            *self.key_receiver = KeyReceiver::new(handle_or_default, KeyInputKind::Fixed);
         }
     }
 

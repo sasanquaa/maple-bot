@@ -253,7 +253,7 @@ pub fn update_moving_context(
         // this probably won't work if the platforms are far apart,
         // which is weird to begin with and only happen in very rare place (e.g. Haven)
         (false, _, y, d) if y < 0 && d >= state.falling_threshold(is_intermediate) => {
-            abort_action_on_state_repeat(Player::Falling(moving, cur_pos), state)
+            abort_action_on_state_repeat(Player::Falling(moving, cur_pos, false), state)
         }
         _ => {
             debug!(
