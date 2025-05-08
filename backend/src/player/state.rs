@@ -29,23 +29,23 @@ pub const MAX_RUNE_FAILED_COUNT: u32 = 8;
 ///
 /// Once the count is reached, it is considered "solidified" and guaranteed the reachable y is
 /// always a y that has platform(s)
-pub const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 4;
+const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 4;
 
 /// The number of times an auto-mob position has made the player aborted the auto-mob action
 ///
 /// If the count is reached, subsequent auto-mob position falling within the x range will be ignored
-pub const AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT: u32 = 3;
+const AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT: u32 = 3;
 
 /// The range an ignored auto-mob x position spans
 ///
 /// If an auto-mob x position is 5, then the range is [3, 7]
-pub const AUTO_MOB_IGNORE_XS_RANGE: i32 = 2;
+const AUTO_MOB_IGNORE_XS_RANGE: i32 = 2;
 
 /// The maximum of number points for auto mobbing to periodically move to
-pub const AUTO_MOB_MAX_PATHING_POINTS: usize = 3;
+const AUTO_MOB_MAX_PATHING_POINTS: usize = 3;
 
 /// The acceptable y range above and below the detected mob position when matched with a reachable y
-pub const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 10;
+const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 10;
 
 const HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 20;
 
