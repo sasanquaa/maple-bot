@@ -38,8 +38,8 @@ const AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT: u32 = 3;
 
 /// The range an ignored auto-mob x position spans
 ///
-/// If an auto-mob x position is 5, then the range is [3, 7]
-const AUTO_MOB_IGNORE_XS_RANGE: i32 = 2;
+/// If an auto-mob x position is 5, then the range is [2, 8]
+const AUTO_MOB_IGNORE_XS_RANGE: i32 = 3;
 
 /// The maximum of number points for auto mobbing to periodically move to
 const AUTO_MOB_MAX_PATHING_POINTS: usize = 3;
@@ -606,9 +606,9 @@ impl PlayerState {
         }
     }
 
-    pub(super) fn auto_mob_track_ignore_xs(&mut self) {
-        // Note: this tracking currently does not clamp to bound
-
+    // TODO: This tracking currently does not clamp to bound, should clamp to non-negative
+    // TODO: Populate using gap between platforms by using user inputted platforms
+    pub(super) fn auto_mob_track_ignore_xs(&mut self, is_aborted: bool) {
         if !self.has_auto_mob_action_only() {
             return;
         }
@@ -630,36 +630,64 @@ impl PlayerState {
             .auto_mob_ignore_xs_map
             .entry(y)
             .or_insert_with(|| vec![auto_mob_ignore_xs_range_value(x)]);
-        if let Some((_, count)) = vec.iter_mut().find(|(xs, _)| xs.contains(&x)) {
-            if *count < AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT {
-                *count += 1;
-            } else {
-                // Merge overlapping adjacent ranges with the same y
-                let mut merged = Vec::<(Range<i32>, u32)>::new();
-                vec.sort_by_key(|(r, _)| r.start);
 
-                for (range, count) in vec.drain(..) {
-                    if let Some((last_range, last_count)) = merged.last_mut() {
-                        // Checking range start less than last_range end is sufficient because
-                        // these ranges are previously sorted and are never empty
-                        let overlapping = range.start < last_range.end;
-                        let should_merge = (*last_count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT)
-                            || (count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT);
+        if is_aborted
+            && vec.len() >= 2
+            && vec.iter().array_chunks::<2>().any(
+                |[(first_range, first_count), (second_range, second_count)]| {
+                    second_range.start < first_range.end
+                        && (*first_count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT
+                            || *second_count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT)
+                },
+            )
+        {
+            // Merge overlapping adjacent ranges with the same y
+            let mut merged = Vec::<(Range<i32>, u32)>::new();
+            for (range, count) in vec.drain(..) {
+                if let Some((last_range, last_count)) = merged.last_mut() {
+                    // Checking range start less than last_range end is sufficient because
+                    // these ranges are previously sorted and are never empty
+                    let overlapping = range.start < last_range.end;
+                    let should_merge = (*last_count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT)
+                        || (count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT);
 
-                        if overlapping && should_merge {
-                            last_range.end = last_range.end.max(range.end);
-                            continue;
-                        }
+                    if overlapping && should_merge {
+                        last_range.end = last_range.end.max(range.end);
+                        *last_count = AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT;
+                        continue;
                     }
-                    merged.push((range, count));
                 }
+                merged.push((range, count));
+            }
+            *vec = merged;
+            debug!(target: "player", "auto mob merged ignore xs {y} = {vec:?}");
+        }
 
-                *vec = merged;
+        if let Some((i, (_, count))) = vec
+            .iter_mut()
+            .enumerate()
+            .find(|(_, (xs, _))| xs.contains(&x))
+        {
+            if *count < AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT {
+                *count = if is_aborted {
+                    count.saturating_add(1)
+                } else {
+                    count.saturating_sub(1)
+                };
+                if !is_aborted && *count == 0 {
+                    vec.remove(i);
+                }
+                debug!(target: "player", "auto mob updated ignore xs {:?}", self.auto_mob_ignore_xs_map);
             }
             return;
         }
-        let (range, count) = auto_mob_ignore_xs_range_value(x);
-        vec.push((range, count + 1));
+
+        if is_aborted {
+            let (range, count) = auto_mob_ignore_xs_range_value(x);
+            vec.push((range, count + 1));
+            vec.sort_by_key(|(r, _)| r.start);
+            debug!(target: "player", "auto mob new ignore xs {:?}", self.auto_mob_ignore_xs_map);
+        }
     }
 
     /// Gets the falling minimum `y` distance threshold
@@ -999,7 +1027,7 @@ mod tests {
             ..Default::default()
         };
 
-        player.auto_mob_track_ignore_xs();
+        player.auto_mob_track_ignore_xs(true);
 
         let ranges = player.auto_mob_ignore_xs_map.get(&y).unwrap();
         assert_eq!(ranges.len(), 1); // Should be merged
@@ -1022,7 +1050,7 @@ mod tests {
             ],
         )]);
 
-        player.auto_mob_track_ignore_xs();
+        player.auto_mob_track_ignore_xs(true);
 
         let ranges = player.auto_mob_ignore_xs_map.get(&y).unwrap();
         assert_eq!(ranges.len(), 2); // Should remain unmerged but incremented

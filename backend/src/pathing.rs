@@ -129,8 +129,8 @@ pub fn find_points_with(
         .iter()
         .map(|platform| (platform.inner, *platform))
         .collect::<HashMap<_, _>>();
-    let from_platform = find_platform(&platforms, from, jump_threshold)?;
-    let to_platform = find_platform(&platforms, to, jump_threshold)?;
+    let from_platform = find_platform(&platforms, from, None)?; // Clamp `from` to nearest platform
+    let to_platform = find_platform(&platforms, to, Some(jump_threshold))?;
     let mut came_from = HashMap::<Platform, Platform>::new();
     let mut visiting = BinaryHeap::new();
     let mut score = HashMap::<Platform, u32>::new();
@@ -260,13 +260,15 @@ fn points_from(
 fn find_platform(
     platforms: &HashMap<Platform, PlatformWithNeighbors>,
     point: Point,
-    jump_threshold: i32,
+    jump_threshold: Option<i32>,
 ) -> Option<Platform> {
     platforms
         .keys()
         .filter(|platform| platform.xs.contains(&point.x))
         .min_by_key(|platform| (platform.y - point.y).abs())
-        .filter(|platform| (platform.y - point.y).abs() <= jump_threshold)
+        .filter(|platform| {
+            jump_threshold.is_none() || (platform.y - point.y).abs() <= jump_threshold.unwrap()
+        })
         .copied()
 }
 

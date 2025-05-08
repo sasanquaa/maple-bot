@@ -17,6 +17,7 @@ const SPAM_DELAY: u32 = 7;
 const STOP_UP_KEY_TICK: u32 = 3;
 const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
 const UP_JUMPED_THRESHOLD: i32 = 5;
+const TELEPORT_UP_JUMP_THRESHOLD: i32 = 14;
 
 /// Updates the [`Player::UpJumping`] contextual state
 ///
@@ -31,9 +32,15 @@ pub fn update_up_jumping_context(
     moving: Moving,
 ) -> Player {
     let cur_pos = state.last_known_pos.unwrap();
+    let (y_distance, _) = moving.y_distance_direction_from(true, cur_pos);
+    let up_jump_key = state.config.upjump_key;
+    let has_teleport_key = state.config.teleport_key.is_some();
+
     if !moving.timeout.started {
         // Wait until stationary before doing an up jump
-        if !state.is_stationary {
+        if !can_mage_skip_stationary_or_jump_key(up_jump_key, has_teleport_key, y_distance)
+            && !state.is_stationary
+        {
             return Player::UpJumping(moving.pos(cur_pos));
         }
         if let Minimap::Idle(idle) = context.minimap {
@@ -53,9 +60,7 @@ pub fn update_up_jumping_context(
     }
 
     let y_changed = (cur_pos.y - moving.pos.y).abs();
-    let up_jump_key = state.config.upjump_key;
     let jump_key = state.config.jump_key;
-    let has_teleport_key = state.config.teleport_key.is_some();
 
     update_moving_axis_context(
         moving,
@@ -69,7 +74,15 @@ pub fn update_up_jumping_context(
             match (up_jump_key, has_teleport_key) {
                 // This is a generic class, a mage or a Demon Slayer
                 (None, _) | (Some(_), true) | (Some(KeyKind::Up), false) => {
-                    let _ = context.keys.send(jump_key);
+                    // This if is for mage. It means if the player is a mage and the y distance
+                    // is less than `TELEPORT_UP_JUMP_THRESHOLD`, do not send jump key.
+                    if !can_mage_skip_stationary_or_jump_key(
+                        up_jump_key,
+                        has_teleport_key,
+                        y_distance,
+                    ) {
+                        let _ = context.keys.send(jump_key);
+                    }
                 }
                 _ => (),
             }
@@ -98,7 +111,12 @@ pub fn update_up_jumping_context(
                     }
                 }
                 (false, Some(key), _) => {
-                    if !has_teleport_key || moving.timeout.total >= SPAM_DELAY {
+                    // If the player is a mage and y distance is less
+                    // than `TELEPORT_UP_JUMP_THRESHOLD`, send the teleport key immediately.
+                    if !has_teleport_key
+                        || (y_distance <= TELEPORT_UP_JUMP_THRESHOLD
+                            || moving.timeout.total >= SPAM_DELAY)
+                    {
                         let _ = context.keys.send(key);
                         moving = moving.completed(true);
                     }
@@ -115,16 +133,6 @@ pub fn update_up_jumping_context(
                 state,
                 |action| match action {
                     PlayerAction::AutoMob(_) => {
-                        if moving.completed
-                            && moving.is_destination_intermediate()
-                            && cur_pos.y >= moving.dest.y
-                        {
-                            let _ = context.keys.send_up(KeyKind::Up);
-                            return Some((
-                                Player::Moving(moving.dest, moving.exact, moving.intermediates),
-                                false,
-                            ));
-                        }
                         let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
                         let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
                         on_auto_mob_use_key_action(context, action, cur_pos, x_distance, y_distance)
@@ -136,6 +144,17 @@ pub fn update_up_jumping_context(
         },
         ChangeAxis::Vertical,
     )
+}
+
+#[inline]
+fn can_mage_skip_stationary_or_jump_key(
+    up_jump_key: Option<KeyKind>,
+    has_teleport_key: bool,
+    y_distance: i32,
+) -> bool {
+    // It means if the player is a mage and the y distance
+    // is less than `TELEPORT_UP_JUMP_THRESHOLD`, do not send jump key or wait for stationary.
+    up_jump_key.is_some() && has_teleport_key && y_distance <= TELEPORT_UP_JUMP_THRESHOLD
 }
 
 #[cfg(test)]
@@ -157,7 +176,7 @@ mod tests {
         let pos = Point::new(5, 5);
         let moving = Moving {
             pos,
-            dest: pos,
+            dest: Point::new(5, 20),
             ..Default::default()
         };
         let mut state = PlayerState::default();
@@ -291,7 +310,7 @@ mod tests {
     #[test]
     fn up_jump_mage() {
         let pos = Point::new(10, 10);
-        let dest = Point::new(10, 20);
+        let dest = Point::new(10, 30);
         let mut moving = Moving {
             pos,
             dest,

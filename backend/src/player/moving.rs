@@ -288,8 +288,8 @@ pub fn update_moving_context(
 fn abort_action_on_state_repeat(next: Player, state: &mut PlayerState) -> Player {
     if state.track_last_movement_repeated() {
         info!(target: "player", "abort action due to repeated state");
+        state.auto_mob_track_ignore_xs(true);
         state.mark_action_completed();
-        state.auto_mob_track_ignore_xs();
         return Player::Idle;
     }
     next
