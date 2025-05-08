@@ -2,15 +2,16 @@ use log::{debug, info};
 use opencv::core::Point;
 
 use super::{
-    JUMP_THRESHOLD, Player, PlayerState,
+    GRAPPLING_MAX_THRESHOLD, JUMP_THRESHOLD, Player, PlayerState,
     actions::{PlayerAction, PlayerActionKey, PlayerActionMove},
     double_jump::DOUBLE_JUMP_THRESHOLD,
     state::LastMovement,
     timeout::Timeout,
 };
 use crate::{
-    ActionKeyDirection, ActionKeyWith,
+    ActionKeyDirection, ActionKeyWith, MAX_PLATFORMS_COUNT,
     array::Array,
+    pathing::{PlatformWithNeighbors, find_points_with},
     player::{
         adjust::{ADJUSTING_MEDIUM_THRESHOLD, ADJUSTING_SHORT_THRESHOLD},
         grapple::GRAPPLING_THRESHOLD,
@@ -266,11 +267,7 @@ pub fn update_moving_context(
                 && let Some((dest, exact)) = intermediates.next()
             {
                 state.unstuck_counter = 0;
-                if state.has_priority_action() {
-                    state.last_movement_priority_map.clear();
-                } else {
-                    state.last_movement_normal_map.clear();
-                }
+                state.clear_last_movement();
                 return Player::Moving(dest, exact, Some(intermediates));
             }
             state.last_destinations = None;
@@ -287,47 +284,13 @@ pub fn update_moving_context(
 /// Aborts the action when state starts looping.
 ///
 /// Note: Initially, this is only intended for auto mobbing until rune pathing is added...
+#[inline]
 fn abort_action_on_state_repeat(next: Player, state: &mut PlayerState) -> Player {
-    const HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 20;
-    const VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 8;
-    const AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 4;
-    const AUTO_MOB_VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 3;
-
-    if let Some(last_movement) = state.last_movement {
-        let count_map = if state.has_priority_action() {
-            &mut state.last_movement_priority_map
-        } else {
-            &mut state.last_movement_normal_map
-        };
-        let count = count_map.entry(last_movement).or_insert(0);
-        *count += 1;
-        let count = *count;
-        debug!(target: "player", "last movement {:?}", count_map);
-        let count_max = match last_movement {
-            LastMovement::Adjusting | LastMovement::DoubleJumping => {
-                if state.has_auto_mob_action_only() {
-                    AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT
-                } else {
-                    HORIZONTAL_MOVEMENT_REPEAT_COUNT
-                }
-            }
-            LastMovement::Falling
-            | LastMovement::Grappling
-            | LastMovement::UpJumping
-            | LastMovement::Jumping => {
-                if state.has_auto_mob_action_only() {
-                    AUTO_MOB_VERTICAL_MOVEMENT_REPEAT_COUNT
-                } else {
-                    VERTICAL_MOVEMENT_REPEAT_COUNT
-                }
-            }
-        };
-        debug_assert!(count <= count_max);
-        if count >= count_max {
-            info!(target: "player", "abort action due to repeated state");
-            state.mark_action_completed();
-            return Player::Idle;
-        }
+    if state.track_last_movement_repeated() {
+        info!(target: "player", "abort action due to repeated state");
+        state.mark_action_completed();
+        state.auto_mob_track_ignore_xs();
+        return Player::Idle;
     }
     next
 }
@@ -372,4 +335,37 @@ fn on_player_action(
         )),
         PlayerAction::SolveRune => Some((Player::SolvingRune(SolvingRune::default()), false)),
     }
+}
+
+#[inline]
+pub fn find_intermediate_points(
+    platforms: &Array<PlatformWithNeighbors, MAX_PLATFORMS_COUNT>,
+    cur_pos: Point,
+    dest: Point,
+    exact: bool,
+    up_jump_only: bool,
+) -> Option<MovingIntermediates> {
+    let vertical_threshold = if up_jump_only {
+        GRAPPLING_THRESHOLD
+    } else {
+        GRAPPLING_MAX_THRESHOLD
+    };
+    let vec = find_points_with(
+        platforms,
+        cur_pos,
+        dest,
+        DOUBLE_JUMP_THRESHOLD,
+        JUMP_THRESHOLD,
+        vertical_threshold,
+    )?;
+    let len = vec.len();
+    let array = Array::from_iter(
+        vec.into_iter()
+            .enumerate()
+            .map(|(i, point)| (point, if i == len - 1 { exact } else { false })),
+    );
+    Some(MovingIntermediates {
+        current: 0,
+        inner: array,
+    })
 }
