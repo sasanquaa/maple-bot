@@ -221,10 +221,8 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut state = PlayerState {
-            last_known_pos: Some(Point::new(7, 7)),
-            ..Default::default()
-        };
+        let mut state = PlayerState::default();
+        state.last_known_pos = Some(Point::new(7, 7));
         let context = Context::new(None, None);
 
         // up jumped because y changed > 5

@@ -105,9 +105,9 @@ pub struct PlayerConfiguration {
 
 /// The player persistent states
 ///
-/// TODO: Should have a separate struct or trait for Rotator to access PlayerState instead direct
-/// TODO: access
-/// TODO: counter should not be u32?
+/// TODO: Should have a separate struct or trait for Rotator to access PlayerState
+/// TODO: Counter should not be u32 but usize?
+/// TODO: Reduce visibility to private for complex states
 #[derive(Debug, Default)]
 pub struct PlayerState {
     pub config: PlayerConfiguration,
@@ -593,21 +593,25 @@ impl PlayerState {
     }
 
     pub(super) fn auto_mob_track_ignore_xs(&mut self) {
+        // Note: this tracking currently does not clamp to bound
+
         if !self.has_auto_mob_action_only() {
             return;
         }
-        let x = match self.normal_action.unwrap() {
-            PlayerAction::AutoMob(mob) => mob.position.x,
-            PlayerAction::Key(_) | PlayerAction::Move(_) | PlayerAction::SolveRune => {
-                unreachable!()
-            }
-        };
+
         let Some(y) = self.auto_mob_reachable_y else {
             return;
         };
         if *self.auto_mob_reachable_y_map.get(&y).unwrap() < AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT {
             return;
         }
+
+        let x = match self.normal_action.unwrap() {
+            PlayerAction::AutoMob(mob) => mob.position.x,
+            PlayerAction::Key(_) | PlayerAction::Move(_) | PlayerAction::SolveRune => {
+                unreachable!()
+            }
+        };
         let vec = self
             .auto_mob_ignore_xs_map
             .entry(y)
@@ -616,7 +620,27 @@ impl PlayerState {
             if *count < AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT {
                 *count += 1;
             } else {
-                todo!()
+                // Merge overlapping adjacent ranges with the same y
+                let mut merged = Vec::<(Range<i32>, u32)>::new();
+                vec.sort_by_key(|(r, _)| r.start);
+
+                for (range, count) in vec.drain(..) {
+                    if let Some((last_range, last_count)) = merged.last_mut() {
+                        // Checking range start less than last_range end is sufficient because
+                        // these ranges are previously sorted and are never empty
+                        let overlapping = range.start < last_range.end;
+                        let should_merge = (*last_count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT)
+                            || (count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT);
+
+                        if overlapping && should_merge {
+                            last_range.end = last_range.end.max(range.end);
+                            continue;
+                        }
+                    }
+                    merged.push((range, count));
+                }
+
+                *vec = merged;
             }
             return;
         }
@@ -837,18 +861,135 @@ fn auto_mob_ignore_xs_range_value(x: i32) -> (Range<i32>, u32) {
     (range.into(), 0)
 }
 
-// #[inline]
-// fn ranges_overlap<R: Into<Range<i32>>>(first: R, second: R) -> bool {
-//     fn inner(first: Range<i32>, second: Range<i32>) -> bool {
-//         !(first.is_empty()
-//             || second.is_empty()
-//             || first.end < second.start
-//             || first.start >= second.end
-//             || second.end < first.start
-//             || second.start >= first.end)
-//     }
-//     inner(first.into(), second.into())
-// }
-
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use std::{assert_matches::assert_matches, collections::HashMap};
+
+    use opencv::core::Point;
+
+    use crate::{
+        Position,
+        context::Context,
+        player::{Player, PlayerAction, PlayerActionAutoMob, PlayerState},
+    };
+
+    #[test]
+    fn auto_mob_pick_reachable_y_in_threshold() {
+        let context = Context::new(None, None);
+        let mut state = PlayerState {
+            auto_mob_reachable_y_map: [100, 120, 150].into_iter().map(|y| (y, 1)).collect(),
+            last_known_pos: Some(Point::new(0, 0)),
+            ..Default::default()
+        };
+        let mob_pos = Position {
+            x: 50,
+            y: 125,
+            ..Default::default()
+        };
+
+        // Expect 120 to be chosen since it's closest to 125
+        assert_matches!(
+            state.auto_mob_pick_reachable_y_moving_state(&context, mob_pos),
+            Player::Moving(Point { x: 50, y: 120 }, false, None)
+        );
+        assert_eq!(state.auto_mob_reachable_y, Some(120));
+    }
+
+    #[test]
+    fn auto_mob_pick_reachable_y_out_of_threshold() {
+        let context = Context::new(None, None);
+        let mut state = PlayerState {
+            auto_mob_reachable_y_map: [1000, 2000].into_iter().map(|y| (y, 1)).collect(),
+            last_known_pos: Some(Point::new(0, 0)),
+            ..Default::default()
+        };
+        let mob_pos = Position {
+            x: 50,
+            y: 125,
+            ..Default::default()
+        };
+
+        // No y value is chosen so the original y is used
+        assert_matches!(
+            state.auto_mob_pick_reachable_y_moving_state(&context, mob_pos),
+            Player::Moving(Point { x: 50, y: 125 }, false, None)
+        );
+        assert_eq!(state.auto_mob_reachable_y, None);
+    }
+
+    #[test]
+    fn auto_mob_track_reachable_y() {
+        let mut player = PlayerState {
+            auto_mob_reachable_y: Some(100),
+            auto_mob_reachable_y_map: HashMap::from([
+                (100, 1), // Will be decremented and removed
+                (120, 2), // Will be incremented
+            ]),
+            last_known_pos: Some(Point::new(0, 120)), // y != auto_mob_reachable_y
+            ..Default::default()
+        };
+
+        player.auto_mob_track_reachable_y();
+
+        // The old reachable y (100) should be removed
+        assert!(!player.auto_mob_reachable_y_map.contains_key(&100));
+        // The current position y (120) should be incremented
+        assert_eq!(player.auto_mob_reachable_y_map.get(&120), Some(&3));
+        // auto_mob_reachable_y should be cleared
+        assert_eq!(player.auto_mob_reachable_y, None);
+    }
+
+    #[test]
+    fn auto_mob_track_ignore_xs_conditional_merge() {
+        let y = 100;
+        let mut player = PlayerState {
+            normal_action: Some(PlayerAction::AutoMob(PlayerActionAutoMob {
+                position: Position {
+                    x: 50,
+                    y,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })),
+            auto_mob_reachable_y: Some(y),
+            auto_mob_reachable_y_map: HashMap::from([(y, 4)]), // 4 = solidify
+            auto_mob_ignore_xs_map: HashMap::from([(
+                y,
+                vec![
+                    ((45..55).into(), 3), // 3 = solidify
+                    ((54..64).into(), 1), // not solidified, but overlaps
+                ],
+            )]),
+            ..Default::default()
+        };
+
+        player.auto_mob_track_ignore_xs();
+
+        let ranges = player.auto_mob_ignore_xs_map.get(&y).unwrap();
+        assert_eq!(ranges.len(), 1); // Should be merged
+        assert_eq!(ranges[0].0, (45..64).into());
+
+        // Now test that they don’t merge if neither is solidified
+        player.normal_action = Some(PlayerAction::AutoMob(PlayerActionAutoMob {
+            position: Position {
+                x: 60,
+                y,
+                ..Default::default()
+            },
+            ..Default::default()
+        }));
+        player.auto_mob_ignore_xs_map = HashMap::from([(
+            y,
+            vec![
+                ((55..65).into(), 1), // not solidified but incremented because of 60
+                ((63..75).into(), 1), // not solidified, overlapping adjacent
+            ],
+        )]);
+
+        player.auto_mob_track_ignore_xs();
+
+        let ranges = player.auto_mob_ignore_xs_map.get(&y).unwrap();
+        assert_eq!(ranges.len(), 2); // Should remain unmerged but incremented
+        assert_eq!(ranges, &vec![((55..65).into(), 2), ((63..75).into(), 1)])
+    }
+}

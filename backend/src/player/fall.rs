@@ -159,11 +159,9 @@ mod tests {
         let pos = Point::new(5, 5);
         let anchor = Point::new(6, 6);
         let dest = Point::new(2, 2);
-        let mut state = PlayerState {
-            is_stationary: true,
-            last_known_pos: Some(pos),
-            ..Default::default()
-        };
+        let mut state = PlayerState::default();
+        state.last_known_pos = Some(pos);
+        state.is_stationary = true;
         let moving = Moving {
             pos,
             dest,
