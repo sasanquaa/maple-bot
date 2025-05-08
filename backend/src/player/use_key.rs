@@ -1,6 +1,5 @@
 use std::cmp::Ordering;
 
-use log::debug;
 use opencv::core::Point;
 use platforms::windows::KeyKind;
 
@@ -11,10 +10,8 @@ use super::{
 use crate::{
     ActionKeyDirection, ActionKeyWith, Class, KeyBinding, LinkKeyBinding,
     context::Context,
-    minimap::Minimap,
     player::{
-        LastMovement, MOVE_TIMEOUT, Moving, Player, on_action_state_mut,
-        state::AUTO_MOB_MAX_PATHING_POINTS, update_with_timeout,
+        LastMovement, MOVE_TIMEOUT, Moving, Player, on_action_state_mut, update_with_timeout,
     },
 };
 
@@ -306,7 +303,7 @@ pub fn update_use_key_context(
             PlayerAction::AutoMob(_) => {
                 let is_terminal = matches!(next, Player::Idle);
                 if is_terminal {
-                    populate_auto_mob_pathing_points(context, state);
+                    state.auto_mob_populate_pathing_points(context);
                     if state.auto_mob_reachable_y_require_update() {
                         return Some((Player::Stalling(Timeout::default(), MOVE_TIMEOUT), false));
                     }
@@ -318,59 +315,6 @@ pub fn update_use_key_context(
         },
         || next,
     )
-}
-
-/// Populates pathing points for an auto mob action
-///
-/// After using key state is fully complete, it will try to populate a pathing point to be used
-/// when [`Rotator`] fails the mob detection. This will will help [`Rotator`] re-uses the previous
-/// detected mob point for moving to area with more mobs.
-fn populate_auto_mob_pathing_points(context: &Context, state: &mut PlayerState) {
-    if state.auto_mob_pathing_points.len() >= AUTO_MOB_MAX_PATHING_POINTS
-        || state.auto_mob_reachable_y_require_update()
-    {
-        return;
-    }
-
-    let (minimap_width, platforms) = match context.minimap {
-        Minimap::Idle(idle) => (idle.bbox.width, idle.platforms),
-        _ => unreachable!(),
-    };
-    // Flip a coin, use platform as pathing point
-    if state.config.auto_mob_platforms_pathing && !platforms.is_empty() && rand::random_bool(0.5) {
-        let platform = platforms[rand::random_range(0..platforms.len())];
-        let xs = platform.xs();
-        let y = platform.y();
-        let point = Point::new(xs.start.midpoint(xs.end), y);
-        // Platform pathing point can bypass y restriction
-        if !state
-            .auto_mob_pathing_points
-            .iter()
-            .any(|pt| pt.y == point.y && pt.x == point.x)
-        {
-            state.auto_mob_pathing_points.push(point);
-            debug!(target: "player", "auto mob pathing point from platform {:?}", point);
-            return;
-        }
-    }
-
-    // The idea is to pick a pathing point with a different y from existing points and with x
-    // within 70% on both sides from the middle of the minimap
-    let minimap_mid = minimap_width / 2;
-    let minimap_threshold = (minimap_mid as f32 * 0.7) as i32;
-    let pos = state.last_known_pos.unwrap();
-    let x_offset = (pos.x - minimap_mid).abs();
-    let y = state.auto_mob_reachable_y.unwrap();
-    if x_offset > minimap_threshold
-        || state
-            .auto_mob_pathing_points
-            .iter()
-            .any(|point| point.y == y)
-    {
-        return;
-    }
-    state.auto_mob_pathing_points.push(Point::new(pos.x, y));
-    debug!(target: "player", "auto mob pathing points {:?}", state.auto_mob_pathing_points);
 }
 
 #[inline]

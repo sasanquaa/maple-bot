@@ -90,6 +90,7 @@ impl From<ActionMove> for PlayerActionMove {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(test, derive(Default))]
 pub struct PlayerActionAutoMob {
     pub key: KeyBinding,
     pub count: u32,

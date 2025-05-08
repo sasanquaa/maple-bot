@@ -70,7 +70,7 @@ pub fn update_double_jumping_context(
             && !is_intermediate
             && state.is_stationary
         {
-            return Player::Falling(moving.pos(cur_pos), cur_pos);
+            return Player::Falling(moving.pos(cur_pos), cur_pos, true);
         }
         if require_stationary && !state.is_stationary {
             let _ = context.keys.send_up(KeyKind::Right);

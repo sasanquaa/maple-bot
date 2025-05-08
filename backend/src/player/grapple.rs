@@ -1,4 +1,9 @@
-use super::{Player, PlayerState, moving::Moving, state::LastMovement};
+use super::{
+    Player, PlayerAction, PlayerState,
+    actions::{on_action, on_auto_mob_use_key_action},
+    moving::Moving,
+    state::LastMovement,
+};
 use crate::{
     context::Context,
     player::{
@@ -15,7 +20,7 @@ pub const GRAPPLING_MAX_THRESHOLD: i32 = 41;
 
 const TIMEOUT: u32 = MOVE_TIMEOUT * 10;
 
-const STOPPING_TIMEOUT: u32 = MOVE_TIMEOUT * 3;
+const STOPPING_TIMEOUT: u32 = MOVE_TIMEOUT * 2;
 
 const STOPPING_THRESHOLD: i32 = 5;
 
@@ -37,6 +42,7 @@ pub fn update_grappling_context(
     let cur_pos = state.last_known_pos.unwrap();
     let key = state.config.grappling_key;
     let x_changed = cur_pos.x != moving.pos.x;
+    let (y_distance, y_direction) = moving.y_distance_direction_from(true, moving.pos);
 
     update_moving_axis_context(
         moving,
@@ -48,21 +54,37 @@ pub fn update_grappling_context(
         },
         None::<fn()>,
         |mut moving| {
-            let (distance, direction) = moving.y_distance_direction_from(true, moving.pos);
             if moving.timeout.current >= MOVE_TIMEOUT && x_changed {
                 // during double jump and grappling failed
                 moving = moving.timeout_current(TIMEOUT).completed(true);
             }
             if !moving.completed {
-                if direction <= 0 || distance <= STOPPING_THRESHOLD {
+                if y_direction <= 0 || y_distance <= STOPPING_THRESHOLD {
                     let _ = context.keys.send(key);
                     moving = moving.completed(true);
                 }
-            } else if state.has_auto_mob_action_only() || moving.timeout.current >= STOPPING_TIMEOUT
-            {
+            } else if moving.timeout.current >= STOPPING_TIMEOUT {
                 moving = moving.timeout_current(TIMEOUT);
             }
-            Player::Grappling(moving)
+
+            on_action(
+                state,
+                |action| match action {
+                    PlayerAction::AutoMob(_) => {
+                        if moving.completed && moving.is_destination_intermediate() {
+                            return Some((
+                                Player::Moving(moving.dest, moving.exact, moving.intermediates),
+                                false,
+                            ));
+                        }
+                        let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
+                        let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
+                        on_auto_mob_use_key_action(context, action, cur_pos, x_distance, y_distance)
+                    }
+                    PlayerAction::Key(_) | PlayerAction::Move(_) | PlayerAction::SolveRune => None,
+                },
+                || Player::Grappling(moving),
+            )
         },
         ChangeAxis::Vertical,
     )

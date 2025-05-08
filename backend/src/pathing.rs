@@ -305,20 +305,34 @@ fn platforms_reachable(
 #[inline]
 fn ranges_overlap<R: Into<Range<i32>>>(first: R, second: R) -> bool {
     fn inner(first: Range<i32>, second: Range<i32>) -> bool {
-        !(first.is_empty()
-            || second.is_empty()
-            || first.end < second.start
-            || first.start >= second.end
-            || second.end < first.start
-            || second.start >= first.end)
+        !first.is_empty()
+            && !second.is_empty()
+            && ((first.start < second.end && first.start >= second.start)
+                || (second.start < first.end && second.start >= first.start))
     }
     inner(first.into(), second.into())
 }
 
-// TODO: more unit tests
 #[cfg(test)]
 mod tests {
-    use crate::pathing::ranges_overlap;
+    use opencv::core::Point;
+
+    use super::{MAX_PLATFORMS_COUNT, Platform, PlatformWithNeighbors, find_neighbors};
+    use crate::{
+        array::Array,
+        pathing::{find_points_with, ranges_overlap},
+    };
+
+    fn make_platforms_with_neighbors(
+        platforms: &[Platform],
+    ) -> Array<PlatformWithNeighbors, MAX_PLATFORMS_COUNT> {
+        let connected = find_neighbors(platforms, 20, 15, 30);
+        let mut array = Array::new();
+        for p in connected {
+            array.push(p);
+        }
+        array
+    }
 
     #[test]
     fn ranges_xs_overlap_cases() {
@@ -329,5 +343,83 @@ mod tests {
         assert!(!ranges_overlap(100..1000, 55..66));
         assert!(!ranges_overlap(3..i32::MAX, 1..3));
         assert!(!ranges_overlap(5..10, 0..5));
+    }
+
+    #[test]
+    fn find_points_with_direct_overlap() {
+        let platforms = [
+            Platform::new(0..100, 50),
+            Platform::new(0..100, 60), // Directly above
+        ];
+        let platforms = make_platforms_with_neighbors(&platforms);
+
+        let from = Point::new(10, 50);
+        let to = Point::new(20, 60);
+
+        let points = find_points_with(&platforms, from, to, 20, 15, 50).unwrap();
+
+        assert_eq!(points.len(), 3);
+        assert_eq!(
+            points,
+            vec![Point::new(10, 50), Point::new(10, 60), Point::new(20, 60),]
+        );
+    }
+
+    #[test]
+    fn find_points_with_non_overlapping_jump() {
+        let platforms = [
+            Platform::new(0..50, 50),
+            Platform::new(60..110, 55), // Reachable by double jump
+        ];
+        let platforms = make_platforms_with_neighbors(&platforms);
+
+        let from = Point::new(25, 50);
+        let to = Point::new(65, 55);
+
+        let points = find_points_with(&platforms, from, to, 30, 15, 50).unwrap();
+
+        assert_eq!(points.first().unwrap().y, 50);
+        assert_eq!(points.last().unwrap().y, 55);
+        assert!(points.len() >= 2); // Should require at least one jump point
+    }
+
+    #[test]
+    fn find_points_with_multi_hop_path() {
+        let platforms = [
+            Platform::new(0..50, 50),
+            Platform::new(0..50, 60),
+            Platform::new(0..50, 70),
+        ];
+        let platforms = make_platforms_with_neighbors(&platforms);
+
+        let from = Point::new(10, 50);
+        let to = Point::new(20, 70);
+
+        let points = find_points_with(&platforms, from, to, 20, 15, 20).unwrap();
+        // Expected path goes from 50 → 60 → 70 on the same x (10)
+        let expected = vec![
+            Point::new(10, 50),
+            Point::new(10, 60),
+            Point::new(10, 70),
+            Point::new(20, 70), // Final destination point, as per function spec
+        ];
+
+        assert_eq!(points.len(), expected.len());
+        assert_eq!(points, expected);
+    }
+
+    #[test]
+    fn find_points_with_no_path() {
+        let platforms = [
+            Platform::new(0..50, 50),
+            Platform::new(100..150, 55), // Too far
+        ];
+        let platforms = make_platforms_with_neighbors(&platforms);
+
+        let from = Point::new(25, 50);
+        let to = Point::new(125, 55);
+
+        let points = find_points_with(&platforms, from, to, 20, 15, 20);
+        assert!(points.is_none());
     }
 }

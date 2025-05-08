@@ -7,7 +7,6 @@ use crate::{
     player::{
         MOVE_TIMEOUT, PlayerAction,
         actions::{on_action, on_auto_mob_use_key_action},
-        adjust::ADJUSTING_MEDIUM_THRESHOLD,
         state::LastMovement,
         timeout::{ChangeAxis, update_moving_axis_context},
     },
@@ -16,6 +15,7 @@ use crate::{
 /// Minimum y distance from the destination required to perform a fall
 pub const FALLING_THRESHOLD: i32 = 4;
 
+/// The tick to stop helding down [`KeyKind::Down`] at
 const STOP_DOWN_KEY_TICK: u32 = 3;
 
 const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
@@ -24,40 +24,45 @@ const TELEPORT_FALL_THRESHOLD: i32 = 14;
 
 /// Updates the [`Player::Falling`] contextual state
 ///
-/// This state will perform a drop down `Down Key + Jump Key`
+/// This state will perform a drop down action. It is completed as soon as the player current `y`
+/// position is below `anchor`. If `timeout_on_complete` is provided, it will timeout when the
+/// action is complete and return to [`Player::Moving`]. Timing out early is currently used by
+/// [`Player::DoubleJumping`] to perform a composite action `drop down and then double jump`.
 pub fn update_falling_context(
     context: &Context,
     state: &mut PlayerState,
     moving: Moving,
     anchor: Point,
+    timeout_on_complete: bool,
 ) -> Player {
     let cur_pos = state.last_known_pos.unwrap();
-    let y_changed = cur_pos.y - anchor.y;
-    let (x_distance, _) = moving.x_distance_direction_from(true, cur_pos);
-    let (y_distance, _) = moving.y_distance_direction_from(true, cur_pos);
-    let is_stationary = state.is_stationary;
-    let jump_key = state.config.jump_key;
-    let teleport_key = state.config.teleport_key;
     if !moving.timeout.started {
+        // Wait until stationary before doing a fall
+        if !state.is_stationary {
+            return Player::Falling(moving.pos(cur_pos), cur_pos, timeout_on_complete);
+        }
         state.last_movement = Some(LastMovement::Falling);
     }
+
+    let y_changed = cur_pos.y - anchor.y;
+    let (y_distance, _) = moving.y_distance_direction_from(true, cur_pos);
+    let jump_key = state.config.jump_key;
+    let teleport_key = state.config.teleport_key;
 
     update_moving_axis_context(
         moving,
         cur_pos,
         TIMEOUT,
         |moving| {
-            if is_stationary {
-                let _ = context.keys.send_down(KeyKind::Down);
-                if let Some(key) = teleport_key
-                    && y_distance <= TELEPORT_FALL_THRESHOLD
-                {
-                    let _ = context.keys.send(key);
-                } else {
-                    let _ = context.keys.send(jump_key);
-                }
+            let _ = context.keys.send_down(KeyKind::Down);
+            if let Some(key) = teleport_key
+                && y_distance <= TELEPORT_FALL_THRESHOLD
+            {
+                let _ = context.keys.send(key);
+            } else {
+                let _ = context.keys.send(jump_key);
             }
-            Player::Falling(moving, anchor)
+            Player::Falling(moving, anchor, timeout_on_complete)
         },
         Some(|| {
             let _ = context.keys.send_up(KeyKind::Down);
@@ -66,13 +71,12 @@ pub fn update_falling_context(
             if moving.timeout.total == STOP_DOWN_KEY_TICK {
                 let _ = context.keys.send_up(KeyKind::Down);
             }
-            if !moving.completed {
-                if y_changed < 0 {
-                    moving = moving.completed(true);
-                }
-            } else if x_distance >= ADJUSTING_MEDIUM_THRESHOLD {
+            if !moving.completed && y_changed < 0 {
+                moving = moving.completed(true);
+            } else if moving.completed && timeout_on_complete {
                 moving = moving.timeout_current(TIMEOUT);
             }
+
             on_action(
                 state,
                 |action| match action {
@@ -90,7 +94,7 @@ pub fn update_falling_context(
                     }
                     PlayerAction::Key(_) | PlayerAction::Move(_) | PlayerAction::SolveRune => None,
                 },
-                || Player::Falling(moving, anchor),
+                || Player::Falling(moving, anchor, timeout_on_complete),
             )
         },
         ChangeAxis::Vertical,
@@ -132,7 +136,7 @@ mod tests {
         // Send keys if stationary
         state.is_stationary = true;
         state.last_known_pos = Some(pos);
-        update_falling_context(&context, &mut state, moving, Point::default());
+        update_falling_context(&context, &mut state, moving, Point::default(), false);
         let _ = context.keys;
 
         // Don't send keys if not stationary
@@ -141,7 +145,7 @@ mod tests {
         keys.expect_send().never();
         let context = Context::new(Some(keys), None);
         state.is_stationary = false;
-        update_falling_context(&context, &mut state, moving, Point::default());
+        update_falling_context(&context, &mut state, moving, Point::default(), false);
     }
 
     #[test]
@@ -155,11 +159,9 @@ mod tests {
         let pos = Point::new(5, 5);
         let anchor = Point::new(6, 6);
         let dest = Point::new(2, 2);
-        let mut state = PlayerState {
-            is_stationary: true,
-            last_known_pos: Some(pos),
-            ..Default::default()
-        };
+        let mut state = PlayerState::default();
+        state.last_known_pos = Some(pos);
+        state.is_stationary = true;
         let moving = Moving {
             pos,
             dest,
@@ -173,7 +175,7 @@ mod tests {
 
         // Send up key because total = 2 and timeout early
         assert_matches!(
-            update_falling_context(&context, &mut state, moving, anchor),
+            update_falling_context(&context, &mut state, moving, anchor, false),
             Player::Falling(
                 Moving {
                     completed: true,
@@ -184,6 +186,7 @@ mod tests {
                     },
                     ..
                 },
+                _,
                 _
             )
         );
