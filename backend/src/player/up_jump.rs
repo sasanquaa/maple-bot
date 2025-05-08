@@ -164,6 +164,7 @@ mod tests {
         let mut context = Context::new(None, None);
         state.config.jump_key = KeyKind::Space;
         state.last_known_pos = Some(pos);
+        state.is_stationary = true;
 
         let mut keys = MockKeySender::new();
         keys.expect_send_down()
@@ -253,6 +254,7 @@ mod tests {
         state.config.upjump_key = Some(KeyKind::Up); // Demon Slayer uses Up
         state.config.jump_key = KeyKind::Space;
         state.last_known_pos = Some(pos);
+        state.is_stationary = true;
 
         let mut keys = MockKeySender::new();
         keys.expect_send_down()
@@ -302,6 +304,7 @@ mod tests {
         state.config.teleport_key = Some(KeyKind::Shift);
         state.config.jump_key = KeyKind::Space;
         state.last_known_pos = Some(pos);
+        state.is_stationary = true;
 
         let mut keys = MockKeySender::new();
         keys.expect_send_down()

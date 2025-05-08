@@ -37,10 +37,11 @@ fn on_player_action(
 ) -> Option<(Player, bool)> {
     let cur_pos = state.last_known_pos.unwrap();
     match action {
-        PlayerAction::AutoMob(PlayerActionAutoMob { position, .. }) => Some((
-            state.auto_mob_pick_reachable_y_moving_state(context, position),
-            false,
-        )),
+        PlayerAction::AutoMob(PlayerActionAutoMob { position, .. }) => {
+            let next = state.auto_mob_pick_reachable_y_contextual_state(context, position);
+            let is_terminal = matches!(next, Player::Idle);
+            Some((next, is_terminal))
+        }
         PlayerAction::Move(PlayerActionMove { position, .. }) => {
             let x = get_x_destination(position);
             debug!(target: "player", "handling move: {} {}", x, position.y);

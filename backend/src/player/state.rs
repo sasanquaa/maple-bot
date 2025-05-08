@@ -490,9 +490,10 @@ impl PlayerState {
     /// Caller is expected to call [`Self::auto_mob_track_reachable_y`] afterward when the
     /// auto-mob action has completed (e.g. in terminal state of [`Player::UseKey`]).
     ///
-    /// Returns [`Player::Moving`] indicating the moving action for the player to reach to mob
+    /// Returns [`Player::Moving`] indicating the moving action for the player to reach to mob or
+    /// [`Player::Idle`] indicating the action should be aborted.
     #[inline]
-    pub(super) fn auto_mob_pick_reachable_y_moving_state(
+    pub(super) fn auto_mob_pick_reachable_y_contextual_state(
         &mut self,
         context: &Context,
         mob_pos: Position,
@@ -508,6 +509,19 @@ impl PlayerState {
             .copied()
             .min_by_key(|y| (mob_pos.y - y).abs())
             .filter(|y| (mob_pos.y - y).abs() <= AUTO_MOB_REACHABLE_Y_THRESHOLD);
+
+        // Checking whether y is solidified yet is not needed because y will only be added
+        // to the xs map when it is solidified
+        if let Some(y) = y
+            && self.auto_mob_ignore_xs_map.get(&y).is_some_and(|ranges| {
+                ranges.iter().any(|(range, count)| {
+                    *count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT && range.contains(&mob_pos.x)
+                })
+            })
+        {
+            debug!(target: "player", "auto mob aborted because of wrong mob x position");
+            return Player::Idle;
+        }
 
         let point = Point::new(mob_pos.x, y.unwrap_or(mob_pos.y));
         let intermediates = if self.config.auto_mob_platforms_pathing {
@@ -874,6 +888,28 @@ mod tests {
     };
 
     #[test]
+    fn auto_mob_pick_reachable_y_should_ignore_solidified_x_range() {
+        let context = Context::new(None, None);
+        let mut state = PlayerState {
+            auto_mob_reachable_y_map: HashMap::from([(50, 1)]),
+            auto_mob_ignore_xs_map: HashMap::from([(50, vec![((53..58).into(), 3)])]),
+            ..Default::default()
+        };
+
+        assert_matches!(
+            state.auto_mob_pick_reachable_y_contextual_state(
+                &context,
+                Position {
+                    x: 55,
+                    y: 50,
+                    ..Default::default()
+                },
+            ),
+            Player::Idle
+        );
+    }
+
+    #[test]
     fn auto_mob_pick_reachable_y_in_threshold() {
         let context = Context::new(None, None);
         let mut state = PlayerState {
@@ -889,7 +925,7 @@ mod tests {
 
         // Expect 120 to be chosen since it's closest to 125
         assert_matches!(
-            state.auto_mob_pick_reachable_y_moving_state(&context, mob_pos),
+            state.auto_mob_pick_reachable_y_contextual_state(&context, mob_pos),
             Player::Moving(Point { x: 50, y: 120 }, false, None)
         );
         assert_eq!(state.auto_mob_reachable_y, Some(120));
@@ -911,7 +947,7 @@ mod tests {
 
         // No y value is chosen so the original y is used
         assert_matches!(
-            state.auto_mob_pick_reachable_y_moving_state(&context, mob_pos),
+            state.auto_mob_pick_reachable_y_contextual_state(&context, mob_pos),
             Player::Moving(Point { x: 50, y: 125 }, false, None)
         );
         assert_eq!(state.auto_mob_reachable_y, None);
