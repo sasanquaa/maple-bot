@@ -304,7 +304,7 @@ pub fn update_use_key_context(
                 let is_terminal = matches!(next, Player::Idle);
                 if is_terminal {
                     state.auto_mob_populate_pathing_points(context);
-                    state.auto_mob_track_ignore_xs(false);
+                    state.auto_mob_track_ignore_xs(context, false);
                     if state.auto_mob_reachable_y_require_update() {
                         return Some((Player::Stalling(Timeout::default(), MOVE_TIMEOUT), false));
                     }

@@ -530,8 +530,7 @@ impl PlayerState {
             _ => unreachable!(),
         };
         // Flip a coin, use platform as pathing point
-        if self.config.auto_mob_platforms_pathing && !platforms.is_empty() && rand::random_bool(0.5)
-        {
+        if !platforms.is_empty() && rand::random_bool(0.5) {
             let platform = platforms[rand::random_range(0..platforms.len())];
             let xs = platform.xs();
             let y = platform.y();
@@ -601,7 +600,8 @@ impl PlayerState {
             .filter(|y| (mob_pos.y - y).abs() <= AUTO_MOB_REACHABLE_Y_THRESHOLD);
 
         // Checking whether y is solidified yet is not needed because y will only be added
-        // to the xs map when it is solidified
+        // to the xs map when it is solidified. As for populated xs from platforms, the
+        // corresponding y must have already been populated.
         if let Some(y) = y
             && self.auto_mob_ignore_xs_map.get(&y).is_some_and(|ranges| {
                 ranges.iter().any(|(range, count)| {
@@ -649,17 +649,15 @@ impl PlayerState {
     }
 
     fn auto_mob_populate_reachable_y(&mut self, context: &Context) {
-        if self.config.auto_mob_platforms_pathing {
-            match context.minimap {
-                Minimap::Idle(idle) => {
-                    // Believes in user input lets goo...
-                    for platform in idle.platforms {
-                        self.auto_mob_reachable_y_map
-                            .insert(platform.y(), AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT);
-                    }
+        match context.minimap {
+            Minimap::Idle(idle) => {
+                // Believes in user input lets goo...
+                for platform in idle.platforms {
+                    self.auto_mob_reachable_y_map
+                        .insert(platform.y(), AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT);
                 }
-                _ => unreachable!(),
             }
+            _ => unreachable!(),
         }
         let _ = self.auto_mob_reachable_y_map.try_insert(
             self.last_known_pos.unwrap().y,
@@ -696,11 +694,14 @@ impl PlayerState {
         }
     }
 
+    /// Tracks whether to ignore a x range for the current reachable y
     // TODO: This tracking currently does not clamp to bound, should clamp to non-negative
-    // TODO: Populate using gap between platforms by using user inputted platforms
-    pub(super) fn auto_mob_track_ignore_xs(&mut self, is_aborted: bool) {
+    pub(super) fn auto_mob_track_ignore_xs(&mut self, context: &Context, is_aborted: bool) {
         if !self.has_auto_mob_action_only() {
             return;
+        }
+        if self.auto_mob_ignore_xs_map.is_empty() {
+            self.auto_mob_populate_ignore_xs(context);
         }
 
         let Some(y) = self.auto_mob_reachable_y else {
@@ -777,6 +778,41 @@ impl PlayerState {
             vec.push((range, count + 1));
             vec.sort_by_key(|(r, _)| r.start);
             debug!(target: "player", "auto mob new ignore xs {:?}", self.auto_mob_ignore_xs_map);
+        }
+    }
+
+    pub(super) fn auto_mob_populate_ignore_xs(&mut self, context: &Context) {
+        let platforms = match context.minimap {
+            Minimap::Idle(idle) => idle.platforms,
+            Minimap::Detecting => unreachable!(),
+        };
+        if platforms.is_empty() {
+            return;
+        }
+
+        // Group platform ranges by y
+        let mut y_map: HashMap<i32, Vec<Range<i32>>> = HashMap::new();
+        for platform in platforms {
+            y_map.entry(platform.y()).or_default().push(platform.xs());
+        }
+
+        for (y, mut ranges) in y_map {
+            // Sort by start of the range
+            ranges.sort_by_key(|r| r.start);
+
+            let mut last_end = ranges[0].end;
+            for r in ranges.into_iter().skip(1) {
+                if r.start > last_end {
+                    let gap = last_end..r.start;
+                    if !gap.is_empty() {
+                        self.auto_mob_ignore_xs_map
+                            .entry(y)
+                            .or_default()
+                            .push((gap.into(), AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT));
+                    }
+                }
+                last_end = last_end.max(r.end);
+            }
         }
     }
 
@@ -965,7 +1001,10 @@ mod tests {
 
     use crate::{
         Position,
+        array::Array,
         context::Context,
+        minimap::{Minimap, MinimapIdle},
+        pathing::{Platform, find_neighbors},
         player::{Player, PlayerAction, PlayerActionAutoMob, PlayerState},
     };
 
@@ -1060,6 +1099,7 @@ mod tests {
     #[test]
     fn auto_mob_track_ignore_xs_conditional_merge() {
         let y = 100;
+        let context = Context::new(None, None);
         let mut player = PlayerState {
             normal_action: Some(PlayerAction::AutoMob(PlayerActionAutoMob {
                 position: Position {
@@ -1081,7 +1121,7 @@ mod tests {
             ..Default::default()
         };
 
-        player.auto_mob_track_ignore_xs(true);
+        player.auto_mob_track_ignore_xs(&context, true);
 
         let ranges = player.auto_mob_ignore_xs_map.get(&y).unwrap();
         assert_eq!(ranges.len(), 1); // Should be merged
@@ -1104,10 +1144,41 @@ mod tests {
             ],
         )]);
 
-        player.auto_mob_track_ignore_xs(true);
+        player.auto_mob_track_ignore_xs(&context, true);
 
         let ranges = player.auto_mob_ignore_xs_map.get(&y).unwrap();
         assert_eq!(ranges.len(), 2); // Should remain unmerged but incremented
         assert_eq!(ranges, &vec![((55..65).into(), 2), ((63..75).into(), 1)])
+    }
+
+    #[test]
+    fn auto_mob_populate_ignore_xs_detects_gaps_correctly() {
+        let platforms = vec![
+            Platform::new(0..5, 10),
+            Platform::new(10..15, 10),
+            Platform::new(20..25, 10),
+            Platform::new(0..10, 5), // A different y-level
+        ];
+        let platforms = find_neighbors(&platforms, 25, 7, 41);
+
+        let mut idle = MinimapIdle::default();
+        idle.platforms = Array::from_iter(platforms);
+
+        let context = Context {
+            minimap: Minimap::Idle(idle),
+            ..Context::new(None, None)
+        };
+
+        let mut state = PlayerState::default();
+        state.auto_mob_populate_ignore_xs(&context);
+
+        let map = &state.auto_mob_ignore_xs_map;
+
+        assert_eq!(map.len(), 1); // Only y = 10 has gaps
+        let gaps = map.get(&10).unwrap();
+        assert_eq!(gaps.len(), 2);
+        assert_eq!(gaps[0].0, (5..10).into());
+        assert_eq!(gaps[0].1, 3);
+        assert_eq!(gaps[1].0, (15..20).into());
     }
 }

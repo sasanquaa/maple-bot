@@ -236,7 +236,7 @@ fn update_positional_context(
         Player::Detecting => Player::Idle,
         Player::Idle => update_idle_context(context, state),
         Player::Moving(dest, exact, intermediates) => {
-            update_moving_context(state, dest, exact, intermediates)
+            update_moving_context(context, state, dest, exact, intermediates)
         }
         Player::Adjusting(moving) => update_adjusting_context(context, state, moving),
         Player::DoubleJumping(moving, forced, require_stationary) => {
