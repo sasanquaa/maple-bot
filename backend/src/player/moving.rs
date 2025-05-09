@@ -250,6 +250,18 @@ pub fn update_moving_context(
             abort_action_on_state_repeat(Player::Grappling(moving), context, state)
         }
         (false, _, y, d) if y > 0 && d >= UP_JUMP_THRESHOLD => {
+            // In auto mob with platforms pathing and up jump only, immediately aborts the action
+            // if there are no intermediate points and the distance is too big to up jump.
+            if state.has_auto_mob_action_only()
+                && state.config.auto_mob_platforms_pathing
+                && state.config.auto_mob_platforms_pathing_up_jump_only
+                && intermediates.is_none()
+                && d >= GRAPPLING_THRESHOLD
+            {
+                debug!(target: "player", "auto mob aborted because distance for up jump only is too big");
+                state.clear_action_completed();
+                return Player::Idle;
+            }
             abort_action_on_state_repeat(Player::UpJumping(moving), context, state)
         }
         (false, _, y, d) if y > 0 && d >= JUMP_THRESHOLD => {

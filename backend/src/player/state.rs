@@ -782,8 +782,8 @@ impl PlayerState {
     }
 
     pub(super) fn auto_mob_populate_ignore_xs(&mut self, context: &Context) {
-        let platforms = match context.minimap {
-            Minimap::Idle(idle) => idle.platforms,
+        let (platforms, minimap_width) = match context.minimap {
+            Minimap::Idle(idle) => (idle.platforms, idle.bbox.width),
             Minimap::Detecting => unreachable!(),
         };
         if platforms.is_empty() {
@@ -801,14 +801,23 @@ impl PlayerState {
             ranges.sort_by_key(|r| r.start);
 
             let mut last_end = ranges[0].end;
+            let ignores = self.auto_mob_ignore_xs_map.entry(y).or_default();
+
+            let first_gap = 0..ranges[0].start;
+            if !first_gap.is_empty() {
+                ignores.push((first_gap.into(), AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT));
+            }
+
+            let last_gap = ranges.last().unwrap().end..minimap_width;
+            if !last_gap.is_empty() {
+                ignores.push((last_gap.into(), AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT));
+            }
+
             for r in ranges.into_iter().skip(1) {
                 if r.start > last_end {
                     let gap = last_end..r.start;
                     if !gap.is_empty() {
-                        self.auto_mob_ignore_xs_map
-                            .entry(y)
-                            .or_default()
-                            .push((gap.into(), AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT));
+                        ignores.push((gap.into(), AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT));
                     }
                 }
                 last_end = last_end.max(r.end);
@@ -997,7 +1006,7 @@ fn auto_mob_ignore_xs_range_value(x: i32) -> (Range<i32>, u32) {
 mod tests {
     use std::{assert_matches::assert_matches, collections::HashMap};
 
-    use opencv::core::Point;
+    use opencv::core::{Point, Rect};
 
     use crate::{
         Position,
@@ -1154,7 +1163,7 @@ mod tests {
     #[test]
     fn auto_mob_populate_ignore_xs_detects_gaps_correctly() {
         let platforms = vec![
-            Platform::new(0..5, 10),
+            Platform::new(1..5, 10),
             Platform::new(10..15, 10),
             Platform::new(20..25, 10),
             Platform::new(0..10, 5), // A different y-level
@@ -1163,6 +1172,7 @@ mod tests {
 
         let mut idle = MinimapIdle::default();
         idle.platforms = Array::from_iter(platforms);
+        idle.bbox = Rect::new(0, 0, 100, 100);
 
         let context = Context {
             minimap: Minimap::Idle(idle),
@@ -1174,11 +1184,16 @@ mod tests {
 
         let map = &state.auto_mob_ignore_xs_map;
 
-        assert_eq!(map.len(), 1); // Only y = 10 has gaps
+        assert_eq!(map.len(), 2);
         let gaps = map.get(&10).unwrap();
-        assert_eq!(gaps.len(), 2);
-        assert_eq!(gaps[0].0, (5..10).into());
-        assert_eq!(gaps[0].1, 3);
-        assert_eq!(gaps[1].0, (15..20).into());
+        assert_eq!(gaps.len(), 4);
+        assert_eq!(gaps[0].0, (0..1).into());
+        assert_eq!(gaps[1].0, (25..100).into());
+        assert_eq!(gaps[2].0, (5..10).into());
+        assert_eq!(gaps[3].0, (15..20).into());
+
+        let gaps = map.get(&5).unwrap();
+        assert_eq!(gaps.len(), 1);
+        assert_eq!(gaps[0].0, (10..100).into());
     }
 }
