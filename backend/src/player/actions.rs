@@ -214,12 +214,12 @@ pub fn on_action_state_mut(
                     position: Some(Position { .. }),
                     ..
                 }) => {
-                    state.unstuck_counter = 0;
+                    state.clear_unstucking(false);
                 }
                 PlayerAction::Key(PlayerActionKey { position: None, .. }) => (),
             }
             // FIXME: clear only when has position?
-            state.mark_action_completed();
+            state.clear_action_completed();
         }
         return next;
     }

@@ -11,6 +11,7 @@ use super::{
 use crate::{
     ActionKeyDirection, ActionKeyWith, MAX_PLATFORMS_COUNT,
     array::Array,
+    context::Context,
     pathing::{PlatformWithNeighbors, find_points_with},
     player::{
         adjust::{ADJUSTING_MEDIUM_THRESHOLD, ADJUSTING_SHORT_THRESHOLD},
@@ -23,10 +24,6 @@ use crate::{
 
 /// Maximum amount of ticks a change in x or y direction must be detected
 pub const MOVE_TIMEOUT: u32 = 5;
-
-/// Maximum number of times [`Player::Moving`] state can be transitioned to
-/// without changing position
-const UNSTUCK_TRACKER_THRESHOLD: u32 = 7;
 
 /// Minimium y distance required to perform a fall and double jump/adjusting
 pub const ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD: i32 = 8;
@@ -207,6 +204,7 @@ impl Moving {
 /// In auto mob or intermediate destination, most of the movement thresholds are relaxed for
 /// more fluid movement.
 pub fn update_moving_context(
+    context: &Context,
     state: &mut PlayerState,
     dest: Point,
     exact: bool,
@@ -216,10 +214,12 @@ pub fn update_moving_context(
 
     debug_assert!(intermediates.is_none() || intermediates.unwrap().current > 0);
     state.use_immediate_control_flow = true;
-    state.unstuck_counter += 1;
-    if state.unstuck_counter >= UNSTUCK_TRACKER_THRESHOLD {
-        state.unstuck_counter = 0;
-        return Player::Unstucking(Timeout::default(), None);
+    if state.track_unstucking() {
+        return Player::Unstucking(
+            Timeout::default(),
+            None,
+            state.track_unstucking_transitioned(),
+        );
     }
 
     let cur_pos = state.last_known_pos.unwrap();
@@ -231,30 +231,46 @@ pub fn update_moving_context(
 
     match (skip_destination, x_distance, y_direction, y_distance) {
         (false, d, _, _) if d >= state.double_jump_threshold(is_intermediate) => {
-            abort_action_on_state_repeat(Player::DoubleJumping(moving, false, false), state)
+            abort_action_on_state_repeat(
+                Player::DoubleJumping(moving, false, false),
+                context,
+                state,
+            )
         }
         (false, d, _, _)
             if d >= ADJUSTING_MEDIUM_THRESHOLD || (exact && d >= ADJUSTING_SHORT_THRESHOLD) =>
         {
-            abort_action_on_state_repeat(Player::Adjusting(moving), state)
+            abort_action_on_state_repeat(Player::Adjusting(moving), context, state)
         }
         // y > 0: cur_pos is below dest
         // y < 0: cur_pos is above of dest
         (false, _, y, d)
             if y > 0 && d >= GRAPPLING_THRESHOLD && !state.should_disable_grappling() =>
         {
-            abort_action_on_state_repeat(Player::Grappling(moving), state)
+            abort_action_on_state_repeat(Player::Grappling(moving), context, state)
         }
         (false, _, y, d) if y > 0 && d >= UP_JUMP_THRESHOLD => {
-            abort_action_on_state_repeat(Player::UpJumping(moving), state)
+            // In auto mob with platforms pathing and up jump only, immediately aborts the action
+            // if there are no intermediate points and the distance is too big to up jump.
+            if state.has_auto_mob_action_only()
+                && state.config.auto_mob_platforms_pathing
+                && state.config.auto_mob_platforms_pathing_up_jump_only
+                && intermediates.is_none()
+                && d >= GRAPPLING_THRESHOLD
+            {
+                debug!(target: "player", "auto mob aborted because distance for up jump only is too big");
+                state.clear_action_completed();
+                return Player::Idle;
+            }
+            abort_action_on_state_repeat(Player::UpJumping(moving), context, state)
         }
         (false, _, y, d) if y > 0 && d >= JUMP_THRESHOLD => {
-            abort_action_on_state_repeat(Player::Jumping(moving), state)
+            abort_action_on_state_repeat(Player::Jumping(moving), context, state)
         }
         // this probably won't work if the platforms are far apart,
         // which is weird to begin with and only happen in very rare place (e.g. Haven)
         (false, _, y, d) if y < 0 && d >= state.falling_threshold(is_intermediate) => {
-            abort_action_on_state_repeat(Player::Falling(moving, cur_pos, false), state)
+            abort_action_on_state_repeat(Player::Falling(moving, cur_pos, false), context, state)
         }
         _ => {
             debug!(
@@ -266,7 +282,7 @@ pub fn update_moving_context(
             if let Some(mut intermediates) = intermediates
                 && let Some((dest, exact)) = intermediates.next()
             {
-                state.unstuck_counter = 0;
+                state.clear_unstucking(false);
                 state.clear_last_movement();
                 return Player::Moving(dest, exact, Some(intermediates));
             }
@@ -285,11 +301,15 @@ pub fn update_moving_context(
 ///
 /// Note: Initially, this is only intended for auto mobbing until rune pathing is added...
 #[inline]
-fn abort_action_on_state_repeat(next: Player, state: &mut PlayerState) -> Player {
+fn abort_action_on_state_repeat(
+    next: Player,
+    context: &Context,
+    state: &mut PlayerState,
+) -> Player {
     if state.track_last_movement_repeated() {
         info!(target: "player", "abort action due to repeated state");
-        state.mark_action_completed();
-        state.auto_mob_track_ignore_xs();
+        state.auto_mob_track_ignore_xs(context, true);
+        state.clear_action_completed();
         return Player::Idle;
     }
     next

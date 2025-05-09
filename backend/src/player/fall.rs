@@ -81,13 +81,6 @@ pub fn update_falling_context(
                 state,
                 |action| match action {
                     PlayerAction::AutoMob(_) => {
-                        if moving.completed && moving.is_destination_intermediate() {
-                            let _ = context.keys.send_up(KeyKind::Down);
-                            return Some((
-                                Player::Moving(moving.dest, moving.exact, moving.intermediates),
-                                false,
-                            ));
-                        }
                         let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
                         let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
                         on_auto_mob_use_key_action(context, action, cur_pos, x_distance, y_distance)

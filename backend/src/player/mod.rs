@@ -75,7 +75,7 @@ pub enum Player {
     /// Performs a falling action
     Falling(Moving, Point, bool),
     /// Unstucks when inside non-detecting position or because of [`PlayerState::unstuck_counter`]
-    Unstucking(Timeout, Option<bool>),
+    Unstucking(Timeout, Option<bool>, bool),
     /// Stalls for time and return to [`Player::Idle`] or [`PlayerState::stalling_timeout_state`]
     Stalling(Timeout, u32),
     /// Tries to solve a rune
@@ -99,7 +99,7 @@ impl Player {
             | Player::Falling(moving, _, _) => moving.completed,
             Player::SolvingRune(_)
             | Player::CashShopThenExit(_, _)
-            | Player::Unstucking(_, _)
+            | Player::Unstucking(_, _, _)
             | Player::DoubleJumping(_, true, _)
             | Player::UseKey(_)
             | Player::Stalling(_, _) => false,
@@ -148,11 +148,15 @@ impl Contextual for Player {
                 && let Minimap::Idle(idle) = context.minimap
                 && !idle.partially_overlapping
             {
-                Player::Unstucking(Timeout::default(), None)
+                Player::Unstucking(
+                    Timeout::default(),
+                    None,
+                    state.track_unstucking_transitioned(),
+                )
             } else {
                 Player::Detecting
             };
-            if matches!(next, Player::Unstucking(_, _)) {
+            if matches!(next, Player::Unstucking(_, _, _)) {
                 state.last_known_direction = ActionKeyDirection::Any;
             }
             return ControlFlow::Next(next);
@@ -190,11 +194,12 @@ fn update_non_positional_context(
         Player::UseKey(use_key) => {
             (!failed_to_detect_player).then(|| update_use_key_context(context, state, use_key))
         }
-        Player::Unstucking(timeout, has_settings) => Some(update_unstucking_context(
+        Player::Unstucking(timeout, has_settings, gamba_mode) => Some(update_unstucking_context(
             context,
             state,
             timeout,
             has_settings,
+            gamba_mode,
         )),
         Player::Stalling(timeout, max_timeout) => {
             (!failed_to_detect_player).then(|| update_stalling_context(state, timeout, max_timeout))
@@ -231,7 +236,7 @@ fn update_positional_context(
         Player::Detecting => Player::Idle,
         Player::Idle => update_idle_context(context, state),
         Player::Moving(dest, exact, intermediates) => {
-            update_moving_context(state, dest, exact, intermediates)
+            update_moving_context(context, state, dest, exact, intermediates)
         }
         Player::Adjusting(moving) => update_adjusting_context(context, state, moving),
         Player::DoubleJumping(moving, forced, require_stationary) => {
@@ -244,7 +249,7 @@ fn update_positional_context(
             update_falling_context(context, state, moving, anchor, timeout_on_complete)
         }
         Player::UseKey(_)
-        | Player::Unstucking(_, _)
+        | Player::Unstucking(_, _, _)
         | Player::Stalling(_, _)
         | Player::SolvingRune(_)
         | Player::CashShopThenExit(_, _) => unreachable!(),

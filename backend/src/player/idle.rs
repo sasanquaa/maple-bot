@@ -38,7 +38,37 @@ fn on_player_action(
     let cur_pos = state.last_known_pos.unwrap();
     match action {
         PlayerAction::AutoMob(PlayerActionAutoMob { position, .. }) => {
-            let next = state.auto_mob_pick_reachable_y_contextual_state(context, position);
+            let point = Point::new(position.x, position.y);
+            let intermediates = if state.config.auto_mob_platforms_pathing {
+                match context.minimap {
+                    Minimap::Idle(idle) => find_intermediate_points(
+                        &idle.platforms,
+                        state.last_known_pos.unwrap(),
+                        point,
+                        position.allow_adjusting,
+                        state.config.auto_mob_platforms_pathing_up_jump_only,
+                    ),
+                    _ => unreachable!(),
+                }
+            } else {
+                None
+            };
+            state.last_destinations = intermediates
+                .map(|intermediates| {
+                    intermediates
+                        .inner
+                        .into_iter()
+                        .map(|(point, _)| point)
+                        .collect::<Vec<_>>()
+                })
+                .or(Some(vec![point]));
+
+            let next = intermediates
+                .map(|mut intermediates| {
+                    let (point, exact) = intermediates.next().unwrap();
+                    Player::Moving(point, exact, Some(intermediates))
+                })
+                .unwrap_or(Player::Moving(point, position.allow_adjusting, None));
             let is_terminal = matches!(next, Player::Idle);
             Some((next, is_terminal))
         }

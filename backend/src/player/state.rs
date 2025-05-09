@@ -11,13 +11,13 @@ use super::{
     double_jump::DOUBLE_JUMP_AUTO_MOB_THRESHOLD, fall::FALLING_THRESHOLD, timeout::Timeout,
 };
 use crate::{
-    ActionKeyDirection, Class, Position,
+    ActionKeyDirection, Class,
     buff::{Buff, BuffKind},
     context::Context,
     detect::ArrowsState,
     minimap::Minimap,
     network::NotificationKind,
-    player::{moving::find_intermediate_points, timeout::update_with_timeout},
+    player::timeout::update_with_timeout,
     task::{Task, Update, update_detection_task},
 };
 
@@ -25,35 +25,42 @@ use crate::{
 /// `Player::CashShopThenExit`
 pub const MAX_RUNE_FAILED_COUNT: u32 = 8;
 
-/// The number of times a reachable y must successfuly ensures the player moves to that exact y
-///
-/// Once the count is reached, it is considered "solidified" and guaranteed the reachable y is
-/// always a y that has platform(s)
-pub const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 4;
-
-/// The number of times an auto-mob position has made the player aborted the auto-mob action
-///
-/// If the count is reached, subsequent auto-mob position falling within the x range will be ignored
-pub const AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT: u32 = 3;
-
-/// The range an ignored auto-mob x position spans
-///
-/// If an auto-mob x position is 5, then the range is [3, 7]
-pub const AUTO_MOB_IGNORE_XS_RANGE: i32 = 2;
-
-/// The maximum of number points for auto mobbing to periodically move to
-pub const AUTO_MOB_MAX_PATHING_POINTS: usize = 3;
-
-/// The acceptable y range above and below the detected mob position when matched with a reachable y
-pub const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 10;
-
 const HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 20;
 
 const VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 8;
 
+/// The number of times a reachable y must successfuly ensures the player moves to that exact y
+///
+/// Once the count is reached, it is considered "solidified" and guaranteed the reachable y is
+/// always a y that has platform(s)
+const AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT: u32 = 4;
+
+/// The number of times an auto-mob position has made the player aborted the auto-mob action
+///
+/// If the count is reached, subsequent auto-mob position falling within the x range will be ignored
+const AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT: u32 = 3;
+
+/// The range an ignored auto-mob x position spans
+///
+/// If an auto-mob x position is 5, then the range is [2, 8]
+const AUTO_MOB_IGNORE_XS_RANGE: i32 = 3;
+
+/// The maximum of number points for auto mobbing to periodically move to
+const AUTO_MOB_MAX_PATHING_POINTS: usize = 3;
+
+/// The acceptable y range above and below the detected mob position when matched with a reachable y
+const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 10;
+
 const AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 4;
 
 const AUTO_MOB_VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 3;
+
+/// Maximum number of times [`Player::Moving`] state can be transitioned to
+/// without changing position
+const UNSTUCK_TRACKER_THRESHOLD: u32 = 7;
+
+/// The number of times [`Player::Unstucking`] can be transitioned to before entering GAMBA MODE
+const UNSTUCK_GAMBA_MODE_COUNT: u32 = 3;
 
 /// The player previous movement-related contextual state
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
@@ -188,11 +195,11 @@ pub struct PlayerState {
     /// Tracks whether movement-related actions do not change the player position after a while.
     ///
     /// Resets when a limit is reached (for unstucking) or position did change.
-    pub(super) unstuck_counter: u32,
+    unstuck_count: u32,
     /// The number of times player transtioned to [`Player::Unstucking`]
     ///
     /// Resets when threshold reached or position changed
-    pub(super) unstuck_transitioned_counter: u32,
+    unstuck_transitioned_count: u32,
     /// Unstuck task for detecting settings when mis-pressing ESC key
     pub(super) unstuck_task: Option<Task<Result<bool>>>,
     /// Rune solving task
@@ -306,29 +313,35 @@ impl PlayerState {
             .then_some(prev_id)
     }
 
-    /// Whether there is a priority rune action
-    #[inline]
-    pub fn has_rune_action(&self) -> bool {
-        matches!(self.priority_action, Some(PlayerAction::SolveRune))
-    }
-
     /// Whether the player is validating whether the rune is solved
     #[inline]
     pub fn is_validating_rune(&self) -> bool {
         self.rune_validate_timeout.is_some()
     }
 
-    /// Aborts both on-going normal and priority actions
+    /// Whether there is a priority rune action
     #[inline]
-    pub fn abort_actions(&mut self) {
+    pub fn has_rune_action(&self) -> bool {
+        matches!(self.priority_action, Some(PlayerAction::SolveRune))
+    }
+
+    /// Whether there is only auto mob action
+    #[inline]
+    pub(super) fn has_auto_mob_action_only(&self) -> bool {
+        !self.has_priority_action() && matches!(self.normal_action, Some(PlayerAction::AutoMob(_)))
+    }
+
+    /// Clears both on-going normal and priority actions due to being aborted
+    #[inline]
+    pub fn clear_actions_aborted(&mut self) {
         self.reset_to_idle_next_update = true;
         self.priority_action = None;
         self.normal_action = None;
     }
 
-    /// Marks either normal or priority is completed
+    /// Clears either normal or priority due to completion
     #[inline]
-    pub(super) fn mark_action_completed(&mut self) {
+    pub(super) fn clear_action_completed(&mut self) {
         self.clear_last_movement();
         if self.has_priority_action() {
             self.priority_action = None;
@@ -348,7 +361,54 @@ impl PlayerState {
         }
     }
 
+    #[inline]
+    pub(super) fn clear_unstucking(&mut self, include_transitioned_count: bool) {
+        self.unstuck_count = 0;
+        if include_transitioned_count {
+            self.unstuck_transitioned_count = 0;
+        }
+    }
+
+    /// Increments the rune validation fail count and sets [`PlayerState::rune_cash_shop`] if needed
+    #[inline]
+    pub(super) fn track_rune_fail_count(&mut self) {
+        self.rune_failed_count += 1;
+        if self.rune_failed_count >= MAX_RUNE_FAILED_COUNT {
+            self.rune_failed_count = 0;
+            self.rune_cash_shop = true;
+        }
+    }
+
+    /// Increments the unstucking transitioned counter
+    ///
+    /// Returns `true` when [`Player::Unstucking`] should enter GAMBA MODE
+    #[inline]
+    pub(super) fn track_unstucking_transitioned(&mut self) -> bool {
+        self.unstuck_transitioned_count += 1;
+        if self.unstuck_transitioned_count >= UNSTUCK_GAMBA_MODE_COUNT {
+            self.unstuck_transitioned_count = 0;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Increments the unstucking counter
+    ///
+    /// Returns `true` when the player should transition to [`Player::Unstucking`]
+    #[inline]
+    pub(super) fn track_unstucking(&mut self) -> bool {
+        self.unstuck_count += 1;
+        if self.unstuck_count >= UNSTUCK_TRACKER_THRESHOLD {
+            self.unstuck_count = 0;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Tracks the last movement to determine whether the state has repeated passing a threshold
+    #[inline]
     pub(super) fn track_last_movement_repeated(&mut self) -> bool {
         if self.last_movement.is_none() {
             return false;
@@ -389,279 +449,6 @@ impl PlayerState {
         count >= count_max
     }
 
-    /// Whether there is only auto mob action
-    #[inline]
-    pub(super) fn has_auto_mob_action_only(&self) -> bool {
-        matches!(self.normal_action, Some(PlayerAction::AutoMob(_))) && !self.has_priority_action()
-    }
-
-    /// Picks a pathing point in auto mobbing to move to
-    #[inline]
-    pub fn auto_mob_pathing_point(&mut self, minimap: Rect) -> Option<Point> {
-        let point = self
-            .auto_mob_pathing_points
-            .iter()
-            .enumerate()
-            .map(|(i, point)| (i, *point))
-            .choose(&mut rand::rng());
-        if let Some((i, _)) = point {
-            // I don't know guys
-            // Just want variations
-            if rand::random_bool(0.5) {
-                self.auto_mob_pathing_points.remove(i);
-            }
-        }
-        point
-            .map(|(_, point)| Point::new(point.x, minimap.height - point.y))
-            .or_else(|| {
-                // Last resort
-                self.auto_mob_reachable_y_map
-                    .keys()
-                    .min()
-                    .map(|y| Point::new(minimap.width / 2, minimap.height - y))
-            })
-    }
-
-    /// Populates pathing points for an auto mob action
-    ///
-    /// After using key state is fully complete, it will try to populate a pathing point to be used
-    /// when [`Rotator`] fails the mob detection. This will will help [`Rotator`] re-uses the previous
-    /// detected mob point for moving to area with more mobs.
-    pub(super) fn auto_mob_populate_pathing_points(&mut self, context: &Context) {
-        if self.auto_mob_pathing_points.len() >= AUTO_MOB_MAX_PATHING_POINTS
-            || self.auto_mob_reachable_y_require_update()
-        {
-            return;
-        }
-
-        let (minimap_width, platforms) = match context.minimap {
-            Minimap::Idle(idle) => (idle.bbox.width, idle.platforms),
-            _ => unreachable!(),
-        };
-        // Flip a coin, use platform as pathing point
-        if self.config.auto_mob_platforms_pathing && !platforms.is_empty() && rand::random_bool(0.5)
-        {
-            let platform = platforms[rand::random_range(0..platforms.len())];
-            let xs = platform.xs();
-            let y = platform.y();
-            let point = Point::new(xs.start.midpoint(xs.end), y);
-            // Platform pathing point can bypass y restriction
-            if !self
-                .auto_mob_pathing_points
-                .iter()
-                .any(|pt| pt.y == point.y && pt.x == point.x)
-            {
-                self.auto_mob_pathing_points.push(point);
-                debug!(target: "player", "auto mob pathing point from platform {:?}", point);
-                return;
-            }
-        }
-
-        // The idea is to pick a pathing point with a different y from existing points and with x
-        // within 70% on both sides from the middle of the minimap
-        let minimap_mid = minimap_width / 2;
-        let minimap_threshold = (minimap_mid as f32 * 0.7) as i32;
-        let pos = self.last_known_pos.unwrap();
-        let x_offset = (pos.x - minimap_mid).abs();
-        let y = self.auto_mob_reachable_y.unwrap();
-        if x_offset > minimap_threshold
-            || self
-                .auto_mob_pathing_points
-                .iter()
-                .any(|point| point.y == y)
-        {
-            return;
-        }
-        self.auto_mob_pathing_points.push(Point::new(pos.x, y));
-        debug!(target: "player", "auto mob pathing points {:?}", self.auto_mob_pathing_points);
-    }
-
-    /// Whether the auto mob reachable y requires "solidifying"
-    #[inline]
-    pub(super) fn auto_mob_reachable_y_require_update(&self) -> bool {
-        self.auto_mob_reachable_y.is_none_or(|y| {
-            *self.auto_mob_reachable_y_map.get(&y).unwrap() < AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT
-        })
-    }
-
-    /// Picks a reachable y for reaching `mob_pos`
-    ///
-    /// After calling this function, the state is updated to track the current reachable `y`.
-    /// Caller is expected to call [`Self::auto_mob_track_reachable_y`] afterward when the
-    /// auto-mob action has completed (e.g. in terminal state of [`Player::UseKey`]).
-    ///
-    /// Returns [`Player::Moving`] indicating the moving action for the player to reach to mob or
-    /// [`Player::Idle`] indicating the action should be aborted.
-    #[inline]
-    pub(super) fn auto_mob_pick_reachable_y_contextual_state(
-        &mut self,
-        context: &Context,
-        mob_pos: Position,
-    ) -> Player {
-        if self.auto_mob_reachable_y_map.is_empty() {
-            self.auto_mob_populate_reachable_y(context);
-        }
-        debug_assert!(!self.auto_mob_reachable_y_map.is_empty());
-
-        let y = self
-            .auto_mob_reachable_y_map
-            .keys()
-            .copied()
-            .min_by_key(|y| (mob_pos.y - y).abs())
-            .filter(|y| (mob_pos.y - y).abs() <= AUTO_MOB_REACHABLE_Y_THRESHOLD);
-
-        // Checking whether y is solidified yet is not needed because y will only be added
-        // to the xs map when it is solidified
-        if let Some(y) = y
-            && self.auto_mob_ignore_xs_map.get(&y).is_some_and(|ranges| {
-                ranges.iter().any(|(range, count)| {
-                    *count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT && range.contains(&mob_pos.x)
-                })
-            })
-        {
-            debug!(target: "player", "auto mob aborted because of wrong mob x position");
-            return Player::Idle;
-        }
-
-        let point = Point::new(mob_pos.x, y.unwrap_or(mob_pos.y));
-        let intermediates = if self.config.auto_mob_platforms_pathing {
-            match context.minimap {
-                Minimap::Idle(idle) => find_intermediate_points(
-                    &idle.platforms,
-                    self.last_known_pos.unwrap(),
-                    point,
-                    mob_pos.allow_adjusting,
-                    self.config.auto_mob_platforms_pathing_up_jump_only,
-                ),
-                _ => unreachable!(),
-            }
-        } else {
-            None
-        };
-        debug!(target: "player", "auto mob reachable y {:?} {:?}", y, self.auto_mob_reachable_y_map);
-
-        self.auto_mob_reachable_y = y;
-        self.last_destinations = intermediates
-            .map(|intermediates| {
-                intermediates
-                    .inner
-                    .into_iter()
-                    .map(|(point, _)| point)
-                    .collect::<Vec<_>>()
-            })
-            .or(Some(vec![point]));
-        intermediates
-            .map(|mut intermediates| {
-                let (point, exact) = intermediates.next().unwrap();
-                Player::Moving(point, exact, Some(intermediates))
-            })
-            .unwrap_or(Player::Moving(point, mob_pos.allow_adjusting, None))
-    }
-
-    fn auto_mob_populate_reachable_y(&mut self, context: &Context) {
-        if self.config.auto_mob_platforms_pathing {
-            match context.minimap {
-                Minimap::Idle(idle) => {
-                    // Believes in user input lets goo...
-                    for platform in idle.platforms {
-                        self.auto_mob_reachable_y_map
-                            .insert(platform.y(), AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT);
-                    }
-                }
-                _ => unreachable!(),
-            }
-        }
-        let _ = self.auto_mob_reachable_y_map.try_insert(
-            self.last_known_pos.unwrap().y,
-            AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT - 1,
-        );
-        debug!(target: "player", "auto mob initial reachable y map {:?}", self.auto_mob_reachable_y_map);
-    }
-
-    /// Tracks the currently picked reachable y to solidify the y position
-    ///
-    /// After [`Self::auto_mob_pick_reachable_y_moving_state`] has been called in the action entry,
-    /// this function should be called in the terminal state of the action.
-    pub(super) fn auto_mob_track_reachable_y(&mut self) {
-        // state.last_known_pos is explicitly used instead of state.auto_mob_reachable_y
-        // because they might not be the same
-        if let Some(pos) = self.last_known_pos {
-            if self.auto_mob_reachable_y.is_some_and(|y| y != pos.y) {
-                let y = self.auto_mob_reachable_y.unwrap();
-                let count = self.auto_mob_reachable_y_map.get_mut(&y).unwrap();
-                *count = count.saturating_sub(1);
-                if *count == 0 {
-                    self.auto_mob_reachable_y_map.remove(&y);
-                    self.auto_mob_reachable_y = None;
-                }
-            }
-
-            let count = self.auto_mob_reachable_y_map.entry(pos.y).or_insert(0);
-            if *count < AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT {
-                *count += 1;
-            }
-            debug_assert!(*count <= AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT);
-
-            debug!(target: "player", "auto mob additional reachable y {} / {}", pos.y, count);
-        }
-    }
-
-    pub(super) fn auto_mob_track_ignore_xs(&mut self) {
-        // Note: this tracking currently does not clamp to bound
-
-        if !self.has_auto_mob_action_only() {
-            return;
-        }
-
-        let Some(y) = self.auto_mob_reachable_y else {
-            return;
-        };
-        if *self.auto_mob_reachable_y_map.get(&y).unwrap() < AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT {
-            return;
-        }
-
-        let x = match self.normal_action.unwrap() {
-            PlayerAction::AutoMob(mob) => mob.position.x,
-            PlayerAction::Key(_) | PlayerAction::Move(_) | PlayerAction::SolveRune => {
-                unreachable!()
-            }
-        };
-        let vec = self
-            .auto_mob_ignore_xs_map
-            .entry(y)
-            .or_insert_with(|| vec![auto_mob_ignore_xs_range_value(x)]);
-        if let Some((_, count)) = vec.iter_mut().find(|(xs, _)| xs.contains(&x)) {
-            if *count < AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT {
-                *count += 1;
-            } else {
-                // Merge overlapping adjacent ranges with the same y
-                let mut merged = Vec::<(Range<i32>, u32)>::new();
-                vec.sort_by_key(|(r, _)| r.start);
-
-                for (range, count) in vec.drain(..) {
-                    if let Some((last_range, last_count)) = merged.last_mut() {
-                        // Checking range start less than last_range end is sufficient because
-                        // these ranges are previously sorted and are never empty
-                        let overlapping = range.start < last_range.end;
-                        let should_merge = (*last_count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT)
-                            || (count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT);
-
-                        if overlapping && should_merge {
-                            last_range.end = last_range.end.max(range.end);
-                            continue;
-                        }
-                    }
-                    merged.push((range, count));
-                }
-
-                *vec = merged;
-            }
-            return;
-        }
-        let (range, count) = auto_mob_ignore_xs_range_value(x);
-        vec.push((range, count + 1));
-    }
-
     /// Gets the falling minimum `y` distance threshold
     ///
     /// In auto mob or intermediate destination, the threshold is relaxed for more
@@ -699,6 +486,305 @@ impl PlayerState {
                 && self.config.rune_platforms_pathing_up_jump_only)
     }
 
+    /// Picks a pathing point in auto mobbing to move to
+    ///
+    /// The returned [`Point`] is in player coordinate relative to bottom-left
+    #[inline]
+    pub fn auto_mob_pathing_point(&mut self, context: &Context) -> Option<Point> {
+        let (minimap_width, platforms) = match context.minimap {
+            Minimap::Idle(idle) => (idle.bbox.width, idle.platforms),
+            _ => unreachable!(),
+        };
+        let point = self
+            .auto_mob_pathing_points
+            .iter()
+            .enumerate()
+            .map(|(i, point)| (i, *point))
+            .choose(&mut rand::rng());
+        if let Some((i, _)) = point {
+            self.auto_mob_pathing_points.remove(i);
+        }
+        point.map(|(_, point)| point).or_else(|| {
+            // Flip a coin, use platform as pathing point
+            if !platforms.is_empty() && rand::random_bool(0.5) {
+                let platform = platforms[rand::random_range(0..platforms.len())];
+                let xs = platform.xs();
+                let y = platform.y();
+                let x = rand::random_range(xs.start..xs.end);
+                debug!(target: "player", "auto mob pathing point from platform {x}, {y}");
+                return Some(Point::new(x, y));
+            }
+            // Last resort
+            self.auto_mob_reachable_y_map
+                .keys()
+                .min()
+                .map(|y| Point::new(minimap_width / 2, *y))
+        })
+    }
+
+    /// Populates pathing points for an auto mob action
+    ///
+    /// After using key state is fully complete, it will try to populate a pathing point to be used
+    /// when [`Rotator`] fails the mob detection. This will will help [`Rotator`] re-uses the previous
+    /// detected mob point for moving to area with more mobs.
+    pub(super) fn auto_mob_populate_pathing_points(&mut self, context: &Context) {
+        if self.auto_mob_pathing_points.len() >= AUTO_MOB_MAX_PATHING_POINTS
+            || self.auto_mob_reachable_y_require_update()
+        {
+            return;
+        }
+
+        // The idea is to pick a pathing point with a different y from existing points and with x
+        // within 70% on both sides from the middle of the minimap
+        let minimap_width = match context.minimap {
+            Minimap::Idle(idle) => idle.bbox.width,
+            _ => unreachable!(),
+        };
+        let minimap_mid = minimap_width / 2;
+        let minimap_threshold = (minimap_mid as f32 * 0.7) as i32;
+        let pos = self.last_known_pos.unwrap();
+        let x_offset = (pos.x - minimap_mid).abs();
+        let y = self.auto_mob_reachable_y.unwrap();
+        if x_offset > minimap_threshold
+            || self
+                .auto_mob_pathing_points
+                .iter()
+                .any(|point| point.y == y)
+        {
+            return;
+        }
+        self.auto_mob_pathing_points.push(Point::new(pos.x, y));
+        debug!(target: "player", "auto mob pathing points {:?}", self.auto_mob_pathing_points);
+    }
+
+    /// Whether the auto mob reachable y requires "solidifying"
+    #[inline]
+    pub(super) fn auto_mob_reachable_y_require_update(&self) -> bool {
+        self.auto_mob_reachable_y.is_none_or(|y| {
+            *self.auto_mob_reachable_y_map.get(&y).unwrap() < AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT
+        })
+    }
+
+    /// Picks a reachable y position for reaching `mob_pos`
+    ///
+    /// The `mob_pos` must be player coordinate relative to bottom-left.
+    ///
+    /// Returns [`Some`] indicating the new position for the player to reach to mob or
+    /// [`None`] indicating this mob position should be dropped.
+    pub fn auto_mob_pick_reachable_y_position(
+        &mut self,
+        context: &Context,
+        mob_pos: Point,
+    ) -> Option<Point> {
+        if self.auto_mob_reachable_y_map.is_empty() {
+            self.auto_mob_populate_reachable_y(context);
+        }
+        debug_assert!(!self.auto_mob_reachable_y_map.is_empty());
+
+        let ys = self
+            .auto_mob_reachable_y_map
+            .keys()
+            .copied()
+            .filter(|y| (mob_pos.y - y).abs() <= AUTO_MOB_REACHABLE_Y_THRESHOLD);
+        let y = ys.choose(&mut rand::rng());
+
+        // Checking whether y is solidified yet is not needed because y will only be added
+        // to the xs map when it is solidified. As for populated xs from platforms, the
+        // corresponding y must have already been populated.
+        if let Some(y) = y
+            && self.auto_mob_ignore_xs_map.get(&y).is_some_and(|ranges| {
+                ranges.iter().any(|(range, count)| {
+                    *count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT && range.contains(&mob_pos.x)
+                })
+            })
+        {
+            debug!(target: "player", "auto mob ignored wrong position in {},{} / {}", mob_pos.x, y, mob_pos.y);
+            return None;
+        }
+
+        self.auto_mob_reachable_y = y;
+        debug!(target: "player", "auto mob reachable y {:?} {:?}", y, self.auto_mob_reachable_y_map);
+
+        Some(Point::new(mob_pos.x, y.unwrap_or(mob_pos.y)))
+    }
+
+    fn auto_mob_populate_reachable_y(&mut self, context: &Context) {
+        match context.minimap {
+            Minimap::Idle(idle) => {
+                // Believes in user input lets goo...
+                for platform in idle.platforms {
+                    self.auto_mob_reachable_y_map
+                        .insert(platform.y(), AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT);
+                }
+            }
+            _ => unreachable!(),
+        }
+        let _ = self.auto_mob_reachable_y_map.try_insert(
+            self.last_known_pos.unwrap().y,
+            AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT - 1,
+        );
+        debug!(target: "player", "auto mob initial reachable y map {:?}", self.auto_mob_reachable_y_map);
+    }
+
+    /// Tracks the currently picked reachable y to solidify the y position
+    ///
+    /// After [`Self::auto_mob_pick_reachable_y_moving_state`] has been called in the action entry,
+    /// this function should be called in the terminal state of the action.
+    pub(super) fn auto_mob_track_reachable_y(&mut self) {
+        // state.last_known_pos is explicitly used instead of state.auto_mob_reachable_y
+        // because they might not be the same
+        if let Some(pos) = self.last_known_pos {
+            if self.auto_mob_reachable_y.is_some_and(|y| y != pos.y) {
+                let y = self.auto_mob_reachable_y.unwrap();
+                let count = self.auto_mob_reachable_y_map.get_mut(&y).unwrap();
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    self.auto_mob_reachable_y_map.remove(&y);
+                    self.auto_mob_reachable_y = None;
+                }
+            }
+
+            let count = self.auto_mob_reachable_y_map.entry(pos.y).or_insert(0);
+            if *count < AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT {
+                *count += 1;
+            }
+            debug_assert!(*count <= AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT);
+
+            debug!(target: "player", "auto mob additional reachable y {} / {}", pos.y, count);
+        }
+    }
+
+    /// Tracks whether to ignore a x range for the current reachable y
+    // TODO: This tracking currently does not clamp to bound, should clamp to non-negative
+    pub(super) fn auto_mob_track_ignore_xs(&mut self, context: &Context, is_aborted: bool) {
+        if !self.has_auto_mob_action_only() {
+            return;
+        }
+        if self.auto_mob_ignore_xs_map.is_empty() {
+            self.auto_mob_populate_ignore_xs(context);
+        }
+
+        let Some(y) = self.auto_mob_reachable_y else {
+            return;
+        };
+        if *self.auto_mob_reachable_y_map.get(&y).unwrap() < AUTO_MOB_REACHABLE_Y_SOLIDIFY_COUNT {
+            return;
+        }
+
+        let x = match self.normal_action.unwrap() {
+            PlayerAction::AutoMob(mob) => mob.position.x,
+            PlayerAction::Key(_) | PlayerAction::Move(_) | PlayerAction::SolveRune => {
+                unreachable!()
+            }
+        };
+        let vec = self
+            .auto_mob_ignore_xs_map
+            .entry(y)
+            .or_insert_with(|| vec![auto_mob_ignore_xs_range_value(x)]);
+
+        if is_aborted
+            && vec.len() >= 2
+            && vec.iter().array_chunks::<2>().any(
+                |[(first_range, first_count), (second_range, second_count)]| {
+                    second_range.start < first_range.end
+                        && (*first_count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT
+                            || *second_count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT)
+                },
+            )
+        {
+            // Merge overlapping adjacent ranges with the same y
+            let mut merged = Vec::<(Range<i32>, u32)>::new();
+            for (range, count) in vec.drain(..) {
+                if let Some((last_range, last_count)) = merged.last_mut() {
+                    // Checking range start less than last_range end is sufficient because
+                    // these ranges are previously sorted and are never empty
+                    let overlapping = range.start < last_range.end;
+                    let should_merge = (*last_count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT)
+                        || (count >= AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT);
+
+                    if overlapping && should_merge {
+                        last_range.end = last_range.end.max(range.end);
+                        *last_count = AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT;
+                        continue;
+                    }
+                }
+                merged.push((range, count));
+            }
+            *vec = merged;
+            debug!(target: "player", "auto mob merged ignore xs {y} = {vec:?}");
+        }
+
+        if let Some((i, (_, count))) = vec
+            .iter_mut()
+            .enumerate()
+            .find(|(_, (xs, _))| xs.contains(&x))
+        {
+            if *count < AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT {
+                *count = if is_aborted {
+                    count.saturating_add(1)
+                } else {
+                    count.saturating_sub(1)
+                };
+                if !is_aborted && *count == 0 {
+                    vec.remove(i);
+                }
+                debug!(target: "player", "auto mob updated ignore xs {:?}", self.auto_mob_ignore_xs_map);
+            }
+            return;
+        }
+
+        if is_aborted {
+            let (range, count) = auto_mob_ignore_xs_range_value(x);
+            vec.push((range, count + 1));
+            vec.sort_by_key(|(r, _)| r.start);
+            debug!(target: "player", "auto mob new ignore xs {:?}", self.auto_mob_ignore_xs_map);
+        }
+    }
+
+    pub(super) fn auto_mob_populate_ignore_xs(&mut self, context: &Context) {
+        let (platforms, minimap_width) = match context.minimap {
+            Minimap::Idle(idle) => (idle.platforms, idle.bbox.width),
+            Minimap::Detecting => unreachable!(),
+        };
+        if platforms.is_empty() {
+            return;
+        }
+
+        // Group platform ranges by y
+        let mut y_map: HashMap<i32, Vec<Range<i32>>> = HashMap::new();
+        for platform in platforms {
+            y_map.entry(platform.y()).or_default().push(platform.xs());
+        }
+
+        for (y, mut ranges) in y_map {
+            // Sort by start of the range
+            ranges.sort_by_key(|r| r.start);
+
+            let mut last_end = ranges[0].end;
+            let ignores = self.auto_mob_ignore_xs_map.entry(y).or_default();
+
+            let first_gap = 0..ranges[0].start;
+            if !first_gap.is_empty() {
+                ignores.push((first_gap.into(), AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT));
+            }
+
+            let last_gap = ranges.last().unwrap().end..minimap_width;
+            if !last_gap.is_empty() {
+                ignores.push((last_gap.into(), AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT));
+            }
+
+            for r in ranges.into_iter().skip(1) {
+                if r.start > last_end {
+                    let gap = last_end..r.start;
+                    if !gap.is_empty() {
+                        ignores.push((gap.into(), AUTO_MOB_IGNORE_XS_SOLIDIFY_COUNT));
+                    }
+                }
+                last_end = last_end.max(r.end);
+            }
+        }
+    }
+
     /// Updates the [`PlayerState`] on each tick.
     ///
     /// This function updates the player states including current position, health, whether the
@@ -716,16 +802,11 @@ impl PlayerState {
         false
     }
 
-    /// Increments the rune validation fail count and sets [`PlayerState::rune_cash_shop`] if needed
-    #[inline]
-    pub(super) fn update_rune_fail_count_state(&mut self) {
-        self.rune_failed_count += 1;
-        if self.rune_failed_count >= MAX_RUNE_FAILED_COUNT {
-            self.rune_failed_count = 0;
-            self.rune_cash_shop = true;
-        }
-    }
-
+    /// Updates the player current position
+    ///
+    /// The player position (as well as other positions in relation to the player) does not follow
+    /// OpenCV top-left coordinate but flipped to bottom-left by subtracting the minimap height
+    /// with the y position. This is more intuitive both for the UI and development experience.
     #[inline]
     fn update_position_state(&mut self, context: &Context) -> bool {
         let minimap_bbox = match &context.minimap {
@@ -747,8 +828,8 @@ impl PlayerState {
         let pos = Point::new(x, y);
         let last_known_pos = self.last_known_pos.unwrap_or(pos);
         if last_known_pos != pos {
-            self.unstuck_counter = 0;
-            self.unstuck_transitioned_counter = 0;
+            self.unstuck_count = 0;
+            self.unstuck_transitioned_count = 0;
             self.is_stationary_timeout = Timeout::default();
         }
 
@@ -783,7 +864,7 @@ impl PlayerState {
                 Some,
                 || {
                     if matches!(context.buffs[BuffKind::Rune], Buff::NoBuff) {
-                        self.update_rune_fail_count_state();
+                        self.track_rune_fail_count();
                     } else {
                         self.rune_failed_count = 0;
                     }
@@ -794,6 +875,11 @@ impl PlayerState {
         });
     }
 
+    /// Updates the player current health
+    ///
+    /// The detection first detects the HP bar and caches the result. The HP bar is then used
+    /// to crop into the game image and detects the current health bar and max health bar. These
+    /// bars are then cached and used to extract the current health and max health.
     // TODO: This should be a PlayerAction?
     #[inline]
     fn update_health_state(&mut self, context: &Context) {
@@ -801,7 +887,13 @@ impl PlayerState {
             return;
         }
         if self.config.use_potion_below_percent.is_none() {
-            self.reset_health();
+            {
+                let this = &mut *self;
+                this.health = None;
+                this.health_task = None;
+                this.health_bar = None;
+                this.health_bar_task = None;
+            };
             return;
         }
 
@@ -841,14 +933,9 @@ impl PlayerState {
         }
     }
 
-    #[inline]
-    fn reset_health(&mut self) {
-        self.health = None;
-        self.health_task = None;
-        self.health_bar = None;
-        self.health_bar_task = None;
-    }
-
+    /// Updates whether the player is dead
+    ///
+    /// Upon being dead, a notification will be scheduled to notify the user.
     #[inline]
     fn update_is_dead_state(&mut self, context: &Context) {
         let Update::Ok(is_dead) =
@@ -879,12 +966,15 @@ fn auto_mob_ignore_xs_range_value(x: i32) -> (Range<i32>, u32) {
 mod tests {
     use std::{assert_matches::assert_matches, collections::HashMap};
 
-    use opencv::core::Point;
+    use opencv::core::{Point, Rect};
 
     use crate::{
         Position,
+        array::Array,
         context::Context,
-        player::{Player, PlayerAction, PlayerActionAutoMob, PlayerState},
+        minimap::{Minimap, MinimapIdle},
+        pathing::{Platform, find_neighbors},
+        player::{PlayerAction, PlayerActionAutoMob, PlayerState},
     };
 
     #[test]
@@ -897,15 +987,8 @@ mod tests {
         };
 
         assert_matches!(
-            state.auto_mob_pick_reachable_y_contextual_state(
-                &context,
-                Position {
-                    x: 55,
-                    y: 50,
-                    ..Default::default()
-                },
-            ),
-            Player::Idle
+            state.auto_mob_pick_reachable_y_position(&context, Point::new(55, 50)),
+            None
         );
     }
 
@@ -917,16 +1000,12 @@ mod tests {
             last_known_pos: Some(Point::new(0, 0)),
             ..Default::default()
         };
-        let mob_pos = Position {
-            x: 50,
-            y: 125,
-            ..Default::default()
-        };
+        let mob_pos = Point::new(50, 125);
 
         // Expect 120 to be chosen since it's closest to 125
         assert_matches!(
-            state.auto_mob_pick_reachable_y_contextual_state(&context, mob_pos),
-            Player::Moving(Point { x: 50, y: 120 }, false, None)
+            state.auto_mob_pick_reachable_y_position(&context, mob_pos),
+            Some(Point { x: 50, y: 120 })
         );
         assert_eq!(state.auto_mob_reachable_y, Some(120));
     }
@@ -939,16 +1018,12 @@ mod tests {
             last_known_pos: Some(Point::new(0, 0)),
             ..Default::default()
         };
-        let mob_pos = Position {
-            x: 50,
-            y: 125,
-            ..Default::default()
-        };
+        let mob_pos = Point::new(50, 125);
 
         // No y value is chosen so the original y is used
         assert_matches!(
-            state.auto_mob_pick_reachable_y_contextual_state(&context, mob_pos),
-            Player::Moving(Point { x: 50, y: 125 }, false, None)
+            state.auto_mob_pick_reachable_y_position(&context, mob_pos),
+            Some(Point { x: 50, y: 125 })
         );
         assert_eq!(state.auto_mob_reachable_y, None);
     }
@@ -978,6 +1053,7 @@ mod tests {
     #[test]
     fn auto_mob_track_ignore_xs_conditional_merge() {
         let y = 100;
+        let context = Context::new(None, None);
         let mut player = PlayerState {
             normal_action: Some(PlayerAction::AutoMob(PlayerActionAutoMob {
                 position: Position {
@@ -999,7 +1075,7 @@ mod tests {
             ..Default::default()
         };
 
-        player.auto_mob_track_ignore_xs();
+        player.auto_mob_track_ignore_xs(&context, true);
 
         let ranges = player.auto_mob_ignore_xs_map.get(&y).unwrap();
         assert_eq!(ranges.len(), 1); // Should be merged
@@ -1022,10 +1098,47 @@ mod tests {
             ],
         )]);
 
-        player.auto_mob_track_ignore_xs();
+        player.auto_mob_track_ignore_xs(&context, true);
 
         let ranges = player.auto_mob_ignore_xs_map.get(&y).unwrap();
         assert_eq!(ranges.len(), 2); // Should remain unmerged but incremented
         assert_eq!(ranges, &vec![((55..65).into(), 2), ((63..75).into(), 1)])
+    }
+
+    #[test]
+    fn auto_mob_populate_ignore_xs_detects_gaps_correctly() {
+        let platforms = vec![
+            Platform::new(1..5, 10),
+            Platform::new(10..15, 10),
+            Platform::new(20..25, 10),
+            Platform::new(0..10, 5), // A different y-level
+        ];
+        let platforms = find_neighbors(&platforms, 25, 7, 41);
+
+        let mut idle = MinimapIdle::default();
+        idle.platforms = Array::from_iter(platforms);
+        idle.bbox = Rect::new(0, 0, 100, 100);
+
+        let context = Context {
+            minimap: Minimap::Idle(idle),
+            ..Context::new(None, None)
+        };
+
+        let mut state = PlayerState::default();
+        state.auto_mob_populate_ignore_xs(&context);
+
+        let map = &state.auto_mob_ignore_xs_map;
+
+        assert_eq!(map.len(), 2);
+        let gaps = map.get(&10).unwrap();
+        assert_eq!(gaps.len(), 4);
+        assert_eq!(gaps[0].0, (0..1).into());
+        assert_eq!(gaps[1].0, (25..100).into());
+        assert_eq!(gaps[2].0, (5..10).into());
+        assert_eq!(gaps[3].0, (15..20).into());
+
+        let gaps = map.get(&5).unwrap();
+        assert_eq!(gaps.len(), 1);
+        assert_eq!(gaps[0].0, (10..100).into());
     }
 }

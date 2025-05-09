@@ -3,6 +3,7 @@
 #![feature(map_try_insert)]
 #![feature(variant_count)]
 #![feature(let_chains)]
+#![feature(iter_array_chunks)]
 #![feature(associated_type_defaults)]
 #![feature(assert_matches)]
 
