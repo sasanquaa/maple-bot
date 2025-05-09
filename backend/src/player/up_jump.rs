@@ -51,7 +51,7 @@ pub fn update_up_jumping_context(
                     && portal.y - portal.height < cur_pos.y
                 {
                     debug!(target: "player", "abort action due to potential map moving");
-                    state.mark_action_completed();
+                    state.clear_action_completed();
                     return Player::Idle;
                 }
             }

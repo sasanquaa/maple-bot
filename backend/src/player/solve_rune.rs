@@ -101,7 +101,7 @@ pub fn update_solving_rune_context(
                     if solving_rune.keys.is_some() {
                         state.rune_validate_timeout = Some(Timeout::default());
                     } else {
-                        state.update_rune_fail_count_state();
+                        state.track_rune_fail_count();
                     }
                 }
                 Some((next, is_terminal))

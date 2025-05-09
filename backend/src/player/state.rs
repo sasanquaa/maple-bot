@@ -25,6 +25,10 @@ use crate::{
 /// `Player::CashShopThenExit`
 pub const MAX_RUNE_FAILED_COUNT: u32 = 8;
 
+const HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 20;
+
+const VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 8;
+
 /// The number of times a reachable y must successfuly ensures the player moves to that exact y
 ///
 /// Once the count is reached, it is considered "solidified" and guaranteed the reachable y is
@@ -47,13 +51,16 @@ const AUTO_MOB_MAX_PATHING_POINTS: usize = 3;
 /// The acceptable y range above and below the detected mob position when matched with a reachable y
 const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 10;
 
-const HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 20;
-
-const VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 8;
-
 const AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 4;
 
 const AUTO_MOB_VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 3;
+
+/// Maximum number of times [`Player::Moving`] state can be transitioned to
+/// without changing position
+const UNSTUCK_TRACKER_THRESHOLD: u32 = 7;
+
+/// The number of times [`Player::Unstucking`] can be transitioned to before entering GAMBA MODE
+const UNSTUCK_GAMBA_MODE_COUNT: u32 = 3;
 
 /// The player previous movement-related contextual state
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
@@ -188,11 +195,11 @@ pub struct PlayerState {
     /// Tracks whether movement-related actions do not change the player position after a while.
     ///
     /// Resets when a limit is reached (for unstucking) or position did change.
-    pub(super) unstuck_counter: u32,
+    unstuck_count: u32,
     /// The number of times player transtioned to [`Player::Unstucking`]
     ///
     /// Resets when threshold reached or position changed
-    pub(super) unstuck_transitioned_counter: u32,
+    unstuck_transitioned_count: u32,
     /// Unstuck task for detecting settings when mis-pressing ESC key
     pub(super) unstuck_task: Option<Task<Result<bool>>>,
     /// Rune solving task
@@ -306,29 +313,35 @@ impl PlayerState {
             .then_some(prev_id)
     }
 
-    /// Whether there is a priority rune action
-    #[inline]
-    pub fn has_rune_action(&self) -> bool {
-        matches!(self.priority_action, Some(PlayerAction::SolveRune))
-    }
-
     /// Whether the player is validating whether the rune is solved
     #[inline]
     pub fn is_validating_rune(&self) -> bool {
         self.rune_validate_timeout.is_some()
     }
 
-    /// Aborts both on-going normal and priority actions
+    /// Whether there is a priority rune action
     #[inline]
-    pub fn abort_actions(&mut self) {
+    pub fn has_rune_action(&self) -> bool {
+        matches!(self.priority_action, Some(PlayerAction::SolveRune))
+    }
+
+    /// Whether there is only auto mob action
+    #[inline]
+    pub(super) fn has_auto_mob_action_only(&self) -> bool {
+        !self.has_priority_action() && matches!(self.normal_action, Some(PlayerAction::AutoMob(_)))
+    }
+
+    /// Clears both on-going normal and priority actions due to being aborted
+    #[inline]
+    pub fn clear_actions_aborted(&mut self) {
         self.reset_to_idle_next_update = true;
         self.priority_action = None;
         self.normal_action = None;
     }
 
-    /// Marks either normal or priority is completed
+    /// Clears either normal or priority due to completion
     #[inline]
-    pub(super) fn mark_action_completed(&mut self) {
+    pub(super) fn clear_action_completed(&mut self) {
         self.clear_last_movement();
         if self.has_priority_action() {
             self.priority_action = None;
@@ -348,7 +361,54 @@ impl PlayerState {
         }
     }
 
+    #[inline]
+    pub(super) fn clear_unstucking(&mut self, include_transitioned_count: bool) {
+        self.unstuck_count = 0;
+        if include_transitioned_count {
+            self.unstuck_transitioned_count = 0;
+        }
+    }
+
+    /// Increments the rune validation fail count and sets [`PlayerState::rune_cash_shop`] if needed
+    #[inline]
+    pub(super) fn track_rune_fail_count(&mut self) {
+        self.rune_failed_count += 1;
+        if self.rune_failed_count >= MAX_RUNE_FAILED_COUNT {
+            self.rune_failed_count = 0;
+            self.rune_cash_shop = true;
+        }
+    }
+
+    /// Increments the unstucking transitioned counter
+    ///
+    /// Returns `true` when [`Player::Unstucking`] should enter GAMBA MODE
+    #[inline]
+    pub(super) fn track_unstucking_transitioned(&mut self) -> bool {
+        self.unstuck_transitioned_count += 1;
+        if self.unstuck_transitioned_count >= UNSTUCK_GAMBA_MODE_COUNT {
+            self.unstuck_transitioned_count = 0;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Increments the unstucking counter
+    ///
+    /// Returns `true` when the player should transition to [`Player::Unstucking`]
+    #[inline]
+    pub(super) fn track_unstucking(&mut self) -> bool {
+        self.unstuck_count += 1;
+        if self.unstuck_count >= UNSTUCK_TRACKER_THRESHOLD {
+            self.unstuck_count = 0;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Tracks the last movement to determine whether the state has repeated passing a threshold
+    #[inline]
     pub(super) fn track_last_movement_repeated(&mut self) -> bool {
         if self.last_movement.is_none() {
             return false;
@@ -389,10 +449,41 @@ impl PlayerState {
         count >= count_max
     }
 
-    /// Whether there is only auto mob action
+    /// Gets the falling minimum `y` distance threshold
+    ///
+    /// In auto mob or intermediate destination, the threshold is relaxed for more
+    /// fluid movement.
     #[inline]
-    pub(super) fn has_auto_mob_action_only(&self) -> bool {
-        matches!(self.normal_action, Some(PlayerAction::AutoMob(_))) && !self.has_priority_action()
+    pub(super) fn falling_threshold(&self, is_intermediate: bool) -> i32 {
+        if self.has_auto_mob_action_only() || is_intermediate {
+            JUMP_THRESHOLD
+        } else {
+            FALLING_THRESHOLD
+        }
+    }
+
+    /// Gets the double jump minimum `x` distance threshold
+    ///
+    /// In auto mob and final destination, the threshold is relaxed for more
+    /// fluid movement.
+    #[inline]
+    pub(super) fn double_jump_threshold(&self, is_intermediate: bool) -> i32 {
+        if self.has_auto_mob_action_only() && !is_intermediate {
+            DOUBLE_JUMP_AUTO_MOB_THRESHOLD
+        } else {
+            DOUBLE_JUMP_THRESHOLD
+        }
+    }
+
+    #[inline]
+    pub(super) fn should_disable_grappling(&self) -> bool {
+        // FIXME: ....
+        (self.has_auto_mob_action_only()
+            && self.config.auto_mob_platforms_pathing
+            && self.config.auto_mob_platforms_pathing_up_jump_only)
+            || (self.has_rune_action()
+                && self.config.rune_platforms_pathing
+                && self.config.rune_platforms_pathing_up_jump_only)
     }
 
     /// Picks a pathing point in auto mobbing to move to
@@ -492,7 +583,6 @@ impl PlayerState {
     ///
     /// Returns [`Player::Moving`] indicating the moving action for the player to reach to mob or
     /// [`Player::Idle`] indicating the action should be aborted.
-    #[inline]
     pub(super) fn auto_mob_pick_reachable_y_contextual_state(
         &mut self,
         context: &Context,
@@ -690,43 +780,6 @@ impl PlayerState {
         }
     }
 
-    /// Gets the falling minimum `y` distance threshold
-    ///
-    /// In auto mob or intermediate destination, the threshold is relaxed for more
-    /// fluid movement.
-    #[inline]
-    pub(super) fn falling_threshold(&self, is_intermediate: bool) -> i32 {
-        if self.has_auto_mob_action_only() || is_intermediate {
-            JUMP_THRESHOLD
-        } else {
-            FALLING_THRESHOLD
-        }
-    }
-
-    /// Gets the double jump minimum `x` distance threshold
-    ///
-    /// In auto mob and final destination, the threshold is relaxed for more
-    /// fluid movement.
-    #[inline]
-    pub(super) fn double_jump_threshold(&self, is_intermediate: bool) -> i32 {
-        if self.has_auto_mob_action_only() && !is_intermediate {
-            DOUBLE_JUMP_AUTO_MOB_THRESHOLD
-        } else {
-            DOUBLE_JUMP_THRESHOLD
-        }
-    }
-
-    #[inline]
-    pub(super) fn should_disable_grappling(&self) -> bool {
-        // FIXME: ....
-        (self.has_auto_mob_action_only()
-            && self.config.auto_mob_platforms_pathing
-            && self.config.auto_mob_platforms_pathing_up_jump_only)
-            || (self.has_rune_action()
-                && self.config.rune_platforms_pathing
-                && self.config.rune_platforms_pathing_up_jump_only)
-    }
-
     /// Updates the [`PlayerState`] on each tick.
     ///
     /// This function updates the player states including current position, health, whether the
@@ -744,16 +797,11 @@ impl PlayerState {
         false
     }
 
-    /// Increments the rune validation fail count and sets [`PlayerState::rune_cash_shop`] if needed
-    #[inline]
-    pub(super) fn update_rune_fail_count_state(&mut self) {
-        self.rune_failed_count += 1;
-        if self.rune_failed_count >= MAX_RUNE_FAILED_COUNT {
-            self.rune_failed_count = 0;
-            self.rune_cash_shop = true;
-        }
-    }
-
+    /// Updates the player current position
+    ///
+    /// The player position (as well as other positions in relation to the player) does not follow
+    /// OpenCV top-left coordinate but flipped to bottom-left by subtracting the minimap height
+    /// with the y position. This is more intuitive both for the UI and development experience.
     #[inline]
     fn update_position_state(&mut self, context: &Context) -> bool {
         let minimap_bbox = match &context.minimap {
@@ -775,8 +823,8 @@ impl PlayerState {
         let pos = Point::new(x, y);
         let last_known_pos = self.last_known_pos.unwrap_or(pos);
         if last_known_pos != pos {
-            self.unstuck_counter = 0;
-            self.unstuck_transitioned_counter = 0;
+            self.unstuck_count = 0;
+            self.unstuck_transitioned_count = 0;
             self.is_stationary_timeout = Timeout::default();
         }
 
@@ -811,7 +859,7 @@ impl PlayerState {
                 Some,
                 || {
                     if matches!(context.buffs[BuffKind::Rune], Buff::NoBuff) {
-                        self.update_rune_fail_count_state();
+                        self.track_rune_fail_count();
                     } else {
                         self.rune_failed_count = 0;
                     }
@@ -822,6 +870,11 @@ impl PlayerState {
         });
     }
 
+    /// Updates the player current health
+    ///
+    /// The detection first detects the HP bar and caches the result. The HP bar is then used
+    /// to crop into the game image and detects the current health bar and max health bar. These
+    /// bars are then cached and used to extract the current health and max health.
     // TODO: This should be a PlayerAction?
     #[inline]
     fn update_health_state(&mut self, context: &Context) {
@@ -829,7 +882,13 @@ impl PlayerState {
             return;
         }
         if self.config.use_potion_below_percent.is_none() {
-            self.reset_health();
+            {
+                let this = &mut *self;
+                this.health = None;
+                this.health_task = None;
+                this.health_bar = None;
+                this.health_bar_task = None;
+            };
             return;
         }
 
@@ -869,14 +928,9 @@ impl PlayerState {
         }
     }
 
-    #[inline]
-    fn reset_health(&mut self) {
-        self.health = None;
-        self.health_task = None;
-        self.health_bar = None;
-        self.health_bar_task = None;
-    }
-
+    /// Updates whether the player is dead
+    ///
+    /// Upon being dead, a notification will be scheduled to notify the user.
     #[inline]
     fn update_is_dead_state(&mut self, context: &Context) {
         let Update::Ok(is_dead) =

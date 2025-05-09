@@ -888,7 +888,7 @@ mod tests {
         assert!(!rotator.normal_actions_backward);
         assert_eq!(rotator.normal_index, 1);
 
-        player.abort_actions();
+        player.clear_actions_aborted();
 
         rotator.rotate_action(&context, &mut player);
         assert!(player.has_normal_action());
@@ -913,7 +913,7 @@ mod tests {
         assert!(!rotator.normal_actions_backward);
         assert_eq!(rotator.normal_index, 1);
 
-        player.abort_actions();
+        player.clear_actions_aborted();
 
         rotator.rotate_action(&context, &mut player);
         assert!(player.has_normal_action());
@@ -1073,7 +1073,7 @@ mod tests {
             VecDeque::from_iter([4].into_iter())
         );
 
-        player.abort_actions();
+        player.clear_actions_aborted();
         rotator.rotate_action(&context, &mut player);
         assert!(rotator.priority_queuing_linked_action.is_none());
         assert_eq!(

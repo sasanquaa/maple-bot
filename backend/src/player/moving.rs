@@ -24,10 +24,6 @@ use crate::{
 /// Maximum amount of ticks a change in x or y direction must be detected
 pub const MOVE_TIMEOUT: u32 = 5;
 
-/// Maximum number of times [`Player::Moving`] state can be transitioned to
-/// without changing position
-const UNSTUCK_TRACKER_THRESHOLD: u32 = 7;
-
 /// Minimium y distance required to perform a fall and double jump/adjusting
 pub const ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD: i32 = 8;
 
@@ -216,10 +212,12 @@ pub fn update_moving_context(
 
     debug_assert!(intermediates.is_none() || intermediates.unwrap().current > 0);
     state.use_immediate_control_flow = true;
-    state.unstuck_counter += 1;
-    if state.unstuck_counter >= UNSTUCK_TRACKER_THRESHOLD {
-        state.unstuck_counter = 0;
-        return Player::Unstucking(Timeout::default(), None);
+    if state.track_unstucking() {
+        return Player::Unstucking(
+            Timeout::default(),
+            None,
+            state.track_unstucking_transitioned(),
+        );
     }
 
     let cur_pos = state.last_known_pos.unwrap();
@@ -266,7 +264,7 @@ pub fn update_moving_context(
             if let Some(mut intermediates) = intermediates
                 && let Some((dest, exact)) = intermediates.next()
             {
-                state.unstuck_counter = 0;
+                state.clear_unstucking(false);
                 state.clear_last_movement();
                 return Player::Moving(dest, exact, Some(intermediates));
             }
@@ -289,7 +287,7 @@ fn abort_action_on_state_repeat(next: Player, state: &mut PlayerState) -> Player
     if state.track_last_movement_repeated() {
         info!(target: "player", "abort action due to repeated state");
         state.auto_mob_track_ignore_xs(true);
-        state.mark_action_completed();
+        state.clear_action_completed();
         return Player::Idle;
     }
     next

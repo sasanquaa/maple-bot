@@ -142,7 +142,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             self.context.halting = halting;
             if halting {
                 self.rotator.reset_queue();
-                self.player.abort_actions();
+                self.player.clear_actions_aborted();
             }
         }
     }
