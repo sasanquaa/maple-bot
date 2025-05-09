@@ -398,7 +398,6 @@ fn detect_mobs(
         {
             None
         } else {
-            debug!(target: "mob", "found mob {point:?} in bound {mobbing_bound:?}");
             Some(point)
         }
     }

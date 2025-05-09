@@ -11,13 +11,13 @@ use super::{
     double_jump::DOUBLE_JUMP_AUTO_MOB_THRESHOLD, fall::FALLING_THRESHOLD, timeout::Timeout,
 };
 use crate::{
-    ActionKeyDirection, Class, Position,
+    ActionKeyDirection, Class,
     buff::{Buff, BuffKind},
     context::Context,
     detect::ArrowsState,
     minimap::Minimap,
     network::NotificationKind,
-    player::{moving::find_intermediate_points, timeout::update_with_timeout},
+    player::timeout::update_with_timeout,
     task::{Task, Update, update_detection_task},
 };
 
@@ -487,8 +487,14 @@ impl PlayerState {
     }
 
     /// Picks a pathing point in auto mobbing to move to
+    ///
+    /// The returned [`Point`] is in player coordinate relative to bottom-left
     #[inline]
-    pub fn auto_mob_pathing_point(&mut self, minimap: Rect) -> Option<Point> {
+    pub fn auto_mob_pathing_point(&mut self, context: &Context) -> Option<Point> {
+        let (minimap_width, platforms) = match context.minimap {
+            Minimap::Idle(idle) => (idle.bbox.width, idle.platforms),
+            _ => unreachable!(),
+        };
         let point = self
             .auto_mob_pathing_points
             .iter()
@@ -496,21 +502,24 @@ impl PlayerState {
             .map(|(i, point)| (i, *point))
             .choose(&mut rand::rng());
         if let Some((i, _)) = point {
-            // I don't know guys
-            // Just want variations
-            if rand::random_bool(0.5) {
-                self.auto_mob_pathing_points.remove(i);
-            }
+            self.auto_mob_pathing_points.remove(i);
         }
-        point
-            .map(|(_, point)| Point::new(point.x, minimap.height - point.y))
-            .or_else(|| {
-                // Last resort
-                self.auto_mob_reachable_y_map
-                    .keys()
-                    .min()
-                    .map(|y| Point::new(minimap.width / 2, minimap.height - y))
-            })
+        point.map(|(_, point)| point).or_else(|| {
+            // Flip a coin, use platform as pathing point
+            if !platforms.is_empty() && rand::random_bool(0.5) {
+                let platform = platforms[rand::random_range(0..platforms.len())];
+                let xs = platform.xs();
+                let y = platform.y();
+                let x = rand::random_range(xs.start..xs.end);
+                debug!(target: "player", "auto mob pathing point from platform {x}, {y}");
+                return Some(Point::new(x, y));
+            }
+            // Last resort
+            self.auto_mob_reachable_y_map
+                .keys()
+                .min()
+                .map(|y| Point::new(minimap_width / 2, *y))
+        })
     }
 
     /// Populates pathing points for an auto mob action
@@ -525,30 +534,12 @@ impl PlayerState {
             return;
         }
 
-        let (minimap_width, platforms) = match context.minimap {
-            Minimap::Idle(idle) => (idle.bbox.width, idle.platforms),
-            _ => unreachable!(),
-        };
-        // Flip a coin, use platform as pathing point
-        if !platforms.is_empty() && rand::random_bool(0.5) {
-            let platform = platforms[rand::random_range(0..platforms.len())];
-            let xs = platform.xs();
-            let y = platform.y();
-            let point = Point::new(xs.start.midpoint(xs.end), y);
-            // Platform pathing point can bypass y restriction
-            if !self
-                .auto_mob_pathing_points
-                .iter()
-                .any(|pt| pt.y == point.y && pt.x == point.x)
-            {
-                self.auto_mob_pathing_points.push(point);
-                debug!(target: "player", "auto mob pathing point from platform {:?}", point);
-                return;
-            }
-        }
-
         // The idea is to pick a pathing point with a different y from existing points and with x
         // within 70% on both sides from the middle of the minimap
+        let minimap_width = match context.minimap {
+            Minimap::Idle(idle) => idle.bbox.width,
+            _ => unreachable!(),
+        };
         let minimap_mid = minimap_width / 2;
         let minimap_threshold = (minimap_mid as f32 * 0.7) as i32;
         let pos = self.last_known_pos.unwrap();
@@ -574,30 +565,28 @@ impl PlayerState {
         })
     }
 
-    /// Picks a reachable y for reaching `mob_pos`
+    /// Picks a reachable y position for reaching `mob_pos`
     ///
-    /// After calling this function, the state is updated to track the current reachable `y`.
-    /// Caller is expected to call [`Self::auto_mob_track_reachable_y`] afterward when the
-    /// auto-mob action has completed (e.g. in terminal state of [`Player::UseKey`]).
+    /// The `mob_pos` must be player coordinate relative to bottom-left.
     ///
-    /// Returns [`Player::Moving`] indicating the moving action for the player to reach to mob or
-    /// [`Player::Idle`] indicating the action should be aborted.
-    pub(super) fn auto_mob_pick_reachable_y_contextual_state(
+    /// Returns [`Some`] indicating the new position for the player to reach to mob or
+    /// [`None`] indicating this mob position should be dropped.
+    pub fn auto_mob_pick_reachable_y_position(
         &mut self,
         context: &Context,
-        mob_pos: Position,
-    ) -> Player {
+        mob_pos: Point,
+    ) -> Option<Point> {
         if self.auto_mob_reachable_y_map.is_empty() {
             self.auto_mob_populate_reachable_y(context);
         }
         debug_assert!(!self.auto_mob_reachable_y_map.is_empty());
 
-        let y = self
+        let ys = self
             .auto_mob_reachable_y_map
             .keys()
             .copied()
-            .min_by_key(|y| (mob_pos.y - y).abs())
             .filter(|y| (mob_pos.y - y).abs() <= AUTO_MOB_REACHABLE_Y_THRESHOLD);
+        let y = ys.choose(&mut rand::rng());
 
         // Checking whether y is solidified yet is not needed because y will only be added
         // to the xs map when it is solidified. As for populated xs from platforms, the
@@ -609,43 +598,14 @@ impl PlayerState {
                 })
             })
         {
-            debug!(target: "player", "auto mob aborted because of wrong mob x position");
-            return Player::Idle;
+            debug!(target: "player", "auto mob ignored wrong position in {},{} / {}", mob_pos.x, y, mob_pos.y);
+            return None;
         }
 
-        let point = Point::new(mob_pos.x, y.unwrap_or(mob_pos.y));
-        let intermediates = if self.config.auto_mob_platforms_pathing {
-            match context.minimap {
-                Minimap::Idle(idle) => find_intermediate_points(
-                    &idle.platforms,
-                    self.last_known_pos.unwrap(),
-                    point,
-                    mob_pos.allow_adjusting,
-                    self.config.auto_mob_platforms_pathing_up_jump_only,
-                ),
-                _ => unreachable!(),
-            }
-        } else {
-            None
-        };
+        self.auto_mob_reachable_y = y;
         debug!(target: "player", "auto mob reachable y {:?} {:?}", y, self.auto_mob_reachable_y_map);
 
-        self.auto_mob_reachable_y = y;
-        self.last_destinations = intermediates
-            .map(|intermediates| {
-                intermediates
-                    .inner
-                    .into_iter()
-                    .map(|(point, _)| point)
-                    .collect::<Vec<_>>()
-            })
-            .or(Some(vec![point]));
-        intermediates
-            .map(|mut intermediates| {
-                let (point, exact) = intermediates.next().unwrap();
-                Player::Moving(point, exact, Some(intermediates))
-            })
-            .unwrap_or(Player::Moving(point, mob_pos.allow_adjusting, None))
+        Some(Point::new(mob_pos.x, y.unwrap_or(mob_pos.y)))
     }
 
     fn auto_mob_populate_reachable_y(&mut self, context: &Context) {
@@ -1014,7 +974,7 @@ mod tests {
         context::Context,
         minimap::{Minimap, MinimapIdle},
         pathing::{Platform, find_neighbors},
-        player::{Player, PlayerAction, PlayerActionAutoMob, PlayerState},
+        player::{PlayerAction, PlayerActionAutoMob, PlayerState},
     };
 
     #[test]
@@ -1027,15 +987,8 @@ mod tests {
         };
 
         assert_matches!(
-            state.auto_mob_pick_reachable_y_contextual_state(
-                &context,
-                Position {
-                    x: 55,
-                    y: 50,
-                    ..Default::default()
-                },
-            ),
-            Player::Idle
+            state.auto_mob_pick_reachable_y_position(&context, Point::new(55, 50)),
+            None
         );
     }
 
@@ -1047,16 +1000,12 @@ mod tests {
             last_known_pos: Some(Point::new(0, 0)),
             ..Default::default()
         };
-        let mob_pos = Position {
-            x: 50,
-            y: 125,
-            ..Default::default()
-        };
+        let mob_pos = Point::new(50, 125);
 
         // Expect 120 to be chosen since it's closest to 125
         assert_matches!(
-            state.auto_mob_pick_reachable_y_contextual_state(&context, mob_pos),
-            Player::Moving(Point { x: 50, y: 120 }, false, None)
+            state.auto_mob_pick_reachable_y_position(&context, mob_pos),
+            Some(Point { x: 50, y: 120 })
         );
         assert_eq!(state.auto_mob_reachable_y, Some(120));
     }
@@ -1069,16 +1018,12 @@ mod tests {
             last_known_pos: Some(Point::new(0, 0)),
             ..Default::default()
         };
-        let mob_pos = Position {
-            x: 50,
-            y: 125,
-            ..Default::default()
-        };
+        let mob_pos = Point::new(50, 125);
 
         // No y value is chosen so the original y is used
         assert_matches!(
-            state.auto_mob_pick_reachable_y_contextual_state(&context, mob_pos),
-            Player::Moving(Point { x: 50, y: 125 }, false, None)
+            state.auto_mob_pick_reachable_y_position(&context, mob_pos),
+            Some(Point { x: 50, y: 125 })
         );
         assert_eq!(state.auto_mob_reachable_y, None);
     }

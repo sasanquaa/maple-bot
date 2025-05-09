@@ -463,9 +463,13 @@ impl Rotator {
                 y <= pos.y || (y - pos.y).abs() <= GRAPPLING_THRESHOLD
             })
             .choose(&mut rand::rng())
-            .copied()
+            .map(|point| Point::new(point.x, idle.bbox.height - point.y))
+            .and_then(|point| {
+                debug!(target: "rotator", "auto mob raw position {point:?}");
+                player.auto_mob_pick_reachable_y_position(context, point)
+            })
             .or_else(|| {
-                let point = player.auto_mob_pathing_point(idle.bbox);
+                let point = player.auto_mob_pathing_point(context);
                 debug!(target: "rotator", "auto mob use pathing point {point:?}");
                 point
             })
@@ -482,7 +486,7 @@ impl Rotator {
                 position: Position {
                     x: point.x,
                     x_random_range: 0,
-                    y: idle.bbox.height - point.y,
+                    y: point.y,
                     allow_adjusting: false,
                 },
             }),
