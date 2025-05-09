@@ -53,6 +53,13 @@ fn on_player_action(
             } else {
                 None
             };
+            let next = intermediates
+                .map(|mut intermediates| {
+                    let (point, exact) = intermediates.next().unwrap();
+                    Player::Moving(point, exact, Some(intermediates))
+                })
+                .unwrap_or(Player::Moving(point, position.allow_adjusting, None));
+
             state.last_destinations = intermediates
                 .map(|intermediates| {
                     intermediates
@@ -62,15 +69,7 @@ fn on_player_action(
                         .collect::<Vec<_>>()
                 })
                 .or(Some(vec![point]));
-
-            let next = intermediates
-                .map(|mut intermediates| {
-                    let (point, exact) = intermediates.next().unwrap();
-                    Player::Moving(point, exact, Some(intermediates))
-                })
-                .unwrap_or(Player::Moving(point, position.allow_adjusting, None));
-            let is_terminal = matches!(next, Player::Idle);
-            Some((next, is_terminal))
+            Some((next, false))
         }
         PlayerAction::Move(PlayerActionMove { position, .. }) => {
             let x = get_x_destination(position);
