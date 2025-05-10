@@ -220,21 +220,21 @@ fn update_idle_context(
         &mut state.has_guildie_player_task,
         bbox,
         has_guildie_player,
-        OtherPlayerKind::GUILDIE,
+        OtherPlayerKind::Guildie,
     );
     let has_stranger_player = update_other_player_task(
         context,
         &mut state.has_stranger_player_task,
         bbox,
         has_stranger_player,
-        OtherPlayerKind::STRANGER,
+        OtherPlayerKind::Stranger,
     );
     let has_friend_player = update_other_player_task(
         context,
         &mut state.has_friend_player_task,
         bbox,
         has_friend_player,
-        OtherPlayerKind::FRIEND,
+        OtherPlayerKind::Friend,
     );
     let portals = update_portals_task(context, &mut state.portals_task, portals, bbox);
 
@@ -354,9 +354,9 @@ fn update_other_player_task(
     });
     if !context.halting && !has_player && threshold.value.unwrap_or_default() {
         let notification = match kind {
-            OtherPlayerKind::GUILDIE => NotificationKind::PlayerGuildieAppear,
-            OtherPlayerKind::STRANGER => NotificationKind::PlayerStrangerAppear,
-            OtherPlayerKind::FRIEND => NotificationKind::PlayerFriendAppear,
+            OtherPlayerKind::Guildie => NotificationKind::PlayerGuildieAppear,
+            OtherPlayerKind::Stranger => NotificationKind::PlayerStrangerAppear,
+            OtherPlayerKind::Friend => NotificationKind::PlayerFriendAppear,
         };
         let _ = context.notification.schedule_notification(notification);
     }

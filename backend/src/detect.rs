@@ -97,9 +97,9 @@ impl ArrowsCalibrating {
 
 #[derive(Clone, Copy, Debug)]
 pub enum OtherPlayerKind {
-    GUILDIE,
-    STRANGER,
-    FRIEND,
+    Guildie,
+    Stranger,
+    Friend,
 }
 
 pub trait Detector: 'static + Send + DynClone + Debug {
@@ -708,27 +708,27 @@ fn detect_player_kind(mat: &impl ToInputArray, kind: OtherPlayerKind) -> bool {
         )
         .unwrap()
     });
-    // static GUILDIE_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
-    //     imgcodecs::imdecode(
-    //         include_bytes!(env!("PLAYER_GUILDIE_TEMPLATE")),
-    //         IMREAD_COLOR,
-    //     )
-    //     .unwrap()
-    // });
-    // static FRIEND_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
-    //     imgcodecs::imdecode(
-    //         include_bytes!(env!("PLAYER_FRIEND_TEMPLATE")),
-    //         IMREAD_COLOR,
-    //     )
-    //     .unwrap()
-    // });
+    static GUILDIE_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("PLAYER_GUILDIE_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static FRIEND_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("PLAYER_FRIEND_TEMPLATE")), IMREAD_COLOR).unwrap()
+    });
 
     match kind {
-        OtherPlayerKind::STRANGER => {
+        OtherPlayerKind::Stranger => {
             detect_template(mat, &*STRANGER_TEMPLATE, Point::default(), 0.75).is_ok()
         }
-        OtherPlayerKind::GUILDIE => todo!(),
-        OtherPlayerKind::FRIEND => todo!(),
+        OtherPlayerKind::Guildie => {
+            detect_template(mat, &*GUILDIE_TEMPLATE, Point::default(), 0.75).is_ok()
+        }
+        OtherPlayerKind::Friend => {
+            detect_template(mat, &*FRIEND_TEMPLATE, Point::default(), 0.75).is_ok()
+        }
     }
 }
 
