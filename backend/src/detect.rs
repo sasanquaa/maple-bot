@@ -458,14 +458,14 @@ fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
 
 fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {
     /// TODO: Support default ratio
-    static ELITE_BOSS_BAR_1: LazyLock<Mat> = LazyLock::new(|| {
+    static TEMPLATE_1: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
             include_bytes!(env!("ELITE_BOSS_BAR_1_TEMPLATE")),
             IMREAD_GRAYSCALE,
         )
         .unwrap()
     });
-    static ELITE_BOSS_BAR_2: LazyLock<Mat> = LazyLock::new(|| {
+    static TEMPLATE_2: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
             include_bytes!(env!("ELITE_BOSS_BAR_2_TEMPLATE")),
             IMREAD_GRAYSCALE,
@@ -478,8 +478,8 @@ fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {
     let crop_y = size.height / 5;
     let crop_bbox = Rect::new(0, 0, size.width, crop_y);
     let boss_bar = mat.roi(crop_bbox).unwrap();
-    let template_1 = &*ELITE_BOSS_BAR_1;
-    let template_2 = &*ELITE_BOSS_BAR_2;
+    let template_1 = &*TEMPLATE_1;
+    let template_2 = &*TEMPLATE_2;
     detect_template(&boss_bar, template_1, Point::default(), 0.9).is_ok()
         || detect_template(&boss_bar, template_2, Point::default(), 0.9).is_ok()
 }
@@ -624,11 +624,11 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
 
 fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Result<Vec<Rect>> {
     /// TODO: Support default ratio
-    static PORTAL: LazyLock<Mat> = LazyLock::new(|| {
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("PORTAL_TEMPLATE")), IMREAD_COLOR).unwrap()
     });
 
-    let template = &*PORTAL;
+    let template = &*TEMPLATE;
     let mut result = Mat::default();
     let mut points = Vector::<Point>::new();
     match_template(
@@ -664,48 +664,20 @@ fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Result
 
 fn detect_minimap_rune(minimap: &impl ToInputArray) -> Result<Rect> {
     /// TODO: Support default ratio
-    static RUNE: LazyLock<Mat> = LazyLock::new(|| {
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("RUNE_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    detect_template(minimap, &*RUNE, Point::default(), 0.6)
+    detect_template(minimap, &*TEMPLATE, Point::default(), 0.6)
 }
 
 fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
-    const PLAYER_IDEAL_RATIO_THRESHOLD: f64 = 0.75;
-    const PLAYER_DEFAULT_RATIO_THRESHOLD: f64 = 0.6;
-    static PLAYER_IDEAL_RATIO: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("PLAYER_IDEAL_RATIO_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
+    /// TODO: Support default ratio
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("PLAYER_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
-    static PLAYER_DEFAULT_RATIO: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("PLAYER_DEFAULT_RATIO_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-    static WAS_IDEAL_RATIO: AtomicBool = AtomicBool::new(false);
 
-    let was_ideal_ratio = WAS_IDEAL_RATIO.load(Ordering::Acquire);
-    let template = if was_ideal_ratio {
-        &*PLAYER_IDEAL_RATIO
-    } else {
-        &*PLAYER_DEFAULT_RATIO
-    };
-    let threshold = if was_ideal_ratio {
-        PLAYER_IDEAL_RATIO_THRESHOLD
-    } else {
-        PLAYER_DEFAULT_RATIO_THRESHOLD
-    };
-    let result = detect_template(mat, template, Point::default(), threshold);
-    if result.is_err() {
-        WAS_IDEAL_RATIO.store(!was_ideal_ratio, Ordering::Release);
-    }
-    result
+    detect_template(mat, &*TEMPLATE, Point::default(), 0.75)
 }
 
 fn detect_player_is_dead(mat: &impl ToInputArray) -> bool {

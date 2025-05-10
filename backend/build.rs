@@ -12,8 +12,7 @@ fn main() {
     let tomb = dir.join("tomb_ideal_ratio.png");
     let elite_boss_bar_1 = dir.join("elite_boss_bar_1_ideal_ratio.png");
     let elite_boss_bar_2 = dir.join("elite_boss_bar_2_ideal_ratio.png");
-    let player_ideal_ratio = dir.join("player_ideal_ratio.png");
-    let player_default_ratio = dir.join("player_default_ratio.png");
+    let player = dir.join("player_ideal_ratio.png");
     let erda_shower = dir.join("erda_shower_ideal_ratio.png");
     let portal = dir.join("portal_ideal_ratio.png");
     let rune = dir.join("rune_ideal_ratio.png");
@@ -86,12 +85,8 @@ fn main() {
         elite_boss_bar_2.to_str().unwrap()
     );
     println!(
-        "cargo:rustc-env=PLAYER_DEFAULT_RATIO_TEMPLATE={}",
-        player_default_ratio.to_str().unwrap()
-    );
-    println!(
-        "cargo:rustc-env=PLAYER_IDEAL_RATIO_TEMPLATE={}",
-        player_ideal_ratio.to_str().unwrap()
+        "cargo:rustc-env=PLAYER_TEMPLATE={}",
+        player.to_str().unwrap()
     );
     println!(
         "cargo:rustc-env=ERDA_SHOWER_TEMPLATE={}",
