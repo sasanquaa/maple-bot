@@ -721,13 +721,13 @@ fn detect_player_kind(mat: &impl ToInputArray, kind: OtherPlayerKind) -> bool {
 
     match kind {
         OtherPlayerKind::Stranger => {
-            detect_template(mat, &*STRANGER_TEMPLATE, Point::default(), 0.75).is_ok()
+            detect_template(mat, &*STRANGER_TEMPLATE, Point::default(), 0.85).is_ok()
         }
         OtherPlayerKind::Guildie => {
-            detect_template(mat, &*GUILDIE_TEMPLATE, Point::default(), 0.75).is_ok()
+            detect_template(mat, &*GUILDIE_TEMPLATE, Point::default(), 0.85).is_ok()
         }
         OtherPlayerKind::Friend => {
-            detect_template(mat, &*FRIEND_TEMPLATE, Point::default(), 0.75).is_ok()
+            detect_template(mat, &*FRIEND_TEMPLATE, Point::default(), 0.85).is_ok()
         }
     }
 }
