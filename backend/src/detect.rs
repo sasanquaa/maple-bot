@@ -95,6 +95,13 @@ impl ArrowsCalibrating {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum OtherPlayerKind {
+    GUILDIE,
+    STRANGER,
+    FRIEND,
+}
+
 pub trait Detector: 'static + Send + DynClone + Debug {
     fn mat(&self) -> &OwnedMat;
 
@@ -129,6 +136,9 @@ pub trait Detector: 'static + Send + DynClone + Debug {
     ///
     /// Returns `Rect` relative to `minimap` coordinate.
     fn detect_player(&self, minimap: Rect) -> Result<Rect>;
+
+    /// Detects whether a player of `kind` is in the minimap.
+    fn detect_player_kind(&self, minimap: Rect, kind: OtherPlayerKind) -> bool;
 
     /// Detects whether the player is dead.
     fn detect_player_is_dead(&self) -> bool;
@@ -171,6 +181,7 @@ mock! {
         fn detect_minimap_portals(&self, minimap: Rect) -> Result<Vec<Rect>>;
         fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect>;
         fn detect_player(&self, minimap: Rect) -> Result<Rect>;
+        fn detect_player_kind(&self, minimap: Rect, kind: OtherPlayerKind) -> bool;
         fn detect_player_is_dead(&self) -> bool;
         fn detect_player_in_cash_shop(&self) -> bool;
         fn detect_player_health_bar(&self) -> Result<Rect>;
@@ -259,8 +270,13 @@ impl Detector for CachedDetector {
     }
 
     fn detect_player(&self, minimap: Rect) -> Result<Rect> {
-        let minimap_grayscale = self.grayscale.roi(minimap)?;
-        detect_player(&minimap_grayscale)
+        let minimap_color = to_bgr(&self.mat.roi(minimap)?);
+        detect_player(&minimap_color)
+    }
+
+    fn detect_player_kind(&self, minimap: Rect, kind: OtherPlayerKind) -> bool {
+        let minimap_color = to_bgr(&self.mat.roi(minimap).unwrap());
+        detect_player_kind(&minimap_color, kind)
     }
 
     fn detect_player_is_dead(&self) -> bool {
@@ -276,7 +292,7 @@ impl Detector for CachedDetector {
     }
 
     fn detect_player_current_max_health_bars(&self, health_bar: Rect) -> Result<(Rect, Rect)> {
-        detect_player_health_bars(&*self.mat, &**self.grayscale, health_bar)
+        detect_player_current_max_health_bars(&*self.mat, &**self.grayscale, health_bar)
     }
 
     fn detect_player_health(&self, current_bar: Rect, max_bar: Rect) -> Result<(u32, u32)> {
@@ -674,10 +690,46 @@ fn detect_minimap_rune(minimap: &impl ToInputArray) -> Result<Rect> {
 fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
     /// TODO: Support default ratio
     static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(include_bytes!(env!("PLAYER_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+        imgcodecs::imdecode(include_bytes!(env!("PLAYER_TEMPLATE")), IMREAD_COLOR).unwrap()
     });
 
-    detect_template(mat, &*TEMPLATE, Point::default(), 0.75)
+    // Expands by 2 pixels to preserve previous position calculation. Previous template is 10x10
+    // while the current template is 8x8.
+    detect_template_single(mat, &*TEMPLATE, no_array(), Point::default(), 0.75)
+        .map(|(rect, _)| Rect::new(rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2))
+}
+
+fn detect_player_kind(mat: &impl ToInputArray, kind: OtherPlayerKind) -> bool {
+    /// TODO: Support default ratio
+    static STRANGER_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("PLAYER_STRANGER_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    // static GUILDIE_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    //     imgcodecs::imdecode(
+    //         include_bytes!(env!("PLAYER_GUILDIE_TEMPLATE")),
+    //         IMREAD_COLOR,
+    //     )
+    //     .unwrap()
+    // });
+    // static FRIEND_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    //     imgcodecs::imdecode(
+    //         include_bytes!(env!("PLAYER_FRIEND_TEMPLATE")),
+    //         IMREAD_COLOR,
+    //     )
+    //     .unwrap()
+    // });
+
+    match kind {
+        OtherPlayerKind::STRANGER => {
+            detect_template(mat, &*STRANGER_TEMPLATE, Point::default(), 0.75).is_ok()
+        }
+        OtherPlayerKind::GUILDIE => todo!(),
+        OtherPlayerKind::FRIEND => todo!(),
+    }
 }
 
 fn detect_player_is_dead(mat: &impl ToInputArray) -> bool {
@@ -718,7 +770,7 @@ fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
     ))
 }
 
-fn detect_player_health_bars(
+fn detect_player_current_max_health_bars(
     mat: &impl MatTraitConst,
     grayscale: &impl MatTraitConst,
     hp_bar: Rect,

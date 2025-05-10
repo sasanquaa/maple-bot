@@ -65,6 +65,9 @@ pub struct Notifications {
     pub notify_on_rune_appear: bool,
     pub notify_on_elite_boss_appear: bool,
     pub notify_on_player_die: bool,
+    pub notify_on_player_guildie_appear: bool,
+    pub notify_on_player_stranger_appear: bool,
+    pub notify_on_player_friend_appear: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
