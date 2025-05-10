@@ -1,3 +1,5 @@
+use std::fmt;
+
 use anyhow::{Result, anyhow};
 use log::debug;
 use opencv::core::{MatTraitConst, Point, Rect, Vec4b};
@@ -6,6 +8,7 @@ use crate::{
     array::Array,
     context::{Context, Contextual, ControlFlow},
     database::Minimap as MinimapData,
+    detect::{Detector, OtherPlayerKind},
     network::NotificationKind,
     pathing::{
         MAX_PLATFORMS_COUNT, Platform, PlatformWithNeighbors, find_neighbors, find_platforms_bound,
@@ -19,10 +22,13 @@ const MINIMAP_BORDER_WHITENESS_THRESHOLD: u8 = 160;
 #[derive(Debug, Default)]
 pub struct MinimapState {
     data: Option<MinimapData>,
-    data_task: Option<Task<Result<(Anchors, Rect)>>>,
+    minimap_task: Option<Task<Result<(Anchors, Rect)>>>,
     rune_task: Option<Task<Result<Point>>>,
     portals_task: Option<Task<Result<Vec<Rect>>>>,
     has_elite_boss_task: Option<Task<Result<bool>>>,
+    has_guildie_player_task: Option<Task<Result<bool>>>,
+    has_stranger_player_task: Option<Task<Result<bool>>>,
+    has_friend_player_task: Option<Task<Result<bool>>>,
     update_platforms: bool,
 }
 
@@ -42,6 +48,24 @@ impl MinimapState {
 struct Anchors {
     tl: (Point, Vec4b),
     br: (Point, Vec4b),
+}
+
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(test, derive(Default))]
+struct Threshold<T> {
+    value: Option<T>,
+    fail_count: u32,
+    max_fail_count: u32,
+}
+
+impl<T> Threshold<T> {
+    fn new(max_fail_count: u32) -> Self {
+        Self {
+            value: None,
+            fail_count: 0,
+            max_fail_count,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -67,6 +91,12 @@ pub struct MinimapIdle {
     ///
     /// This does not belong to minimap though...
     pub has_elite_boss: bool,
+    /// Whether there is a guildie
+    has_guildie_player: Threshold<bool>,
+    /// Whether there is a stranger
+    has_stranger_player: Threshold<bool>,
+    /// Whether there is a friend
+    has_friend_player: Threshold<bool>,
     /// The portal positions
     ///
     /// Praying each night that there won't be more than 16 portals...
@@ -105,7 +135,7 @@ fn update_context(contextual: Minimap, context: &Context, state: &mut MinimapSta
 
 fn update_detecting_context(context: &Context, state: &mut MinimapState) -> Minimap {
     let Update::Ok((anchors, bbox)) =
-        update_detection_task(context, 2000, &mut state.data_task, move |detector| {
+        update_detection_task(context, 2000, &mut state.minimap_task, move |detector| {
             let bbox = detector.detect_minimap(MINIMAP_BORDER_WHITENESS_THRESHOLD)?;
             let size = bbox.width.min(bbox.height) as usize;
             let tl = anchor_at(detector.mat(), bbox.tl(), size, 1)?;
@@ -134,6 +164,9 @@ fn update_detecting_context(context: &Context, state: &mut MinimapState) -> Mini
         rune: None,
         rune_fail_count: 0,
         has_elite_boss: false,
+        has_guildie_player: Threshold::new(2),
+        has_stranger_player: Threshold::new(2),
+        has_friend_player: Threshold::new(2),
         portals: Array::new(),
         platforms,
         platforms_bound,
@@ -148,12 +181,16 @@ fn update_idle_context(
     if matches!(context.player, Player::CashShopThenExit(_, _)) {
         return Some(Minimap::Idle(idle));
     }
+
     let MinimapIdle {
         anchors,
         bbox,
         rune,
         rune_fail_count,
         has_elite_boss,
+        has_guildie_player,
+        has_stranger_player,
+        has_friend_player,
         portals,
         mut platforms,
         mut platforms_bound,
@@ -172,12 +209,35 @@ fn update_idle_context(
         );
         return None;
     }
+
     let partially_overlapping = (tl_match && !br_match) || (!tl_match && br_match);
     let (rune, rune_fail_count) =
         update_rune_task(context, &mut state.rune_task, bbox, rune, rune_fail_count);
     let has_elite_boss =
         update_elite_boss_task(context, &mut state.has_elite_boss_task, has_elite_boss);
+    let has_guildie_player = update_other_player_task(
+        context,
+        &mut state.has_guildie_player_task,
+        bbox,
+        has_guildie_player,
+        OtherPlayerKind::Guildie,
+    );
+    let has_stranger_player = update_other_player_task(
+        context,
+        &mut state.has_stranger_player_task,
+        bbox,
+        has_stranger_player,
+        OtherPlayerKind::Stranger,
+    );
+    let has_friend_player = update_other_player_task(
+        context,
+        &mut state.has_friend_player_task,
+        bbox,
+        has_friend_player,
+        OtherPlayerKind::Friend,
+    );
     let portals = update_portals_task(context, &mut state.portals_task, portals, bbox);
+
     // TODO: any better way to read persistent state in other contextual?
     if state.update_platforms {
         let (updated_platforms, updated_bound) =
@@ -192,6 +252,9 @@ fn update_idle_context(
         rune,
         rune_fail_count,
         has_elite_boss,
+        has_guildie_player,
+        has_stranger_player,
+        has_friend_player,
         portals,
         platforms,
         platforms_bound,
@@ -278,6 +341,29 @@ fn update_elite_boss_task(
 }
 
 #[inline]
+fn update_other_player_task(
+    context: &Context,
+    task: &mut Option<Task<Result<bool>>>,
+    minimap: Rect,
+    threshold: Threshold<bool>,
+    kind: OtherPlayerKind,
+) -> Threshold<bool> {
+    let has_player = threshold.value.unwrap_or_default();
+    let threshold = update_threshold_detection(context, 5000, threshold, task, move |detector| {
+        Ok(detector.detect_player_kind(minimap, kind))
+    });
+    if !context.halting && !has_player && threshold.value.unwrap_or_default() {
+        let notification = match kind {
+            OtherPlayerKind::Guildie => NotificationKind::PlayerGuildieAppear,
+            OtherPlayerKind::Stranger => NotificationKind::PlayerStrangerAppear,
+            OtherPlayerKind::Friend => NotificationKind::PlayerFriendAppear,
+        };
+        let _ = context.notification.schedule_notification(notification);
+    }
+    threshold
+}
+
+#[inline]
 fn update_portals_task(
     context: &Context,
     task: &mut Option<Task<Result<Vec<Rect>>>>,
@@ -319,6 +405,45 @@ fn platforms_from_data(
     ));
     let bound = find_platforms_bound(bbox, &platforms);
     (platforms, bound)
+}
+
+#[inline]
+fn update_threshold_detection<T, F>(
+    context: &Context,
+    repeat_delay_millis: u64,
+    mut threshold: Threshold<T>,
+    threshold_task: &mut Option<Task<Result<T>>>,
+    threshold_task_fn: F,
+) -> Threshold<T>
+where
+    T: fmt::Debug + Send + 'static,
+    F: FnOnce(Box<dyn Detector>) -> Result<T> + Send + 'static,
+{
+    let update = update_detection_task(
+        context,
+        repeat_delay_millis,
+        threshold_task,
+        threshold_task_fn,
+    );
+
+    match update {
+        Update::Ok(value) => {
+            threshold.value = Some(value);
+        }
+        Update::Err(_) => {
+            if threshold.value.is_some() {
+                if threshold.fail_count >= threshold.max_fail_count {
+                    threshold.value = None;
+                    threshold.fail_count = 0;
+                } else {
+                    threshold.fail_count += 1;
+                }
+            }
+        }
+        Update::Pending => (),
+    }
+
+    threshold
 }
 
 #[inline]
@@ -419,7 +544,7 @@ mod tests {
             if matches!(contextual, Minimap::Idle(_)) {
                 state.rune_task.as_ref().unwrap().completed()
             } else {
-                state.data_task.as_ref().unwrap().completed()
+                state.minimap_task.as_ref().unwrap().completed()
             }
         };
         let mut minimap = update_context(contextual, &context, state);
@@ -462,6 +587,9 @@ mod tests {
             rune: None,
             rune_fail_count: 0,
             has_elite_boss: false,
+            has_guildie_player: Threshold::default(),
+            has_stranger_player: Threshold::default(),
+            has_friend_player: Threshold::default(),
             portals: Array::new(),
             platforms: Array::new(),
             platforms_bound: None,

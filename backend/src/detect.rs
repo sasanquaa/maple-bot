@@ -95,6 +95,13 @@ impl ArrowsCalibrating {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum OtherPlayerKind {
+    Guildie,
+    Stranger,
+    Friend,
+}
+
 pub trait Detector: 'static + Send + DynClone + Debug {
     fn mat(&self) -> &OwnedMat;
 
@@ -129,6 +136,9 @@ pub trait Detector: 'static + Send + DynClone + Debug {
     ///
     /// Returns `Rect` relative to `minimap` coordinate.
     fn detect_player(&self, minimap: Rect) -> Result<Rect>;
+
+    /// Detects whether a player of `kind` is in the minimap.
+    fn detect_player_kind(&self, minimap: Rect, kind: OtherPlayerKind) -> bool;
 
     /// Detects whether the player is dead.
     fn detect_player_is_dead(&self) -> bool;
@@ -171,6 +181,7 @@ mock! {
         fn detect_minimap_portals(&self, minimap: Rect) -> Result<Vec<Rect>>;
         fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect>;
         fn detect_player(&self, minimap: Rect) -> Result<Rect>;
+        fn detect_player_kind(&self, minimap: Rect, kind: OtherPlayerKind) -> bool;
         fn detect_player_is_dead(&self) -> bool;
         fn detect_player_in_cash_shop(&self) -> bool;
         fn detect_player_health_bar(&self) -> Result<Rect>;
@@ -259,8 +270,13 @@ impl Detector for CachedDetector {
     }
 
     fn detect_player(&self, minimap: Rect) -> Result<Rect> {
-        let minimap_grayscale = self.grayscale.roi(minimap)?;
-        detect_player(&minimap_grayscale)
+        let minimap_color = to_bgr(&self.mat.roi(minimap)?);
+        detect_player(&minimap_color)
+    }
+
+    fn detect_player_kind(&self, minimap: Rect, kind: OtherPlayerKind) -> bool {
+        let minimap_color = to_bgr(&self.mat.roi(minimap).unwrap());
+        detect_player_kind(&minimap_color, kind)
     }
 
     fn detect_player_is_dead(&self) -> bool {
@@ -276,7 +292,7 @@ impl Detector for CachedDetector {
     }
 
     fn detect_player_current_max_health_bars(&self, health_bar: Rect) -> Result<(Rect, Rect)> {
-        detect_player_health_bars(&*self.mat, &**self.grayscale, health_bar)
+        detect_player_current_max_health_bars(&*self.mat, &**self.grayscale, health_bar)
     }
 
     fn detect_player_health(&self, current_bar: Rect, max_bar: Rect) -> Result<(u32, u32)> {
@@ -458,14 +474,14 @@ fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
 
 fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {
     /// TODO: Support default ratio
-    static ELITE_BOSS_BAR_1: LazyLock<Mat> = LazyLock::new(|| {
+    static TEMPLATE_1: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
             include_bytes!(env!("ELITE_BOSS_BAR_1_TEMPLATE")),
             IMREAD_GRAYSCALE,
         )
         .unwrap()
     });
-    static ELITE_BOSS_BAR_2: LazyLock<Mat> = LazyLock::new(|| {
+    static TEMPLATE_2: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
             include_bytes!(env!("ELITE_BOSS_BAR_2_TEMPLATE")),
             IMREAD_GRAYSCALE,
@@ -478,8 +494,8 @@ fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {
     let crop_y = size.height / 5;
     let crop_bbox = Rect::new(0, 0, size.width, crop_y);
     let boss_bar = mat.roi(crop_bbox).unwrap();
-    let template_1 = &*ELITE_BOSS_BAR_1;
-    let template_2 = &*ELITE_BOSS_BAR_2;
+    let template_1 = &*TEMPLATE_1;
+    let template_2 = &*TEMPLATE_2;
     detect_template(&boss_bar, template_1, Point::default(), 0.9).is_ok()
         || detect_template(&boss_bar, template_2, Point::default(), 0.9).is_ok()
 }
@@ -624,11 +640,11 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
 
 fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Result<Vec<Rect>> {
     /// TODO: Support default ratio
-    static PORTAL: LazyLock<Mat> = LazyLock::new(|| {
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("PORTAL_TEMPLATE")), IMREAD_COLOR).unwrap()
     });
 
-    let template = &*PORTAL;
+    let template = &*TEMPLATE;
     let mut result = Mat::default();
     let mut points = Vector::<Point>::new();
     match_template(
@@ -664,48 +680,56 @@ fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Result
 
 fn detect_minimap_rune(minimap: &impl ToInputArray) -> Result<Rect> {
     /// TODO: Support default ratio
-    static RUNE: LazyLock<Mat> = LazyLock::new(|| {
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("RUNE_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    detect_template(minimap, &*RUNE, Point::default(), 0.6)
+    detect_template(minimap, &*TEMPLATE, Point::default(), 0.6)
 }
 
 fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
-    const PLAYER_IDEAL_RATIO_THRESHOLD: f64 = 0.75;
-    const PLAYER_DEFAULT_RATIO_THRESHOLD: f64 = 0.6;
-    static PLAYER_IDEAL_RATIO: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("PLAYER_IDEAL_RATIO_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
+    /// TODO: Support default ratio
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("PLAYER_TEMPLATE")), IMREAD_COLOR).unwrap()
     });
-    static PLAYER_DEFAULT_RATIO: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("PLAYER_DEFAULT_RATIO_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-    static WAS_IDEAL_RATIO: AtomicBool = AtomicBool::new(false);
 
-    let was_ideal_ratio = WAS_IDEAL_RATIO.load(Ordering::Acquire);
-    let template = if was_ideal_ratio {
-        &*PLAYER_IDEAL_RATIO
-    } else {
-        &*PLAYER_DEFAULT_RATIO
-    };
-    let threshold = if was_ideal_ratio {
-        PLAYER_IDEAL_RATIO_THRESHOLD
-    } else {
-        PLAYER_DEFAULT_RATIO_THRESHOLD
-    };
-    let result = detect_template(mat, template, Point::default(), threshold);
-    if result.is_err() {
-        WAS_IDEAL_RATIO.store(!was_ideal_ratio, Ordering::Release);
+    // Expands by 2 pixels to preserve previous position calculation. Previous template is 10x10
+    // while the current template is 8x8.
+    detect_template_single(mat, &*TEMPLATE, no_array(), Point::default(), 0.75)
+        .map(|(rect, _)| Rect::new(rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2))
+}
+
+fn detect_player_kind(mat: &impl ToInputArray, kind: OtherPlayerKind) -> bool {
+    /// TODO: Support default ratio
+    static STRANGER_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("PLAYER_STRANGER_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static GUILDIE_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("PLAYER_GUILDIE_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static FRIEND_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("PLAYER_FRIEND_TEMPLATE")), IMREAD_COLOR).unwrap()
+    });
+
+    match kind {
+        OtherPlayerKind::Stranger => {
+            detect_template(mat, &*STRANGER_TEMPLATE, Point::default(), 0.85).is_ok()
+        }
+        OtherPlayerKind::Guildie => {
+            detect_template(mat, &*GUILDIE_TEMPLATE, Point::default(), 0.85).is_ok()
+        }
+        OtherPlayerKind::Friend => {
+            detect_template(mat, &*FRIEND_TEMPLATE, Point::default(), 0.85).is_ok()
+        }
     }
-    result
 }
 
 fn detect_player_is_dead(mat: &impl ToInputArray) -> bool {
@@ -746,7 +770,7 @@ fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
     ))
 }
 
-fn detect_player_health_bars(
+fn detect_player_current_max_health_bars(
     mat: &impl MatTraitConst,
     grayscale: &impl MatTraitConst,
     hp_bar: Rect,

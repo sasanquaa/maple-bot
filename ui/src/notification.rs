@@ -82,6 +82,36 @@ pub fn Notifications(
                 },
                 value: notifications_view().notify_on_player_die,
             }
+            SettingsCheckbox {
+                label: "Notify If Guildie Player Appears",
+                on_input: move |notify_on_player_guildie_appear| {
+                    on_notifications(NotificationsData {
+                        notify_on_player_guildie_appear,
+                        ..notifications_view.peek().clone()
+                    });
+                },
+                value: notifications_view().notify_on_player_guildie_appear,
+            }
+            SettingsCheckbox {
+                label: "Notify If Stranger Player Appears",
+                on_input: move |notify_on_player_stranger_appear| {
+                    on_notifications(NotificationsData {
+                        notify_on_player_stranger_appear,
+                        ..notifications_view.peek().clone()
+                    });
+                },
+                value: notifications_view().notify_on_player_stranger_appear,
+            }
+            SettingsCheckbox {
+                label: "Notify If Friend Player Appears",
+                on_input: move |notify_on_player_friend_appear| {
+                    on_notifications(NotificationsData {
+                        notify_on_player_friend_appear,
+                        ..notifications_view.peek().clone()
+                    });
+                },
+                value: notifications_view().notify_on_player_friend_appear,
+            }
         }
     }
 }

@@ -31,6 +31,9 @@ pub enum NotificationKind {
     FailOrMapChange,
     RuneAppear,
     EliteBossAppear,
+    PlayerGuildieAppear,
+    PlayerStrangerAppear,
+    PlayerFriendAppear,
     PlayerIsDead,
 }
 
@@ -101,6 +104,15 @@ impl DiscordNotification {
             NotificationKind::RuneAppear => settings.notifications.notify_on_rune_appear,
             NotificationKind::EliteBossAppear => settings.notifications.notify_on_elite_boss_appear,
             NotificationKind::PlayerIsDead => settings.notifications.notify_on_player_die,
+            NotificationKind::PlayerGuildieAppear => {
+                settings.notifications.notify_on_player_guildie_appear
+            }
+            NotificationKind::PlayerStrangerAppear => {
+                settings.notifications.notify_on_player_stranger_appear
+            }
+            NotificationKind::PlayerFriendAppear => {
+                settings.notifications.notify_on_player_friend_appear
+            }
         };
         if !is_enabled {
             bail!("notification not enabled");
@@ -145,6 +157,15 @@ impl DiscordNotification {
             NotificationKind::PlayerIsDead => {
                 format!("{user_id}The player is dead")
             }
+            NotificationKind::PlayerGuildieAppear => {
+                format!("{user_id}Bot has detected guildie player(s)")
+            }
+            NotificationKind::PlayerStrangerAppear => {
+                format!("{user_id}Bot has detected stranger player(s)")
+            }
+            NotificationKind::PlayerFriendAppear => {
+                format!("{user_id}Bot has detected friend player(s)")
+            }
         };
         let body = DiscordWebhookBody {
             content,
@@ -155,12 +176,18 @@ impl DiscordNotification {
             NotificationKind::FailOrMapChange => vec![(None, 2), (None, 4)],
             NotificationKind::EliteBossAppear
             | NotificationKind::PlayerIsDead
+            | NotificationKind::PlayerGuildieAppear
+            | NotificationKind::PlayerStrangerAppear
+            | NotificationKind::PlayerFriendAppear
             | NotificationKind::RuneAppear => vec![(None, 2)],
         };
         let delay = match kind {
             NotificationKind::FailOrMapChange => 5,
             NotificationKind::EliteBossAppear
             | NotificationKind::PlayerIsDead
+            | NotificationKind::PlayerGuildieAppear
+            | NotificationKind::PlayerStrangerAppear
+            | NotificationKind::PlayerFriendAppear
             | NotificationKind::RuneAppear => 3,
         };
 
