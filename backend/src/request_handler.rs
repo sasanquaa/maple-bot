@@ -229,12 +229,11 @@ impl RequestHandler for DefaultRequestHandler<'_> {
                     KeyInputKind::Fixed,
                 ));
             }
-
-            if let InputMethod::Rpc = settings.input_method {
-                self.context.keys.set_method(KeySenderMethod::Rpc(
-                    settings.input_method_rpc_server_url.clone(),
-                ));
-            }
+        }
+        if let InputMethod::Rpc = settings.input_method {
+            self.context.keys.set_method(KeySenderMethod::Rpc(
+                settings.input_method_rpc_server_url.clone(),
+            ));
         }
 
         *self.settings = settings;

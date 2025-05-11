@@ -1,9 +1,9 @@
+import pywinauto
+import grpc
+
 from concurrent import futures
 from pywinauto import WindowSpecification, keyboard
 from pywinauto.application import Application
-
-import grpc
-import pywinauto
 # The two imports below is generated from:
 # python -m grpc_tools.protoc --python_out=. --pyi_out=. --grpc_python_out=. -I../../backend/proto ../..
 # /backend/proto/input.proto
@@ -49,7 +49,7 @@ if __name__ == "__main__":
         Key.Right: 'RIGHT',
     }
 
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=1))
     add_KeyInputServicer_to_server(KeyInput(window, keys_map), server)
     server.add_insecure_port("[::]:5001")
     server.start()
