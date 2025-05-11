@@ -36,7 +36,6 @@ use opencv::{
         find_contours_def, get_structuring_element_def, match_template, min_area_rect, resize,
         threshold,
     },
-    traits::OpenCVIntoExternContainer,
 };
 use ort::{
     session::{Session, SessionInputValue, SessionOutputs},
@@ -1997,15 +1996,14 @@ fn to_grayscale(mat: &impl MatTraitConst, add_contrast: bool) -> Mat {
 
 /// Extracts a borrowed `Mat` from `SessionOutputs`.
 ///
-/// The returned `BoxedRef<'_, Mat>` has shape `[..dims]` with batch size (1) removed.
+/// The returned `Mat` has shape `[..dims]` with batch size (1) removed.
 #[inline]
-fn from_output_value<'a>(result: &SessionOutputs) -> BoxedRef<'a, Mat> {
+fn from_output_value(result: &SessionOutputs) -> Mat {
     let (dims, outputs) = result["output0"].try_extract_raw_tensor::<f32>().unwrap();
     let dims = dims.iter().map(|&dim| dim as i32).collect::<Vec<i32>>();
     let mat = Mat::new_nd_with_data(dims.as_slice(), outputs).unwrap();
     let mat = mat.reshape_nd(1, &dims.as_slice()[1..]).unwrap();
-    let mat = mat.opencv_into_extern_container_nofail();
-    BoxedRef::from(mat)
+    mat.clone_pointee()
 }
 
 /// Converts a continuous, normalized `f32` RGB `Mat` image to `SessionInputValue`.
