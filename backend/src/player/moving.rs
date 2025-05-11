@@ -25,9 +25,6 @@ use crate::{
 /// Maximum amount of ticks a change in x or y direction must be detected
 pub const MOVE_TIMEOUT: u32 = 5;
 
-/// Minimium y distance required to perform a fall and double jump/adjusting
-pub const ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD: i32 = 8;
-
 #[derive(Clone, Copy, Debug)]
 pub struct MovingIntermediates {
     pub current: usize,

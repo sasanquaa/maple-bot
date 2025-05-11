@@ -11,7 +11,7 @@ use crate::{
     context::Context,
     player::{
         actions::on_action,
-        moving::{ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD, MOVE_TIMEOUT},
+        moving::MOVE_TIMEOUT,
         state::LastMovement,
         timeout::{ChangeAxis, Timeout, update_moving_axis_context},
     },
@@ -23,15 +23,23 @@ pub const DOUBLE_JUMP_THRESHOLD: i32 = 25;
 /// Minimum x distance from the destination required to perform a double jump in auto mobbing
 pub const DOUBLE_JUMP_AUTO_MOB_THRESHOLD: i32 = 15;
 
+/// Minimum x distance from the destination required to transition to [`Player::UseKey`]
 const USE_KEY_X_THRESHOLD: i32 = DOUBLE_JUMP_THRESHOLD;
 
+/// Minimum y distance from the destination required to transition to [`Player::UseKey`]
 const USE_KEY_Y_THRESHOLD: i32 = 10;
+
 // Note: even in auto mob, also use the non-auto mob threshold
 const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
 
+/// Minimum x distance from the destination required to transition to [`Player::Grappling`]
 const GRAPPLING_THRESHOLD: i32 = 4;
 
+/// Minimum x distance changed to be considered as double jumped
 const FORCE_THRESHOLD: i32 = 3;
+
+/// Minimium y distance required to perform a fall and then double jump
+const FALLING_THRESHOLD: i32 = 8;
 
 /// Updates the [`Player::DoubleJumping`] contextual state
 ///
@@ -66,7 +74,7 @@ pub fn update_double_jumping_context(
         if !forced
             && !matches!(state.last_movement, Some(LastMovement::Falling))
             && y_direction < 0
-            && y_distance >= ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD
+            && y_distance >= FALLING_THRESHOLD
             && !is_intermediate
             && state.is_stationary
         {

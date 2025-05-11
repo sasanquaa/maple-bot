@@ -7,7 +7,7 @@ use crate::{
     player::{
         Player,
         actions::{on_action_state, on_auto_mob_use_key_action},
-        moving::{ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD, MOVE_TIMEOUT},
+        moving::MOVE_TIMEOUT,
         state::LastMovement,
         timeout::{ChangeAxis, Timeout, update_moving_axis_context},
     },
@@ -20,6 +20,9 @@ pub const ADJUSTING_SHORT_THRESHOLD: i32 = 1;
 pub const ADJUSTING_MEDIUM_THRESHOLD: i32 = 3;
 
 const ADJUSTING_SHORT_TIMEOUT: u32 = 3;
+
+/// Minimium y distance required to perform a fall and then walk
+const FALLING_THRESHOLD: i32 = 8;
 
 /// Updates the [`Player::Adjusting`] contextual state
 ///
@@ -44,7 +47,7 @@ pub fn update_adjusting_context(
         if !matches!(state.last_movement, Some(LastMovement::Falling))
             && x_distance >= ADJUSTING_MEDIUM_THRESHOLD
             && y_direction < 0
-            && y_distance >= ADJUSTING_OR_DOUBLE_JUMPING_FALLING_THRESHOLD
+            && y_distance >= FALLING_THRESHOLD
             && !is_intermediate
             && state.is_stationary
         {

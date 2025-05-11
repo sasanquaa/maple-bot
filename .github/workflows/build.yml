@@ -125,8 +125,13 @@ jobs:
       - if: startsWith(github.ref, 'refs/tags/')
         run: Compress-Archive -Path target/dx/ui/release/windows/app/* -Destination app.zip
 
+      - if: startsWith(github.ref, 'refs/tags/')
+        run: Compress-Archive -Path target/dx/ui/debug/windows/app/* -Destination app-debug.zip
+
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           draft: true
-          files: app.zip
+          files: |
+            app.zip
+            app-debug.zip
