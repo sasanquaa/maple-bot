@@ -19,11 +19,11 @@ class KeyInput(KeyInputServicer):
         return KeyResponse()
 
     def SendUp(self, request: KeyRequest, context):
-        kmNet.keydown(self.keys_map[request.key])
+        kmNet.keyup(self.keys_map[request.key])
         return KeyResponse()
 
     def SendDown(self, request: KeyRequest, context):
-        kmNet.keyup(self.keys_map[request.key])
+        kmNet.keydown(self.keys_map[request.key])
         return KeyResponse()
 
 
@@ -33,7 +33,7 @@ if __name__ == "__main__":
     keys_map = {
         # Letters A-Z
         # A=0 -> HID 4, ..., Z=25 -> HID 29
-        **{Key.Name(i): 4 + i for i in range(26)},
+        **{Key.Value(Key.Name(i)): 4 + i for i in range(26)},
 
         # Digits 0–9
         Key.Zero: 39,
