@@ -32,7 +32,7 @@ pub fn update_up_jumping_context(
     moving: Moving,
 ) -> Player {
     let cur_pos = state.last_known_pos.unwrap();
-    let (y_distance, _) = moving.y_distance_direction_from(true, cur_pos);
+    let (y_distance, y_direction) = moving.y_distance_direction_from(true, cur_pos);
     let up_jump_key = state.config.upjump_key;
     let has_teleport_key = state.config.teleport_key.is_some();
 
@@ -42,6 +42,9 @@ pub fn update_up_jumping_context(
             && !state.is_stationary
         {
             return Player::UpJumping(moving.pos(cur_pos));
+        }
+        if y_direction <= 0 {
+            return Player::Moving(moving.dest, moving.exact, moving.intermediates);
         }
         if let Minimap::Idle(idle) = context.minimap {
             for portal in idle.portals {
@@ -133,6 +136,16 @@ pub fn update_up_jumping_context(
                 state,
                 |action| match action {
                     PlayerAction::AutoMob(_) => {
+                        if moving.completed
+                            && moving.is_destination_intermediate()
+                            && y_direction <= 0
+                        {
+                            let _ = context.keys.send_up(KeyKind::Up);
+                            return Some((
+                                Player::Moving(moving.dest, moving.exact, moving.intermediates),
+                                false,
+                            ));
+                        }
                         let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
                         let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
                         on_auto_mob_use_key_action(context, action, cur_pos, x_distance, y_distance)

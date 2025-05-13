@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{Ok, Result, anyhow, bail};
 use dyn_clone::DynClone;
-use log::{debug, info};
+use log::{debug, error, info};
 #[cfg(test)]
 use mockall::mock;
 use opencv::{
@@ -1559,7 +1559,7 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
         offset: Point,
         template_size: Size,
         threshold: f64,
-    ) -> Result<(Rect, f64)> {
+    ) -> (Rect, Result<(Rect, f64)>) {
         let mut score = 0f64;
         let mut loc = Point::default();
         min_max_loc(
@@ -1571,32 +1571,31 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
             &no_array(),
         )
         .unwrap();
-        if score < threshold {
-            return Err(anyhow!("template not found").context(score));
-        }
         let tl = loc + offset;
         let br = tl + Point::from_size(template_size);
         let rect = Rect::from_points(tl, br);
-        Ok((rect, score))
+        if score < threshold {
+            (rect, Err(anyhow!("template not found").context(score)))
+        } else {
+            (rect, Ok((rect, score)))
+        }
     }
 
     let mut result = Mat::default();
-    match_template(mat, template, &mut result, TM_CCOEFF_NORMED, &mask).unwrap();
+    if let Err(err) = match_template(mat, template, &mut result, TM_CCOEFF_NORMED, &mask) {
+        error!(target: "detect", "template detection error {err}");
+        return vec![];
+    }
 
     let template_size = template.size().unwrap();
     let max_matches = max_matches.max(1);
     if max_matches == 1 {
-        return vec![match_one(&result, offset, template_size, threshold)];
+        return vec![match_one(&result, offset, template_size, threshold).1];
     }
 
     let mut filter = Vec::new();
     for _ in 0..max_matches {
-        let match_result = match_one(&result, offset, template_size, threshold);
-        if match_result.is_err() {
-            filter.push(match_result);
-            continue;
-        }
-        let (rect, score) = match_result.unwrap();
+        let (rect, match_result) = match_one(&result, offset, template_size, threshold);
         let roi_rect = Rect::new(
             rect.x - offset.x,
             rect.y - offset.y,
@@ -1608,7 +1607,7 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
             .unwrap()
             .set_scalar(Scalar::default())
             .unwrap();
-        filter.push(Ok((rect, score)));
+        filter.push(match_result);
     }
     filter
 }

@@ -36,16 +36,19 @@ pub fn update_falling_context(
     timeout_on_complete: bool,
 ) -> Player {
     let cur_pos = state.last_known_pos.unwrap();
+    let (y_distance, y_direction) = moving.y_distance_direction_from(true, cur_pos);
     if !moving.timeout.started {
         // Wait until stationary before doing a fall
         if !state.is_stationary {
             return Player::Falling(moving.pos(cur_pos), cur_pos, timeout_on_complete);
         }
+        if y_direction >= 0 {
+            return Player::Moving(moving.dest, moving.exact, moving.intermediates);
+        }
         state.last_movement = Some(LastMovement::Falling);
     }
 
     let y_changed = cur_pos.y - anchor.y;
-    let (y_distance, _) = moving.y_distance_direction_from(true, cur_pos);
     let jump_key = state.config.jump_key;
     let teleport_key = state.config.teleport_key;
 
@@ -81,6 +84,17 @@ pub fn update_falling_context(
                 state,
                 |action| match action {
                     PlayerAction::AutoMob(_) => {
+                        // Ignore `timeout_on_complete` for auto-mobbing intermediate destination
+                        if moving.completed
+                            && moving.is_destination_intermediate()
+                            && y_direction >= 0
+                        {
+                            let _ = context.keys.send_up(KeyKind::Down);
+                            return Some((
+                                Player::Moving(moving.dest, moving.exact, moving.intermediates),
+                                false,
+                            ));
+                        }
                         let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
                         let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
                         on_auto_mob_use_key_action(context, action, cur_pos, x_distance, y_distance)
