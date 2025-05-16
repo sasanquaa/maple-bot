@@ -18,7 +18,7 @@ pub const FALLING_THRESHOLD: i32 = 4;
 /// The tick to stop helding down [`KeyKind::Down`] at
 const STOP_DOWN_KEY_TICK: u32 = 3;
 
-const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
+const TIMEOUT: u32 = MOVE_TIMEOUT + 2;
 
 const TELEPORT_FALL_THRESHOLD: i32 = 14;
 

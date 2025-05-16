@@ -10,6 +10,16 @@ use crate::array::Array;
 
 pub const MAX_PLATFORMS_COUNT: usize = 24;
 
+/// The kind of movement the player should perform
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
+pub enum MovementHint {
+    /// Infers the movement needed
+    Infer,
+    /// Performs a walk and then jump
+    WalkAndJump,
+}
+
 /// A platform where player can stand on
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Platform {
@@ -124,7 +134,7 @@ pub fn find_points_with(
     double_jump_threshold: i32,
     jump_threshold: i32,
     vertical_threshold: i32,
-) -> Option<Vec<Point>> {
+) -> Option<Vec<(Point, MovementHint)>> {
     let platforms = platforms
         .iter()
         .map(|platform| (platform.inner, *platform))
@@ -152,8 +162,10 @@ pub fn find_points_with(
                 to_platform,
                 to,
                 double_jump_threshold,
+                jump_threshold,
             );
         }
+
         let neighbors = platforms[&current.platform].neighbors;
         for neighbor in neighbors {
             let tentative_score = current_score.saturating_add(weight_score(
@@ -187,11 +199,17 @@ fn points_from(
     to_platform: Platform,
     to: Point,
     double_jump_threshold: i32,
-) -> Option<Vec<Point>> {
-    // a margin of error to ensure double jump is launched
-    const DOUBLE_JUMP_THRESHOLD_OFFSET: i32 = 7;
+    jump_threshold: i32,
+) -> Option<Vec<(Point, MovementHint)>> {
+    /// A margin of error to ensure double jump slide on landing does not make the
+    /// player drops from platform
+    const DOUBLE_JUMP_EXTRA_OFFSET: i32 = 7;
 
-    // TODO: too complex maybe?
+    /// A margin of error to ensure jump is launched just before the platform edge
+    const JUMP_OFFSET: i32 = 1;
+
+    const WALK_AND_JUMP_THRESHOLD: i32 = 12;
+
     let mut current = to_platform;
     let mut went_to = HashMap::new();
     while came_from.contains_key(&current) {
@@ -199,60 +217,78 @@ fn points_from(
         went_to.insert(next, current);
         current = next;
     }
-
     current = from_platform;
-    let mut points = vec![Point::new(from.x, current.y)];
-    let mut last_point = points.last().copied().unwrap();
+
+    let mut points = vec![(Point::new(from.x, current.y), MovementHint::Infer)];
+    let mut last_point = points.last().copied().unwrap().0;
+    let double_jump_offset = double_jump_threshold / 2 + DOUBLE_JUMP_EXTRA_OFFSET;
     while went_to.contains_key(&current) {
         let next = went_to[&current];
+        let start_max = max(next.xs.start, current.xs.start);
+        let end_min = min(next.xs.end, current.xs.end);
+
+        // Check if the current platform overlap with the next platform
         if ranges_overlap(next.xs, current.xs) {
-            let start_max = max(next.xs.start, current.xs.start);
-            let end_min = min(next.xs.end, current.xs.end);
             if (start_max..end_min).contains(&last_point.x) {
-                points.push(Point::new(last_point.x, next.y));
+                // Already inside intersection range, add a point to move up or down
+                points.push((Point::new(last_point.x, next.y), MovementHint::Infer));
             } else {
+                // Outside intersection range, add 2 points to move inside and then up or down
                 let x = rand::random_range(start_max..end_min);
-                points.push(Point::new(x, current.y));
-                points.push(Point::new(x, next.y));
+                points.push((Point::new(x, current.y), MovementHint::Infer));
+                points.push((Point::new(x, next.y), MovementHint::Infer));
             }
         } else {
-            let start_max = max(next.xs.start, current.xs.start);
-            let end_min = min(next.xs.end, current.xs.end);
-            let length = max(double_jump_threshold - (start_max - end_min), 0)
-                + DOUBLE_JUMP_THRESHOLD_OFFSET;
-            // TODO: "soft" double jump
-            if start_max == current.xs.start {
-                // right to left
-                let mut start_max_offset = last_point.x;
-                while start_max_offset - length > start_max {
-                    start_max_offset -= length;
-                    points.push(Point::new(start_max_offset, current.y));
-                }
-                let end_min_offset = length - (start_max_offset - start_max);
-                let end_min_offset = max(end_min - 1 - end_min_offset, next.xs.start);
-                debug_assert!(start_max_offset >= start_max && start_max_offset < current.xs.end);
-                debug_assert!(end_min_offset < end_min && end_min_offset >= next.xs.start);
-                points.push(Point::new(start_max_offset, current.y));
-                points.push(Point::new(end_min_offset, next.y));
+            let is_ltr = current.xs.start < next.xs.start;
+            // Check if can double jump from last_point
+            let can_double_jump_last_point = next.xs.into_iter().any(|x| {
+                let x_match_direction = if is_ltr {
+                    x >= last_point.x
+                } else {
+                    x <= last_point.x
+                };
+                let match_threshold = (x - last_point.x).abs() > double_jump_threshold;
+                x_match_direction && match_threshold
+            });
+            // Check if the two platforms are close enough to just do a walk and jump
+            let (offset, hint) = if !can_double_jump_last_point
+                && start_max - end_min <= WALK_AND_JUMP_THRESHOLD
+                && (current.y - next.y).abs() <= jump_threshold
+            {
+                (JUMP_OFFSET, MovementHint::WalkAndJump)
             } else {
-                // left to right
-                let mut end_min_offset = last_point.x;
-                while end_min_offset + length < end_min {
-                    end_min_offset += length;
-                    points.push(Point::new(end_min_offset, current.y));
-                }
-                let start_max_offset = length - (end_min - 1 - end_min_offset);
-                let start_max_offset = min(start_max + start_max_offset, next.xs.end - 1);
-                debug_assert!(start_max_offset >= start_max && start_max_offset < next.xs.end);
-                debug_assert!(end_min_offset < end_min && end_min_offset >= current.xs.start);
-                points.push(Point::new(end_min_offset, current.y));
-                points.push(Point::new(start_max_offset, next.y));
+                (double_jump_offset, MovementHint::Infer)
+            };
+
+            // Add two points offsetted inwards from the edge of each platform only if cannot
+            // double jump from last_point
+            if !can_double_jump_last_point {
+                let from_edge = if is_ltr {
+                    (current.xs.end - 1 - offset).clamp(current.xs.start, current.xs.end - 1)
+                } else {
+                    (current.xs.start + offset).clamp(current.xs.start, current.xs.end - 1)
+                };
+                let from_point = Point::new(from_edge, from.y);
+
+                points.push((from_point, hint));
             }
+
+            let to_edge = if current.xs.start < next.xs.start {
+                (next.xs.start + offset).clamp(next.xs.start, next.xs.end - 1)
+            } else {
+                (next.xs.end - 1 - offset).clamp(next.xs.start, next.xs.end - 1)
+            };
+            let to_point = Point::new(to_edge, to.y);
+
+            points.push((to_point, MovementHint::Infer));
         }
-        last_point = points.last().copied().unwrap();
+
+        last_point = points.last().copied().unwrap().0;
         current = next;
     }
-    points.push(Point::new(to.x, to_platform.y));
+
+    points.push((Point::new(to.x, to_platform.y), MovementHint::Infer));
+
     Some(points)
 }
 
@@ -275,7 +311,7 @@ fn find_platform(
 #[inline]
 fn weight_score(current: Platform, neighbor: Platform, vertical_threshold: i32) -> u32 {
     let y_distance = (current.y - neighbor.y).abs();
-    if y_distance < vertical_threshold {
+    if y_distance <= vertical_threshold {
         y_distance as u32
     } else {
         u32::MAX
@@ -319,7 +355,9 @@ fn ranges_overlap<R: Into<Range<i32>>>(first: R, second: R) -> bool {
 mod tests {
     use opencv::core::Point;
 
-    use super::{MAX_PLATFORMS_COUNT, Platform, PlatformWithNeighbors, find_neighbors};
+    use super::{
+        MAX_PLATFORMS_COUNT, MovementHint, Platform, PlatformWithNeighbors, find_neighbors,
+    };
     use crate::{
         array::Array,
         pathing::{find_points_with, ranges_overlap},
@@ -360,11 +398,13 @@ mod tests {
 
         let points = find_points_with(&platforms, from, to, 20, 15, 50).unwrap();
 
-        assert_eq!(points.len(), 3);
-        assert_eq!(
-            points,
-            vec![Point::new(10, 50), Point::new(10, 60), Point::new(20, 60),]
-        );
+        let expected = vec![
+            (Point::new(10, 50), MovementHint::Infer),
+            (Point::new(10, 60), MovementHint::Infer),
+            (Point::new(20, 60), MovementHint::Infer),
+        ];
+
+        assert_eq!(points, expected);
     }
 
     #[test]
@@ -380,9 +420,9 @@ mod tests {
 
         let points = find_points_with(&platforms, from, to, 30, 15, 50).unwrap();
 
-        assert_eq!(points.first().unwrap().y, 50);
-        assert_eq!(points.last().unwrap().y, 55);
-        assert!(points.len() >= 2); // Should require at least one jump point
+        assert_eq!(points.first().unwrap().0.y, 50);
+        assert_eq!(points.last().unwrap().0.y, 55);
+        assert!(points.len() >= 2);
     }
 
     #[test]
@@ -397,17 +437,17 @@ mod tests {
         let from = Point::new(10, 50);
         let to = Point::new(20, 70);
 
-        let points = find_points_with(&platforms, from, to, 20, 15, 20).unwrap();
-        // Expected path goes from 50 → 60 → 70 on the same x (10)
-        let expected = vec![
-            Point::new(10, 50),
-            Point::new(10, 60),
-            Point::new(10, 70),
-            Point::new(20, 70), // Final destination point, as per function spec
-        ];
+        let points = find_points_with(&platforms, from, to, 26, 7, 41).unwrap();
 
-        assert_eq!(points.len(), expected.len());
-        assert_eq!(points, expected);
+        // Check that y-values ascend (multi-hop upward movement)
+        let ys: Vec<_> = points.iter().map(|(p, _)| p.y).collect();
+        assert!(
+            ys.windows(2).all(|w| w[0] <= w[1]),
+            "Expected ascending y values in multi-hop: {ys:?}",
+        );
+
+        assert_eq!(points.first().unwrap().0.y, 50);
+        assert_eq!(points.last().unwrap().0.y, 70);
     }
 
     #[test]
@@ -423,5 +463,30 @@ mod tests {
 
         let points = find_points_with(&platforms, from, to, 20, 15, 20);
         assert!(points.is_none());
+    }
+
+    #[test]
+    fn find_points_with_walk_and_jump_hint() {
+        let platforms = [
+            Platform::new(0..50, 50),
+            Platform::new(55..61, 52), // Only 5 units of horizontal gap
+        ];
+        let platforms = make_platforms_with_neighbors(&platforms);
+
+        let from = Point::new(45, 50); // Near right edge of first platform
+        let to = Point::new(60, 52); // Near left edge of second platform
+
+        let points = find_points_with(&platforms, from, to, 30, 15, 50).unwrap();
+
+        let has_walk_and_jump = points
+            .iter()
+            .any(|(_, hint)| *hint == MovementHint::WalkAndJump);
+        assert!(
+            has_walk_and_jump,
+            "Expected at least one WalkAndJump movement hint, got: {points:?}",
+        );
+
+        assert_eq!(points.first().unwrap().0.y, 50);
+        assert_eq!(points.last().unwrap().0.y, 52);
     }
 }

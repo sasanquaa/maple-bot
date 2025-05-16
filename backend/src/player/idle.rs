@@ -65,7 +65,7 @@ fn on_player_action(
                     intermediates
                         .inner
                         .into_iter()
-                        .map(|(point, _)| point)
+                        .map(|(point, _, _)| point)
                         .collect::<Vec<_>>()
                 })
                 .or(Some(vec![point]));
@@ -132,7 +132,7 @@ fn on_player_action(
                             intermediates
                                 .inner
                                 .into_iter()
-                                .map(|(point, _)| point)
+                                .map(|(point, _, _)| point)
                                 .collect(),
                         );
                         let (point, exact) = intermediates.next().unwrap();
