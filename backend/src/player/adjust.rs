@@ -1,9 +1,12 @@
+use std::cmp::Ordering;
+
 use platforms::windows::KeyKind;
 
 use super::{PlayerAction, PlayerActionKey, PlayerState, moving::Moving, use_key::UseKey};
 use crate::{
     ActionKeyDirection, ActionKeyWith,
     context::Context,
+    pathing::MovementHint,
     player::{
         Player,
         actions::{on_action_state, on_auto_mob_use_key_action},
@@ -67,36 +70,51 @@ pub fn update_adjusting_context(
         }),
         |mut moving| {
             if !moving.completed {
-                match (x_distance, x_direction) {
-                    (x, d) if x >= ADJUSTING_MEDIUM_THRESHOLD && d > 0 => {
-                        let _ = context.keys.send_up(KeyKind::Left);
-                        let _ = context.keys.send_down(KeyKind::Right);
-                        state.last_known_direction = ActionKeyDirection::Right;
+                let should_adjust_medium = x_distance >= ADJUSTING_MEDIUM_THRESHOLD;
+                let should_adjust_short = moving.exact && x_distance >= ADJUSTING_SHORT_THRESHOLD;
+                let direction = match x_direction.cmp(&0) {
+                    Ordering::Greater => {
+                        Some((KeyKind::Right, KeyKind::Left, ActionKeyDirection::Right))
                     }
-                    (x, d) if x >= ADJUSTING_MEDIUM_THRESHOLD && d < 0 => {
-                        let _ = context.keys.send_up(KeyKind::Right);
-                        let _ = context.keys.send_down(KeyKind::Left);
-                        state.last_known_direction = ActionKeyDirection::Left;
+                    Ordering::Less => {
+                        Some((KeyKind::Left, KeyKind::Right, ActionKeyDirection::Left))
                     }
-                    (x, d) if moving.exact && x >= ADJUSTING_SHORT_THRESHOLD && d > 0 => {
-                        let _ = context.keys.send_up(KeyKind::Left);
-                        let _ = context.keys.send_down(KeyKind::Right);
+                    _ => None,
+                };
+
+                match (should_adjust_medium, should_adjust_short, direction) {
+                    (true, _, Some((down_key, up_key, dir))) => {
+                        let _ = context.keys.send_up(up_key);
+                        let _ = context.keys.send_down(down_key);
+                        state.last_known_direction = dir;
+                    }
+                    (false, true, Some((down_key, up_key, dir))) => {
+                        let _ = context.keys.send_up(up_key);
+                        let _ = context.keys.send_down(down_key);
+
                         if moving.timeout.current >= ADJUSTING_SHORT_TIMEOUT {
-                            let _ = context.keys.send_up(KeyKind::Right);
+                            let _ = context.keys.send_up(down_key);
                         }
-                        state.last_known_direction = ActionKeyDirection::Right;
-                    }
-                    (x, d) if moving.exact && x >= ADJUSTING_SHORT_THRESHOLD && d < 0 => {
-                        let _ = context.keys.send_up(KeyKind::Right);
-                        let _ = context.keys.send_down(KeyKind::Left);
-                        if moving.timeout.current >= ADJUSTING_SHORT_TIMEOUT {
-                            let _ = context.keys.send_up(KeyKind::Left);
-                        }
-                        state.last_known_direction = ActionKeyDirection::Left;
+
+                        state.last_known_direction = dir;
                     }
                     _ => {
-                        let _ = context.keys.send_up(KeyKind::Right);
+                        // TODO: Do jump in `Player::Moving`?
+                        if matches!(moving.intermediate_hint(), Some(MovementHint::WalkAndJump)) {
+                            let mut intermediates = moving.intermediates.unwrap();
+                            if intermediates.has_next() {
+                                let (dest, exact) = intermediates.next().unwrap();
+                                return Player::Jumping(Moving::new(
+                                    cur_pos,
+                                    dest,
+                                    exact,
+                                    Some(intermediates),
+                                ));
+                            }
+                        }
+
                         let _ = context.keys.send_up(KeyKind::Left);
+                        let _ = context.keys.send_up(KeyKind::Right);
                         moving = moving.completed(true);
                     }
                 }

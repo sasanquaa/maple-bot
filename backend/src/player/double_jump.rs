@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use log::debug;
 use opencv::core::Point;
 use platforms::windows::KeyKind;
@@ -99,23 +101,27 @@ pub fn update_double_jumping_context(
         }),
         |mut moving| {
             if !moving.completed {
-                // mage teleportation requires a direction
+                // Mage teleportation requires a direction
                 if !forced || state.config.teleport_key.is_some() {
-                    match x_direction {
-                        d if d > 0 => {
-                            let _ = context.keys.send_up(KeyKind::Left);
-                            let _ = context.keys.send_down(KeyKind::Right);
-                            state.last_known_direction = ActionKeyDirection::Right;
+                    let direction = match x_direction.cmp(&0) {
+                        Ordering::Greater => {
+                            Some((KeyKind::Right, KeyKind::Left, ActionKeyDirection::Right))
                         }
-                        d if d < 0 => {
-                            let _ = context.keys.send_up(KeyKind::Right);
-                            let _ = context.keys.send_down(KeyKind::Left);
-                            state.last_known_direction = ActionKeyDirection::Left;
+                        Ordering::Less => {
+                            Some((KeyKind::Left, KeyKind::Right, ActionKeyDirection::Left))
                         }
-                        _ => {
+                        _ => None,
+                    };
+
+                    match direction {
+                        Some((down_key, up_key, dir)) => {
+                            let _ = context.keys.send_up(up_key);
+                            let _ = context.keys.send_down(down_key);
+                            state.last_known_direction = dir;
+                        }
+                        None => {
                             if state.config.teleport_key.is_some() {
                                 match state.last_known_direction {
-                                    ActionKeyDirection::Any => (),
                                     ActionKeyDirection::Left => {
                                         let _ = context.keys.send_up(KeyKind::Right);
                                         let _ = context.keys.send_down(KeyKind::Left);
@@ -124,11 +130,13 @@ pub fn update_double_jumping_context(
                                         let _ = context.keys.send_up(KeyKind::Left);
                                         let _ = context.keys.send_down(KeyKind::Right);
                                     }
+                                    ActionKeyDirection::Any => (),
                                 }
                             }
                         }
                     }
                 }
+
                 if (!forced && x_distance >= state.double_jump_threshold(is_intermediate))
                     || (forced && x_changed <= FORCE_THRESHOLD)
                 {
@@ -141,6 +149,7 @@ pub fn update_double_jumping_context(
                     moving = moving.completed(true);
                 }
             }
+
             on_action(
                 state,
                 |action| on_player_action(context, cur_pos, forced, action, moving),

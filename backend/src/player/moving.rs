@@ -12,7 +12,7 @@ use crate::{
     ActionKeyDirection, ActionKeyWith, MAX_PLATFORMS_COUNT,
     array::Array,
     context::Context,
-    pathing::{PlatformWithNeighbors, find_points_with},
+    pathing::{MovementHint, PlatformWithNeighbors, find_points_with},
     player::{
         adjust::{ADJUSTING_MEDIUM_THRESHOLD, ADJUSTING_SHORT_THRESHOLD},
         grapple::GRAPPLING_THRESHOLD,
@@ -28,7 +28,7 @@ pub const MOVE_TIMEOUT: u32 = 5;
 #[derive(Clone, Copy, Debug)]
 pub struct MovingIntermediates {
     pub current: usize,
-    pub inner: Array<(Point, bool), 16>,
+    pub inner: Array<(Point, MovementHint, bool), 16>,
 }
 
 impl MovingIntermediates {
@@ -42,9 +42,9 @@ impl MovingIntermediates {
         if self.current >= self.inner.len() {
             return None;
         }
-        let current = self.current;
+        let next = self.inner[self.current];
         self.current += 1;
-        Some(self.inner[current])
+        Some((next.0, next.2))
     }
 }
 
@@ -117,6 +117,12 @@ impl Moving {
             },
             ..self
         }
+    }
+
+    #[inline]
+    pub fn intermediate_hint(&self) -> Option<MovementHint> {
+        self.intermediates
+            .map(|intermediates| intermediates.inner[intermediates.current.saturating_sub(1)].1)
     }
 
     #[inline]
@@ -379,7 +385,7 @@ pub fn find_intermediate_points(
     let array = Array::from_iter(
         vec.into_iter()
             .enumerate()
-            .map(|(i, point)| (point, if i == len - 1 { exact } else { false })),
+            .map(|(i, (point, hint))| (point, hint, if i == len - 1 { exact } else { false })),
     );
     Some(MovingIntermediates {
         current: 0,

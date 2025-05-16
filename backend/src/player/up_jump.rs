@@ -15,7 +15,7 @@ use crate::{
 
 const SPAM_DELAY: u32 = 7;
 const STOP_UP_KEY_TICK: u32 = 3;
-const TIMEOUT: u32 = MOVE_TIMEOUT * 2;
+const TIMEOUT: u32 = MOVE_TIMEOUT + 2;
 const UP_JUMPED_THRESHOLD: i32 = 5;
 const TELEPORT_UP_JUMP_THRESHOLD: i32 = 14;
 
