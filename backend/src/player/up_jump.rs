@@ -37,15 +37,6 @@ pub fn update_up_jumping_context(
     let has_teleport_key = state.config.teleport_key.is_some();
 
     if !moving.timeout.started {
-        // Wait until stationary before doing an up jump
-        if !can_mage_skip_stationary_or_jump_key(up_jump_key, has_teleport_key, y_distance)
-            && !state.is_stationary
-        {
-            return Player::UpJumping(moving.pos(cur_pos));
-        }
-        if y_direction <= 0 {
-            return Player::Moving(moving.dest, moving.exact, moving.intermediates);
-        }
         if let Minimap::Idle(idle) = context.minimap {
             for portal in idle.portals {
                 if portal.x <= cur_pos.x
@@ -79,11 +70,7 @@ pub fn update_up_jumping_context(
                 (None, _) | (Some(_), true) | (Some(KeyKind::Up), false) => {
                     // This if is for mage. It means if the player is a mage and the y distance
                     // is less than `TELEPORT_UP_JUMP_THRESHOLD`, do not send jump key.
-                    if !can_mage_skip_stationary_or_jump_key(
-                        up_jump_key,
-                        has_teleport_key,
-                        y_distance,
-                    ) {
+                    if !can_mage_skip_jump_key(up_jump_key, has_teleport_key, y_distance) {
                         let _ = context.keys.send(jump_key);
                     }
                 }
@@ -160,7 +147,7 @@ pub fn update_up_jumping_context(
 }
 
 #[inline]
-fn can_mage_skip_stationary_or_jump_key(
+fn can_mage_skip_jump_key(
     up_jump_key: Option<KeyKind>,
     has_teleport_key: bool,
     y_distance: i32,
