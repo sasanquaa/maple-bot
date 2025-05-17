@@ -5,6 +5,7 @@ use platforms::windows::KeyKind;
 use super::{
     Player, PlayerAction, PlayerActionAutoMob, PlayerActionKey, PlayerActionMove, PlayerState,
     actions::on_action_state_mut,
+    double_jump::DoubleJumping,
     moving::{Moving, find_intermediate_points},
     use_key::UseKey,
 };
@@ -100,7 +101,11 @@ fn on_player_action(
                 || direction == state.last_known_direction
             {
                 Some((
-                    Player::DoubleJumping(Moving::new(cur_pos, cur_pos, false, None), true, true),
+                    Player::DoubleJumping(DoubleJumping::new(
+                        Moving::new(cur_pos, cur_pos, false, None),
+                        true,
+                        true,
+                    )),
                     false,
                 ))
             } else {

@@ -1,7 +1,7 @@
 use actions::{on_action, on_action_state_mut};
 use adjust::update_adjusting_context;
 use cash_shop::{CashShop, update_cash_shop_context};
-use double_jump::update_double_jumping_context;
+use double_jump::{DoubleJumping, update_double_jumping_context};
 use fall::update_falling_context;
 use grapple::update_grappling_context;
 use idle::update_idle_context;
@@ -65,7 +65,7 @@ pub enum Player {
     /// Performs walk or small adjustment x-wise action
     Adjusting(Moving),
     /// Performs double jump action
-    DoubleJumping(Moving, bool, bool),
+    DoubleJumping(DoubleJumping),
     /// Performs a grappling action
     Grappling(Moving),
     /// Performs a normal jump
@@ -91,7 +91,7 @@ impl Player {
             Player::Detecting
             | Player::Idle
             | Player::Moving(_, _, _)
-            | Player::DoubleJumping(_, false, _)
+            | Player::DoubleJumping(DoubleJumping { forced: false, .. })
             | Player::Adjusting(_) => true,
             Player::Grappling(moving)
             | Player::Jumping(moving)
@@ -100,7 +100,7 @@ impl Player {
             Player::SolvingRune(_)
             | Player::CashShopThenExit(_, _)
             | Player::Unstucking(_, _, _)
-            | Player::DoubleJumping(_, true, _)
+            | Player::DoubleJumping(DoubleJumping { forced: true, .. })
             | Player::UseKey(_)
             | Player::Stalling(_, _) => false,
         }
@@ -217,7 +217,7 @@ fn update_non_positional_context(
         | Player::Idle
         | Player::Moving(_, _, _)
         | Player::Adjusting(_)
-        | Player::DoubleJumping(_, _, _)
+        | Player::DoubleJumping(_)
         | Player::Grappling(_)
         | Player::Jumping(_)
         | Player::UpJumping(_)
@@ -239,8 +239,8 @@ fn update_positional_context(
             update_moving_context(context, state, dest, exact, intermediates)
         }
         Player::Adjusting(moving) => update_adjusting_context(context, state, moving),
-        Player::DoubleJumping(moving, forced, require_stationary) => {
-            update_double_jumping_context(context, state, moving, forced, require_stationary)
+        Player::DoubleJumping(double_jumping) => {
+            update_double_jumping_context(context, state, double_jumping)
         }
         Player::Grappling(moving) => update_grappling_context(context, state, moving),
         Player::UpJumping(moving) => update_up_jumping_context(context, state, moving),

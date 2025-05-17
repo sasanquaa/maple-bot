@@ -276,7 +276,7 @@ impl Keys {
         // was initialized with 256 elements
         let was_key_down = unsafe { key_down.get_unchecked(key.0 as usize) };
         match (is_down, was_key_down) {
-            (true, true) | (false, false) => return Err(Error::KeyNotSent),
+            (false, false) => return Err(Error::KeyNotSent),
             _ => {
                 key_down.set(key.0 as usize, is_down);
             }
