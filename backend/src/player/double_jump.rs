@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cell::RefCell, cmp::Ordering};
 
 use log::debug;
 use opencv::core::Point;
@@ -43,6 +43,31 @@ const FORCE_THRESHOLD: i32 = 3;
 /// Minimium y distance required to perform a fall and then double jump
 const FALLING_THRESHOLD: i32 = 8;
 
+#[derive(Copy, Clone, Debug)]
+pub struct DoubleJumping {
+    moving: Moving,
+    /// Whether to force a double jump even when the player current position is already close to
+    /// the destination
+    pub forced: bool,
+    /// Whether to wait for the player to become stationary before sending jump keys
+    require_stationary: bool,
+}
+
+impl DoubleJumping {
+    pub fn new(moving: Moving, forced: bool, require_stationary: bool) -> Self {
+        Self {
+            moving,
+            forced,
+            require_stationary,
+        }
+    }
+
+    #[inline]
+    fn moving(self, moving: Moving) -> DoubleJumping {
+        DoubleJumping { moving, ..self }
+    }
+}
+
 /// Updates the [`Player::DoubleJumping`] contextual state
 ///
 /// This state continues to double jump as long as the distance x-wise is still
@@ -60,20 +85,18 @@ const FALLING_THRESHOLD: i32 = 8;
 pub fn update_double_jumping_context(
     context: &Context,
     state: &mut PlayerState,
-    moving: Moving,
-    forced: bool,
-    require_stationary: bool,
+    double_jumping: DoubleJumping,
 ) -> Player {
-    debug_assert!(moving.timeout.started || !moving.completed);
+    let moving = double_jumping.moving;
     let cur_pos = state.last_known_pos.unwrap();
-    let ignore_grappling = forced || state.should_disable_grappling();
+    let ignore_grappling = double_jumping.forced || state.should_disable_grappling();
     let x_changed = (cur_pos.x - moving.pos.x).abs();
     let (x_distance, x_direction) = moving.x_distance_direction_from(true, cur_pos);
     let (y_distance, y_direction) = moving.y_distance_direction_from(true, cur_pos);
     let is_intermediate = moving.is_destination_intermediate();
     if !moving.timeout.started {
         // Checks to perform a fall and returns to double jump
-        if !forced
+        if !double_jumping.forced
             && !matches!(state.last_movement, Some(LastMovement::Falling))
             && y_direction < 0
             && y_distance >= FALLING_THRESHOLD
@@ -82,68 +105,60 @@ pub fn update_double_jumping_context(
         {
             return Player::Falling(moving.pos(cur_pos), cur_pos, true);
         }
-        if require_stationary && !state.is_stationary {
+        if double_jumping.require_stationary && !state.is_stationary {
             let _ = context.keys.send_up(KeyKind::Right);
             let _ = context.keys.send_up(KeyKind::Left);
-            return Player::DoubleJumping(moving.pos(cur_pos), forced, require_stationary);
+            return Player::DoubleJumping(double_jumping.moving(moving.pos(cur_pos)));
         }
         state.last_movement = Some(LastMovement::DoubleJumping);
     }
 
+    let state = RefCell::new(state);
     update_moving_axis_context(
         moving,
         cur_pos,
         TIMEOUT,
-        |moving| Player::DoubleJumping(moving, forced, require_stationary),
+        |moving| {
+            let mut state = state.borrow_mut();
+            // Mage teleportation requires a direction
+            if !double_jumping.forced || state.config.teleport_key.is_some() {
+                let key_direction = match x_direction.cmp(&0) {
+                    Ordering::Greater => Some((KeyKind::Right, ActionKeyDirection::Right)),
+                    Ordering::Less => Some((KeyKind::Left, ActionKeyDirection::Left)),
+                    _ => None,
+                };
+                if let Some((key, direction)) = key_direction {
+                    let _ = context.keys.send_down(key);
+                    state.last_known_direction = direction;
+                }
+            }
+
+            Player::DoubleJumping(double_jumping.moving(moving))
+        },
         Some(|| {
+            if let Some(key) = state.borrow().config.teleport_key {
+                let _ = context.keys.send_up(key);
+            }
             let _ = context.keys.send_up(KeyKind::Right);
             let _ = context.keys.send_up(KeyKind::Left);
         }),
         |mut moving| {
+            let mut state = state.borrow_mut();
             if !moving.completed {
-                // Mage teleportation requires a direction
-                if !forced || state.config.teleport_key.is_some() {
-                    let direction = match x_direction.cmp(&0) {
-                        Ordering::Greater => {
-                            Some((KeyKind::Right, KeyKind::Left, ActionKeyDirection::Right))
-                        }
-                        Ordering::Less => {
-                            Some((KeyKind::Left, KeyKind::Right, ActionKeyDirection::Left))
-                        }
-                        _ => None,
-                    };
+                let can_continue = !double_jumping.forced
+                    && x_distance >= state.double_jump_threshold(is_intermediate);
+                let can_press = double_jumping.forced && x_changed <= FORCE_THRESHOLD;
 
-                    match direction {
-                        Some((down_key, up_key, dir)) => {
-                            let _ = context.keys.send_up(up_key);
-                            let _ = context.keys.send_down(down_key);
-                            state.last_known_direction = dir;
-                        }
-                        None => {
-                            if state.config.teleport_key.is_some() {
-                                match state.last_known_direction {
-                                    ActionKeyDirection::Left => {
-                                        let _ = context.keys.send_up(KeyKind::Right);
-                                        let _ = context.keys.send_down(KeyKind::Left);
-                                    }
-                                    ActionKeyDirection::Right => {
-                                        let _ = context.keys.send_up(KeyKind::Left);
-                                        let _ = context.keys.send_down(KeyKind::Right);
-                                    }
-                                    ActionKeyDirection::Any => (),
-                                }
-                            }
-                        }
+                if can_continue || can_press {
+                    if let Some(key) = state.config.teleport_key {
+                        let _ = context.keys.send_down(key);
+                    } else {
+                        let _ = context.keys.send_down(state.config.jump_key);
                     }
-                }
-
-                if (!forced && x_distance >= state.double_jump_threshold(is_intermediate))
-                    || (forced && x_changed <= FORCE_THRESHOLD)
-                {
-                    let _ = context
-                        .keys
-                        .send(state.config.teleport_key.unwrap_or(state.config.jump_key));
                 } else {
+                    if let Some(key) = state.config.teleport_key {
+                        let _ = context.keys.send_up(key);
+                    }
                     let _ = context.keys.send_up(KeyKind::Right);
                     let _ = context.keys.send_up(KeyKind::Left);
                     moving = moving.completed(true);
@@ -151,8 +166,8 @@ pub fn update_double_jumping_context(
             }
 
             on_action(
-                state,
-                |action| on_player_action(context, cur_pos, forced, action, moving),
+                &mut state,
+                |action| on_player_action(context, cur_pos, double_jumping.forced, action, moving),
                 || {
                     if !ignore_grappling
                         && moving.completed
@@ -164,12 +179,12 @@ pub fn update_double_jumping_context(
                     } else if moving.completed && moving.timeout.current >= MOVE_TIMEOUT {
                         Player::Moving(moving.dest, moving.exact, moving.intermediates)
                     } else {
-                        Player::DoubleJumping(moving, forced, require_stationary)
+                        Player::DoubleJumping(double_jumping.moving(moving))
                     }
                 },
             )
         },
-        if forced {
+        if double_jumping.forced {
             // this ensures it won't double jump forever when
             // jumping towards either edge of the map
             ChangeAxis::Horizontal

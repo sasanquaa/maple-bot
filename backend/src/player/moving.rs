@@ -4,7 +4,7 @@ use opencv::core::Point;
 use super::{
     GRAPPLING_MAX_THRESHOLD, JUMP_THRESHOLD, Player, PlayerState,
     actions::{PlayerAction, PlayerActionKey, PlayerActionMove},
-    double_jump::DOUBLE_JUMP_THRESHOLD,
+    double_jump::{DOUBLE_JUMP_THRESHOLD, DoubleJumping},
     state::LastMovement,
     timeout::Timeout,
 };
@@ -235,7 +235,7 @@ pub fn update_moving_context(
     match (skip_destination, x_distance, y_direction, y_distance) {
         (false, d, _, _) if d >= state.double_jump_threshold(is_intermediate) => {
             abort_action_on_state_repeat(
-                Player::DoubleJumping(moving, false, false),
+                Player::DoubleJumping(DoubleJumping::new(moving, false, false)),
                 context,
                 state,
             )
@@ -343,7 +343,10 @@ fn on_player_action(
             ..
         }) => {
             if matches!(direction, ActionKeyDirection::Any) || direction == last_known_direction {
-                Some((Player::DoubleJumping(moving, true, false), false))
+                Some((
+                    Player::DoubleJumping(DoubleJumping::new(moving, true, false)),
+                    false,
+                ))
             } else {
                 Some((Player::UseKey(UseKey::from_action(action)), false))
             }

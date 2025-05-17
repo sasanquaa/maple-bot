@@ -6,6 +6,7 @@ use platforms::windows::KeyKind;
 use super::{
     PlayerState, Timeout,
     actions::{PlayerAction, PlayerActionKey},
+    double_jump::DoubleJumping,
 };
 use crate::{
     ActionKeyDirection, ActionKeyWith, Class, KeyBinding, LinkKeyBinding,
@@ -219,7 +220,11 @@ pub fn update_use_key_context(
             }
             ActionKeyWith::DoubleJump => {
                 let pos = state.last_known_pos.unwrap();
-                Player::DoubleJumping(Moving::new(pos, pos, false, None), true, true)
+                Player::DoubleJumping(DoubleJumping::new(
+                    Moving::new(pos, pos, false, None),
+                    true,
+                    true,
+                ))
             }
         },
         UseKeyStage::Using(timeout, completed) => {

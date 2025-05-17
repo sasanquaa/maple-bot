@@ -10,6 +10,7 @@ use crate::{
     player::{
         Player,
         actions::{on_action_state, on_auto_mob_use_key_action},
+        double_jump::DoubleJumping,
         moving::MOVE_TIMEOUT,
         state::LastMovement,
         timeout::{ChangeAxis, Timeout, update_moving_axis_context},
@@ -161,11 +162,11 @@ fn on_player_action(
                 || direction == state.last_known_direction
             {
                 Some((
-                    Player::DoubleJumping(
+                    Player::DoubleJumping(DoubleJumping::new(
                         moving.timeout(Timeout::default()).completed(false),
                         true,
                         false,
-                    ),
+                    )),
                     false,
                 ))
             } else {
