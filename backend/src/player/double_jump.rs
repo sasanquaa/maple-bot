@@ -144,19 +144,21 @@ pub fn update_double_jumping_context(
         }),
         |mut moving| {
             let mut state = state.borrow_mut();
+            let teleport_key = state.config.teleport_key;
+
             if !moving.completed {
                 let can_continue = !double_jumping.forced
                     && x_distance >= state.double_jump_threshold(is_intermediate);
                 let can_press = double_jumping.forced && x_changed <= FORCE_THRESHOLD;
 
                 if can_continue || can_press {
-                    if let Some(key) = state.config.teleport_key {
+                    if let Some(key) = teleport_key {
                         let _ = context.keys.send_down(key);
                     } else {
                         let _ = context.keys.send_down(state.config.jump_key);
                     }
                 } else {
-                    if let Some(key) = state.config.teleport_key {
+                    if let Some(key) = teleport_key {
                         let _ = context.keys.send_up(key);
                     }
                     let _ = context.keys.send_up(KeyKind::Right);
@@ -167,7 +169,16 @@ pub fn update_double_jumping_context(
 
             on_action(
                 &mut state,
-                |action| on_player_action(context, cur_pos, double_jumping.forced, action, moving),
+                |action| {
+                    on_player_action(
+                        context,
+                        cur_pos,
+                        double_jumping.forced,
+                        action,
+                        moving,
+                        teleport_key,
+                    )
+                },
                 || {
                     if !ignore_grappling
                         && moving.completed
@@ -205,6 +216,7 @@ fn on_player_action(
     forced: bool,
     action: PlayerAction,
     moving: Moving,
+    teleport_key: Option<KeyKind>,
 ) -> Option<(Player, bool)> {
     let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
     let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
@@ -213,7 +225,14 @@ fn on_player_action(
         // ignore proximity check when it is forced to double jumped
         // this indicates the player is already near the destination
         PlayerAction::AutoMob(_) => {
-            on_auto_mob_use_key_action(context, action, moving.pos, x_distance, y_distance)
+            let next =
+                on_auto_mob_use_key_action(context, action, moving.pos, x_distance, y_distance);
+            if next.is_some()
+                && let Some(key) = teleport_key
+            {
+                let _ = context.keys.send_up(key);
+            }
+            next
         }
         PlayerAction::Key(PlayerActionKey {
             with: ActionKeyWith::DoubleJump | ActionKeyWith::Any,
