@@ -155,7 +155,7 @@ pub fn update_double_jumping_context(
                     if let Some(key) = teleport_key {
                         let _ = context.keys.send_down(key);
                     } else {
-                        let _ = context.keys.send_down(state.config.jump_key);
+                        let _ = context.keys.send(state.config.jump_key);
                     }
                 } else {
                     if let Some(key) = teleport_key {

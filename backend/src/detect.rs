@@ -9,7 +9,7 @@ use std::{
     },
 };
 
-use anyhow::{Ok, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use dyn_clone::DynClone;
 use log::{debug, error, info};
 #[cfg(test)]
@@ -264,8 +264,8 @@ impl Detector for CachedDetector {
     }
 
     fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect> {
-        let minimap_grayscale = self.grayscale.roi(minimap)?;
-        detect_minimap_rune(&minimap_grayscale)
+        let minimap_color = to_bgr(&self.mat.roi(minimap)?);
+        detect_minimap_rune(&minimap_color)
     }
 
     fn detect_player(&self, minimap: Rect) -> Result<Rect> {
@@ -680,10 +680,16 @@ fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Result
 fn detect_minimap_rune(minimap: &impl ToInputArray) -> Result<Rect> {
     /// TODO: Support default ratio
     static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(include_bytes!(env!("RUNE_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+        imgcodecs::imdecode(include_bytes!(env!("RUNE_TEMPLATE")), IMREAD_COLOR).unwrap()
+    });
+    static TEMPLATE_MASK: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("RUNE_MASK_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
 
-    detect_template(minimap, &*TEMPLATE, Point::default(), 0.6)
+    // Expands by 2 pixels to preserve previous position calculation. Previous template is 11x11
+    // while the current template is 9x9
+    detect_template_single(minimap, &*TEMPLATE, &*TEMPLATE_MASK, Point::default(), 0.75)
+        .map(|(rect, _)| Rect::new(rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2))
 }
 
 fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
@@ -926,11 +932,17 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
         .unwrap()
     });
     static WEALTH_EXP_POTION_MASK: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
+        let mut mat = imgcodecs::imdecode(
             include_bytes!(env!("WEALTH_EXP_POTION_MASK_TEMPLATE")),
             IMREAD_GRAYSCALE,
         )
-        .unwrap()
+        .unwrap();
+        unsafe {
+            mat.modify_inplace(|mat, mat_mut| {
+                mat.convert_to(mat_mut, CV_32FC3, 1.0 / 255.0, 0.0).unwrap();
+            });
+        }
+        mat
     });
     static WEALTH_ACQUISITION_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
@@ -978,7 +990,7 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
     let threshold = match kind {
         BuffKind::Rune | BuffKind::AureliaElixir => 0.8,
         BuffKind::LegionWealth => 0.76,
-        BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => 0.5, // TODO
+        BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => 0.7,
         BuffKind::SayramElixir
         | BuffKind::ExpCouponX3
         | BuffKind::BonusExpCoupon
@@ -1030,6 +1042,7 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
         if matches.len() == 2 {
             return true;
         }
+
         let template_other = if matches!(kind, BuffKind::WealthAcquisitionPotion) {
             &*EXP_ACCUMULATION_POTION_BUFF
         } else {
@@ -1043,10 +1056,10 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
             Point::default(),
             threshold,
         );
-        if match_other.is_err() || match_other.unwrap().1 < match_current.1 {
-            return true;
-        }
-        false
+
+        match_other.is_err()
+            || match_other.as_ref().copied().unwrap().0 != match_current.0
+            || match_other.unwrap().1 < match_current.1
     } else {
         detect_template(mat, template, Point::default(), threshold).is_ok()
     }
@@ -1554,6 +1567,23 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
     threshold: f64,
 ) -> Vec<Result<(Rect, f64)>> {
     #[inline]
+    fn clear_result(result: &mut Mat, rect: Rect, offset: Point) {
+        let x = rect.x - offset.x;
+        let y = rect.y - offset.y;
+        let roi_rect = Rect::new(
+            x,
+            y,
+            rect.width.min(result.cols() - x),
+            rect.height.min(result.rows() - y),
+        );
+        result
+            .roi_mut(roi_rect)
+            .unwrap()
+            .set_scalar(Scalar::default())
+            .unwrap();
+    }
+
+    #[inline]
     fn match_one(
         result: &Mat,
         offset: Point,
@@ -1590,24 +1620,38 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
     let template_size = template.size().unwrap();
     let max_matches = max_matches.max(1);
     if max_matches == 1 {
-        return vec![match_one(&result, offset, template_size, threshold).1];
+        // Weird INFINITY values when match template with mask
+        // https://github.com/opencv/opencv/issues/23257
+        loop {
+            let (rect, match_result) = match_one(&result, offset, template_size, threshold);
+            if match_result
+                .as_ref()
+                .is_ok_and(|(_, score)| *score == f64::INFINITY)
+            {
+                clear_result(&mut result, rect, offset);
+                continue;
+            }
+            return vec![match_result];
+        }
     }
 
     let mut filter = Vec::new();
     for _ in 0..max_matches {
-        let (rect, match_result) = match_one(&result, offset, template_size, threshold);
-        let roi_rect = Rect::new(
-            rect.x - offset.x,
-            rect.y - offset.y,
-            rect.width.min(result.cols()),
-            rect.height.min(result.rows()),
-        );
-        result
-            .roi_mut(roi_rect)
-            .unwrap()
-            .set_scalar(Scalar::default())
-            .unwrap();
-        filter.push(match_result);
+        loop {
+            let (rect, match_result) = match_one(&result, offset, template_size, threshold);
+            clear_result(&mut result, rect, offset);
+            // Weird INFINITY values when match template with mask
+            // https://github.com/opencv/opencv/issues/23257
+            if match_result
+                .as_ref()
+                .is_ok_and(|(_, score)| *score == f64::INFINITY)
+            {
+                continue;
+            }
+
+            filter.push(match_result);
+            break;
+        }
     }
     filter
 }

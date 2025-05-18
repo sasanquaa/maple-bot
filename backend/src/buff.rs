@@ -13,9 +13,7 @@ use crate::{
     task::{Task, Update, update_detection_task},
 };
 
-const BUFF_FAIL_NORMAL_MAX_COUNT: u32 = 5;
-// TODO: Test to see if this is reasonable
-const BUFF_FAIL_HIGH_MAX_COUNT: u32 = 35; // Meant for WAP / EAP
+const BUFF_FAIL_MAX_COUNT: u32 = 5;
 
 #[derive(Debug)]
 pub struct BuffState {
@@ -40,10 +38,9 @@ impl BuffState {
             fail_count: 0,
             max_fail_count: match kind {
                 BuffKind::Rune => 1,
-                BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => {
-                    BUFF_FAIL_HIGH_MAX_COUNT
-                }
-                BuffKind::SayramElixir
+                BuffKind::WealthAcquisitionPotion
+                | BuffKind::ExpAccumulationPotion
+                | BuffKind::SayramElixir
                 | BuffKind::AureliaElixir
                 | BuffKind::ExpCouponX3
                 | BuffKind::BonusExpCoupon
@@ -52,7 +49,7 @@ impl BuffState {
                 | BuffKind::ExtremeRedPotion
                 | BuffKind::ExtremeBluePotion
                 | BuffKind::ExtremeGreenPotion
-                | BuffKind::ExtremeGoldPotion => BUFF_FAIL_NORMAL_MAX_COUNT,
+                | BuffKind::ExtremeGoldPotion => BUFF_FAIL_MAX_COUNT,
             },
             enabled: true,
         }
@@ -68,10 +65,8 @@ impl BuffState {
             BuffKind::BonusExpCoupon => config.bonus_exp_key.enabled,
             BuffKind::LegionWealth => config.legion_wealth_key.enabled,
             BuffKind::LegionLuck => config.legion_luck_key.enabled,
-            // BuffKind::WealthAcquisitionPotion => config.wealth_acquisition_potion_key.enabled,
-            // BuffKind::ExpAccumulationPotion => config.exp_accumulation_potion_key.enabled,
-            // TODO: Disable until have better way to do this...
-            BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => false,
+            BuffKind::WealthAcquisitionPotion => config.wealth_acquisition_potion_key.enabled,
+            BuffKind::ExpAccumulationPotion => config.exp_accumulation_potion_key.enabled,
             BuffKind::ExtremeRedPotion => config.extreme_red_potion_key.enabled,
             BuffKind::ExtremeBluePotion => config.extreme_blue_potion_key.enabled,
             BuffKind::ExtremeGreenPotion => config.extreme_green_potion_key.enabled,
@@ -225,7 +220,7 @@ mod tests {
             let detector = detector_with_kind(kind, false);
             let context = Context::new(None, Some(detector));
             let mut state = BuffState::new(kind);
-            state.max_fail_count = BUFF_FAIL_NORMAL_MAX_COUNT;
+            state.max_fail_count = BUFF_FAIL_MAX_COUNT;
             state.fail_count = state.max_fail_count - 1;
 
             let buff = advance_task(Buff::HasBuff, &context, &mut state).await;

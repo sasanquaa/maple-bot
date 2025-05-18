@@ -13,7 +13,7 @@ use crate::{
 };
 
 /// Minimum y distance from the destination required to perform a grappling hook
-pub const GRAPPLING_THRESHOLD: i32 = 26;
+pub const GRAPPLING_THRESHOLD: i32 = 24;
 
 /// Maximum y distance from the destination required to perform a grappling hook
 pub const GRAPPLING_MAX_THRESHOLD: i32 = 41;
