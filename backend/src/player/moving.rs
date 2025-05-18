@@ -1,5 +1,6 @@
 use log::{debug, info};
 use opencv::core::Point;
+use platforms::windows::KeyKind;
 
 use super::{
     GRAPPLING_MAX_THRESHOLD, JUMP_THRESHOLD, Player, PlayerState,
@@ -120,7 +121,7 @@ impl Moving {
     }
 
     #[inline]
-    pub fn intermediate_hint(&self) -> Option<MovementHint> {
+    fn intermediate_hint(&self) -> Option<MovementHint> {
         self.intermediates
             .map(|intermediates| intermediates.inner[intermediates.current.saturating_sub(1)].1)
     }
@@ -287,6 +288,23 @@ pub fn update_moving_context(
             {
                 state.clear_unstucking(false);
                 state.clear_last_movement();
+                if matches!(moving.intermediate_hint(), Some(MovementHint::WalkAndJump)) {
+                    // TODO: Any better way ???
+                    state.stalling_timeout_state = Some(Player::Jumping(Moving::new(
+                        cur_pos,
+                        dest,
+                        exact,
+                        Some(intermediates),
+                    )));
+                    let key = if dest.x - cur_pos.x >= 0 {
+                        KeyKind::Right
+                    } else {
+                        KeyKind::Left
+                    };
+                    let _ = context.keys.send_down(key);
+                    return Player::Stalling(Timeout::default(), 3);
+                }
+
                 return Player::Moving(dest, exact, Some(intermediates));
             }
             state.last_destinations = None;
@@ -370,6 +388,7 @@ pub fn find_intermediate_points(
     dest: Point,
     exact: bool,
     up_jump_only: bool,
+    enable_hint: bool,
 ) -> Option<MovingIntermediates> {
     let vertical_threshold = if up_jump_only {
         GRAPPLING_THRESHOLD
@@ -380,6 +399,7 @@ pub fn find_intermediate_points(
         platforms,
         cur_pos,
         dest,
+        enable_hint,
         DOUBLE_JUMP_THRESHOLD,
         JUMP_THRESHOLD,
         vertical_threshold,

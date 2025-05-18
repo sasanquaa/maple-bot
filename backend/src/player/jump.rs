@@ -6,6 +6,8 @@ use super::{
 };
 use crate::context::Context;
 
+const TIMEOUT: u32 = MOVE_TIMEOUT + 3;
+
 pub fn update_jumping_context(
     context: &Context,
     state: &mut PlayerState,
@@ -18,7 +20,7 @@ pub fn update_jumping_context(
     update_moving_axis_context(
         moving,
         state.last_known_pos.unwrap(),
-        MOVE_TIMEOUT,
+        TIMEOUT,
         |moving| {
             let _ = context.keys.send(state.config.jump_key);
             Player::Jumping(moving)
