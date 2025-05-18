@@ -6,7 +6,6 @@ use super::{PlayerAction, PlayerActionKey, PlayerState, moving::Moving, use_key:
 use crate::{
     ActionKeyDirection, ActionKeyWith,
     context::Context,
-    pathing::MovementHint,
     player::{
         Player,
         actions::{on_action_state, on_auto_mob_use_key_action},
@@ -100,20 +99,6 @@ pub fn update_adjusting_context(
                         state.last_known_direction = dir;
                     }
                     _ => {
-                        // TODO: Do jump in `Player::Moving`?
-                        if matches!(moving.intermediate_hint(), Some(MovementHint::WalkAndJump)) {
-                            let mut intermediates = moving.intermediates.unwrap();
-                            if intermediates.has_next() {
-                                let (dest, exact) = intermediates.next().unwrap();
-                                return Player::Jumping(Moving::new(
-                                    cur_pos,
-                                    dest,
-                                    exact,
-                                    Some(intermediates),
-                                ));
-                            }
-                        }
-
                         let _ = context.keys.send_up(KeyKind::Left);
                         let _ = context.keys.send_up(KeyKind::Right);
                         moving = moving.completed(true);

@@ -131,6 +131,7 @@ pub fn find_points_with(
     platforms: &Array<PlatformWithNeighbors, MAX_PLATFORMS_COUNT>,
     from: Point,
     to: Point,
+    enable_hint: bool,
     double_jump_threshold: i32,
     jump_threshold: i32,
     vertical_threshold: i32,
@@ -161,6 +162,7 @@ pub fn find_points_with(
                 from_platform,
                 to_platform,
                 to,
+                enable_hint,
                 double_jump_threshold,
                 jump_threshold,
             );
@@ -192,21 +194,23 @@ pub fn find_points_with(
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 fn points_from(
     came_from: &HashMap<Platform, Platform>,
     from: Point,
     from_platform: Platform,
     to_platform: Platform,
     to: Point,
+    enable_hint: bool,
     double_jump_threshold: i32,
     jump_threshold: i32,
 ) -> Option<Vec<(Point, MovementHint)>> {
     /// A margin of error to ensure double jump slide on landing does not make the
     /// player drops from platform
-    const DOUBLE_JUMP_EXTRA_OFFSET: i32 = 7;
+    const DOUBLE_JUMP_EXTRA_OFFSET: i32 = 10;
 
     /// A margin of error to ensure jump is launched just before the platform edge
-    const JUMP_OFFSET: i32 = 1;
+    const JUMP_OFFSET: i32 = 2;
 
     const WALK_AND_JUMP_THRESHOLD: i32 = 12;
 
@@ -241,17 +245,17 @@ fn points_from(
         } else {
             let is_ltr = current.xs.start < next.xs.start;
             // Check if can double jump from last_point
-            let can_double_jump_last_point = next.xs.into_iter().any(|x| {
-                let x_match_direction = if is_ltr {
-                    x >= last_point.x
-                } else {
-                    x <= last_point.x
-                };
-                let match_threshold = (x - last_point.x).abs() > double_jump_threshold;
-                x_match_direction && match_threshold
-            });
+            let can_double_jump_last_point = if is_ltr {
+                current.xs.end - last_point.x > double_jump_threshold
+            } else {
+                last_point.x - current.xs.start + 1 > double_jump_threshold
+            };
+            // Ignore initial point as it has the same platform as the current
+            let can_double_jump_last_point = can_double_jump_last_point && points.len() > 1;
+
             // Check if the two platforms are close enough to just do a walk and jump
-            let (offset, hint) = if !can_double_jump_last_point
+            let (offset, hint) = if enable_hint
+                && !can_double_jump_last_point
                 && start_max - end_min <= WALK_AND_JUMP_THRESHOLD
                 && (current.y - next.y).abs() <= jump_threshold
             {
@@ -260,27 +264,13 @@ fn points_from(
                 (double_jump_offset, MovementHint::Infer)
             };
 
-            // Add two points offsetted inwards from the edge of each platform only if cannot
-            // double jump from last_point
-            if !can_double_jump_last_point {
-                let from_edge = if is_ltr {
-                    (current.xs.end - 1 - offset).clamp(current.xs.start, current.xs.end - 1)
-                } else {
-                    (current.xs.start + offset).clamp(current.xs.start, current.xs.end - 1)
-                };
-                let from_point = Point::new(from_edge, from.y);
-
-                points.push((from_point, hint));
-            }
-
-            let to_edge = if current.xs.start < next.xs.start {
-                (next.xs.start + offset).clamp(next.xs.start, next.xs.end - 1)
+            let from_edge = if is_ltr {
+                (current.xs.end - 1 - offset).clamp(current.xs.start, current.xs.end - 1)
             } else {
-                (next.xs.end - 1 - offset).clamp(next.xs.start, next.xs.end - 1)
+                (current.xs.start + offset).clamp(current.xs.start, current.xs.end - 1)
             };
-            let to_point = Point::new(to_edge, to.y);
-
-            points.push((to_point, MovementHint::Infer));
+            let from_point = Point::new(from_edge, current.y);
+            points.push((from_point, hint));
         }
 
         last_point = points.last().copied().unwrap().0;
@@ -396,7 +386,7 @@ mod tests {
         let from = Point::new(10, 50);
         let to = Point::new(20, 60);
 
-        let points = find_points_with(&platforms, from, to, 20, 15, 50).unwrap();
+        let points = find_points_with(&platforms, from, to, true, 20, 15, 50).unwrap();
 
         let expected = vec![
             (Point::new(10, 50), MovementHint::Infer),
@@ -418,7 +408,7 @@ mod tests {
         let from = Point::new(25, 50);
         let to = Point::new(65, 55);
 
-        let points = find_points_with(&platforms, from, to, 30, 15, 50).unwrap();
+        let points = find_points_with(&platforms, from, to, true, 30, 15, 50).unwrap();
 
         assert_eq!(points.first().unwrap().0.y, 50);
         assert_eq!(points.last().unwrap().0.y, 55);
@@ -437,7 +427,7 @@ mod tests {
         let from = Point::new(10, 50);
         let to = Point::new(20, 70);
 
-        let points = find_points_with(&platforms, from, to, 26, 7, 41).unwrap();
+        let points = find_points_with(&platforms, from, to, true, 26, 7, 41).unwrap();
 
         // Check that y-values ascend (multi-hop upward movement)
         let ys: Vec<_> = points.iter().map(|(p, _)| p.y).collect();
@@ -461,7 +451,7 @@ mod tests {
         let from = Point::new(25, 50);
         let to = Point::new(125, 55);
 
-        let points = find_points_with(&platforms, from, to, 20, 15, 20);
+        let points = find_points_with(&platforms, from, to, true, 20, 15, 20);
         assert!(points.is_none());
     }
 
@@ -476,7 +466,7 @@ mod tests {
         let from = Point::new(45, 50); // Near right edge of first platform
         let to = Point::new(60, 52); // Near left edge of second platform
 
-        let points = find_points_with(&platforms, from, to, 30, 15, 50).unwrap();
+        let points = find_points_with(&platforms, from, to, true, 30, 15, 50).unwrap();
 
         let has_walk_and_jump = points
             .iter()

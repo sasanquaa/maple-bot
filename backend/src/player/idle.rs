@@ -48,6 +48,7 @@ fn on_player_action(
                         point,
                         position.allow_adjusting,
                         state.config.auto_mob_platforms_pathing_up_jump_only,
+                        false,
                     ),
                     _ => unreachable!(),
                 }
@@ -131,6 +132,7 @@ fn on_player_action(
                         rune,
                         true,
                         state.config.rune_platforms_pathing_up_jump_only,
+                        true,
                     );
                     if let Some(mut intermediates) = intermediates {
                         state.last_destinations = Some(
