@@ -451,7 +451,6 @@ pub fn config_buffs(config: &Configuration) -> Vec<(BuffKind, KeyBinding)> {
     if let KeyBindingConfiguration { key, enabled: true } = config.bonus_exp_key {
         buffs.push((BuffKind::BonusExpCoupon, key));
     }
-    // TODO: Disable until have better way to do this...
     if let KeyBindingConfiguration { key, enabled: true } = config.wealth_acquisition_potion_key {
         buffs.push((BuffKind::WealthAcquisitionPotion, key));
     }
