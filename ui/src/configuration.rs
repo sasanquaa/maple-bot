@@ -415,7 +415,7 @@ fn ConfigBuffKeyBindings(
             label: WEALTH_ACQUISITION_POTION,
             label_active: active,
             // TODO: Disable until have better way to do this...
-            is_disabled: true,
+            is_disabled: false,
             is_toggleable: true,
             on_input: move |key: Option<KeyBindingConfiguration>| {
                 on_config(ConfigurationData {
@@ -429,7 +429,7 @@ fn ConfigBuffKeyBindings(
             label: EXP_ACCUMULATION_POTION,
             label_active: active,
             // TODO: Disable until have better way to do this...
-            is_disabled: true,
+            is_disabled: false,
             is_toggleable: true,
             on_input: move |key: Option<KeyBindingConfiguration>| {
                 on_config(ConfigurationData {
