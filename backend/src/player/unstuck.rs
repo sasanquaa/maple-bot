@@ -15,9 +15,6 @@ use crate::{
 /// seems rare but one possible map is The Forest Of Earth in Arcana.
 const Y_IGNORE_THRESHOLD: i32 = 18;
 
-/// Random threshold to choose unstucking direction
-const X_TO_RIGHT_THRESHOLD: i32 = 10;
-
 /// Updates the [`Player::Unstucking`] contextual state
 ///
 /// This state can only be transitioned to when [`PlayerState::unstuck_counter`] reached the fixed
@@ -68,7 +65,7 @@ pub fn update_unstucking_context(
                 (_, Some(Point { y, .. })) if y <= Y_IGNORE_THRESHOLD => {
                     return Player::Unstucking(timeout, has_settings, gamba_mode);
                 }
-                (_, Some(Point { x, .. })) => x <= X_TO_RIGHT_THRESHOLD,
+                (_, Some(Point { x, .. })) => x <= idle.bbox.width / 2,
                 (_, None) => unreachable!(),
             };
             if to_right {
@@ -79,7 +76,6 @@ pub fn update_unstucking_context(
             Player::Unstucking(timeout, has_settings, gamba_mode)
         },
         || {
-            let _ = context.keys.send_up(KeyKind::Down);
             let _ = context.keys.send_up(KeyKind::Right);
             let _ = context.keys.send_up(KeyKind::Left);
             Player::Detecting
