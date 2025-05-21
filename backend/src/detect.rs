@@ -931,6 +931,13 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
         )
         .unwrap()
     });
+    static LEGION_WEALTH_LUCK_BUFF_MASK: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("LEGION_WEALTH_LUCK_BUFF_MASK_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
     static WEALTH_EXP_POTION_MASK: LazyLock<Mat> = LazyLock::new(|| {
         let mut mat = imgcodecs::imdecode(
             include_bytes!(env!("WEALTH_EXP_POTION_MASK_TEMPLATE")),
@@ -989,8 +996,9 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
 
     let threshold = match kind {
         BuffKind::Rune | BuffKind::AureliaElixir => 0.8,
-        BuffKind::LegionWealth => 0.76,
-        BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => 0.7,
+        BuffKind::LegionWealth
+        | BuffKind::WealthAcquisitionPotion
+        | BuffKind::ExpAccumulationPotion => 0.7,
         BuffKind::SayramElixir
         | BuffKind::ExpCouponX3
         | BuffKind::BonusExpCoupon
@@ -1016,52 +1024,58 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
         BuffKind::ExtremeGoldPotion => &*EXTREME_GOLD_POTION_BUFF,
     };
 
-    if matches!(
-        kind,
-        BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion
-    ) {
-        // Because the two potions are really similar, detecting one may mis-detect for the other.
-        // Can't really think of a better way to do this.... But this seems working just fine.
-        // Also tested with the who-use-this? Invicibility Potion and Resistance Potion. Those two
-        // doesn't match at all so this should be fine.
-        let matches = detect_template_multiple(
+    match kind {
+        BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => {
+            // Because the two potions are really similar, detecting one may mis-detect for the other.
+            // Can't really think of a better way to do this.... But this seems working just fine.
+            // Also tested with the who-use-this? Invicibility Potion and Resistance Potion. Those two
+            // doesn't match at all so this should be fine.
+            let matches = detect_template_multiple(
+                mat,
+                template,
+                &*WEALTH_EXP_POTION_MASK,
+                Point::default(),
+                2,
+                threshold,
+            )
+            .into_iter()
+            .filter_map(|result| result.ok())
+            .collect::<Vec<_>>();
+            if matches.is_empty() {
+                return false;
+            }
+            // Likely both potions are active
+            if matches.len() == 2 {
+                return true;
+            }
+
+            let template_other = if matches!(kind, BuffKind::WealthAcquisitionPotion) {
+                &*EXP_ACCUMULATION_POTION_BUFF
+            } else {
+                &*WEALTH_ACQUISITION_POTION_BUFF
+            };
+            let match_current = matches.into_iter().next().unwrap();
+            let match_other = detect_template_single(
+                mat,
+                template_other,
+                &*WEALTH_EXP_POTION_MASK,
+                Point::default(),
+                threshold,
+            );
+
+            match_other.is_err()
+                || match_other.as_ref().copied().unwrap().0 != match_current.0
+                || match_other.unwrap().1 < match_current.1
+        }
+        BuffKind::LegionWealth | BuffKind::LegionLuck => detect_template_single(
             mat,
             template,
-            &*WEALTH_EXP_POTION_MASK,
+            &*LEGION_WEALTH_LUCK_BUFF_MASK,
             Point::default(),
-            2,
             threshold,
         )
-        .into_iter()
-        .filter_map(|result| result.ok())
-        .collect::<Vec<_>>();
-        if matches.is_empty() {
-            return false;
-        }
-        // Likely both potions are active
-        if matches.len() == 2 {
-            return true;
-        }
-
-        let template_other = if matches!(kind, BuffKind::WealthAcquisitionPotion) {
-            &*EXP_ACCUMULATION_POTION_BUFF
-        } else {
-            &*WEALTH_ACQUISITION_POTION_BUFF
-        };
-        let match_current = matches.into_iter().next().unwrap();
-        let match_other = detect_template_single(
-            mat,
-            template_other,
-            &*WEALTH_EXP_POTION_MASK,
-            Point::default(),
-            threshold,
-        );
-
-        match_other.is_err()
-            || match_other.as_ref().copied().unwrap().0 != match_current.0
-            || match_other.unwrap().1 < match_current.1
-    } else {
-        detect_template(mat, template, Point::default(), threshold).is_ok()
+        .is_ok(),
+        _ => detect_template(mat, template, Point::default(), threshold).is_ok(),
     }
 }
 
