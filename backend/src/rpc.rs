@@ -90,7 +90,7 @@ impl KeysService {
         let key = from_key_kind(key);
         let key_num = i32::from(key) as usize;
         let was_down = self.key_down.get(key_num).unwrap();
-        !matches!((was_down, is_down), (false, false))
+        !matches!((was_down, is_down), (true, true) | (false, false))
     }
 }
 

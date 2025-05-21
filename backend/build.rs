@@ -27,6 +27,7 @@ fn main() {
     let bonus_exp_coupon_buff = dir.join("bonus_exp_coupon_buff_ideal_ratio.png");
     let legion_wealth_buff = dir.join("legion_wealth_buff_ideal_ratio.png");
     let legion_luck_buff = dir.join("legion_luck_buff_ideal_ratio.png");
+    let legion_wealth_luck_buff_mask = dir.join("legion_wealth_luck_buff_mask_ideal_ratio.png");
     let wealth_acquisition_potion_buff = dir.join("wealth_acquisition_potion_ideal_ratio.png");
     let wealth_exp_potion_mask = dir.join("wealth_exp_potion_mask_ideal_ratio.png");
     let exp_accumulation_potion_buff = dir.join("exp_accumulation_potion_ideal_ratio.png");
@@ -144,6 +145,10 @@ fn main() {
     println!(
         "cargo:rustc-env=LEGION_LUCK_BUFF_TEMPLATE={}",
         legion_luck_buff.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=LEGION_WEALTH_LUCK_BUFF_MASK_TEMPLATE={}",
+        legion_wealth_luck_buff_mask.to_str().unwrap()
     );
     println!(
         "cargo:rustc-env=WEALTH_ACQUISITION_POTION_BUFF_TEMPLATE={}",
