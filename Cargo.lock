@@ -274,7 +274,7 @@ dependencies = [
 
 [[package]]
 name = "backend"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "bit-vec",
@@ -3773,7 +3773,7 @@ checksum = "953ec861398dccce10c670dfeaf3ec4911ca479e9c02154b3a215178c5f566f2"
 
 [[package]]
 name = "platforms"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "bit-vec",
  "softbuffer",
@@ -5489,7 +5489,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "backend",
  "dioxus",
