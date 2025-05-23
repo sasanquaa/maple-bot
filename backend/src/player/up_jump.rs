@@ -1,8 +1,9 @@
 use log::debug;
 use platforms::windows::KeyKind;
 
-use super::{Player, PlayerState, moving::Moving};
+use super::{Player, PlayerActionKey, PlayerState, moving::Moving, use_key::UseKey};
 use crate::{
+    ActionKeyWith,
     context::Context,
     minimap::Minimap,
     player::{
@@ -137,7 +138,21 @@ pub fn update_up_jumping_context(
                         let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
                         on_auto_mob_use_key_action(context, action, cur_pos, x_distance, y_distance)
                     }
-                    PlayerAction::Key(_) | PlayerAction::Move(_) | PlayerAction::SolveRune => None,
+                    PlayerAction::Key(PlayerActionKey {
+                        with: ActionKeyWith::Any,
+                        ..
+                    }) => {
+                        if !moving.completed || y_direction > 0 {
+                            return None;
+                        }
+                        Some((Player::UseKey(UseKey::from_action(action)), false))
+                    }
+                    PlayerAction::Key(PlayerActionKey {
+                        with: ActionKeyWith::Stationary | ActionKeyWith::DoubleJump,
+                        ..
+                    })
+                    | PlayerAction::Move(_)
+                    | PlayerAction::SolveRune => None,
                 },
                 || Player::UpJumping(moving),
             )

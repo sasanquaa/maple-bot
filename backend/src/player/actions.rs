@@ -207,8 +207,7 @@ pub fn on_action_state_mut(
         debug_assert!(state.has_normal_action() || state.has_priority_action());
         if is_terminal {
             match action {
-                PlayerAction::AutoMob(_)
-                | PlayerAction::SolveRune
+                PlayerAction::SolveRune
                 | PlayerAction::Move(_)
                 | PlayerAction::Key(PlayerActionKey {
                     position: Some(Position { .. }),
@@ -216,7 +215,8 @@ pub fn on_action_state_mut(
                 }) => {
                     state.clear_unstucking(false);
                 }
-                PlayerAction::Key(PlayerActionKey { position: None, .. }) => (),
+                PlayerAction::AutoMob(_)
+                | PlayerAction::Key(PlayerActionKey { position: None, .. }) => (),
             }
             // FIXME: clear only when has position?
             state.clear_action_completed();
