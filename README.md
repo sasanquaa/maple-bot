@@ -1,3 +1,11 @@
+# PLEASE READ THIS FIRST
+Disclaimer: This project is intended personal use only. Please note that botting is against Nexon's Terms of Service. Use of this tool may result in penalties, including a permanent ban of your account. I do not guarantee continued development or maintenance of this project—it may be discontinued at any time, especially if my own account is banned. Use at your own risk.
+
+This bot is primarily made for GMS with limited support for KMS/CMS/TMS/MSEA. If you're using the bot for a non-mainstream game version (e.g. MSU, Classic, private servers,...), you should try it yourself by changing `Capture Mode` and `Capture Handle` the `Settings` tab. And I do not guaranteed it will continue to work for these servers in future versions.
+
+Currently, the bot can only solve rune as mentioned below. So it will ignore any other types of anti-bot detection systems. However, contributions are always welcome.
+# PLEASE READ THIS FIRST
+
 - [Features](#features)
 - [How to use](#how-to-use)
   - [Download](#download)
@@ -9,6 +17,7 @@
   - [Rotation Modes](#rotation-modes)
   - [Platforms Pathing](#platforms-pathing)
   - [Capture Modes](#capture-modes)
+  - [Customize Input](#customize-input)
   - [Remote Control](#remote-control)
 - [Troubleshooting](#troubleshooting)
   - [Wrong map detection](#wrong-map-detection)
@@ -25,7 +34,7 @@
   - [Rune Solving](#rune-solving)
 
 ## Features
-- Rotation maker by through creating preset and actions
+- Rotation maker by through presets and actions
 - Support for combo-oriented classes
 - Auto-mobbing mode for hitting random mobs
 - Auto-buff for common farming-related buffs
@@ -198,14 +207,14 @@ There are three capture modes, the first two are similar to what you see in OBS:
 - `BitBltArea` - Captures a fixed area on the screen
   - This capture mode is useful if you are running the game inside something else or want to use fixed capture area (e.g. a VM, capture card (?) or Sunshine/Moonlight)
   - The capture area can stay behind the game but it cannot be minimized
-  - As of v0.6.0, limited support for remote control has been added see [Remote Control](#remote-control)
   - **When the game resizes (e.g. going to cash shop), the capture area must still contain the game**
   - **When using this capture mode, key inputs will also be affected:**
     - **Make sure the window on top of the capture area is focused by clicking it for key inputs to work**
     - For example, if you have Notepad on top of the game and focused, it will send input to the Notepad instead of the game
 
-If you want to customize input method, the currently supported method is by using gRPC:
-  - Use the language of your choice to write, host it and provide the server URL to the bot
+#### Customize Input
+The bot currently does not use advanced input method such as a driver like `Interception` but only a normal Win32 API `SendInput`, so you should use at least be aware/cautious and use the bot at your own risk. If you want to feel more secure, customizing the bot with hardware input (KMBox, Arduino,...) using `Rpc` method provided in the `Settings` tab is recommended. However, this currently requires some scripting:
+  - Use the language of your choice to write, host it and provide the server URL to the bot as long as you can generate gRPC stubs
   - Check this [example](https://github.com/sasanquaa/maple-bot/tree/master/examples/python)
 
 #### Remote Control
