@@ -23,6 +23,7 @@ mod database;
 #[cfg(debug_assertions)]
 mod debug;
 mod detect;
+mod llm;
 mod mat;
 mod minimap;
 mod network;

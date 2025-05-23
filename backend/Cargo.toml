@@ -29,6 +29,7 @@ ordered_hash_map = "0.4.0"
 dyn-clone = "1.0.19"
 reqwest = { version = "0.12.15", features = ["multipart"] }
 include_dir = "0.7.4"
+ollama-rs = "0.3.1"
 
 [build-dependencies]
 tonic-build = "*"
