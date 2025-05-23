@@ -1,8 +1,9 @@
 use opencv::core::Point;
 use platforms::windows::KeyKind;
 
-use super::{Player, PlayerState, moving::Moving};
+use super::{Player, PlayerActionKey, PlayerState, moving::Moving, use_key::UseKey};
 use crate::{
+    ActionKeyWith,
     context::Context,
     player::{
         MOVE_TIMEOUT, PlayerAction,
@@ -99,7 +100,21 @@ pub fn update_falling_context(
                         let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
                         on_auto_mob_use_key_action(context, action, cur_pos, x_distance, y_distance)
                     }
-                    PlayerAction::Key(_) | PlayerAction::Move(_) | PlayerAction::SolveRune => None,
+                    PlayerAction::Key(PlayerActionKey {
+                        with: ActionKeyWith::Any,
+                        ..
+                    }) => {
+                        if !moving.completed || y_direction < 0 {
+                            return None;
+                        }
+                        Some((Player::UseKey(UseKey::from_action(action)), false))
+                    }
+                    PlayerAction::Key(PlayerActionKey {
+                        with: ActionKeyWith::Stationary | ActionKeyWith::DoubleJump,
+                        ..
+                    })
+                    | PlayerAction::Move(_)
+                    | PlayerAction::SolveRune => None,
                 },
                 || Player::Falling(moving, anchor, timeout_on_complete),
             )
