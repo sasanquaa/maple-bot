@@ -17,7 +17,7 @@
 ## How to use
 
 #### Download
-- Head to the [Github Release](https://github.com/sasanquaa/maple-bot/releases)
+- Head to the [Github Release](https://github.com/sasanquaa/komari/releases)
 - Download the `app.zip` and extract it
 - Run the exe file
 
@@ -29,7 +29,7 @@
 The arcs are only for visual and do not represent the actual moving path. However, it does represent
 the order of one action to another depending on rotation mode.
 
-![Map](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/map.png?raw=true)
+![Map](https://github.com/sasanquaa/komari/blob/master/.github/images/map.png?raw=true)
 
 #### Configuration
 - Configuration is used to change key bindings, set up buffs,...
@@ -39,11 +39,11 @@ the order of one action to another depending on rotation mode.
 For supported buffs in the configuration, the bot relies on detecting buffs on the top-right corner. And the bot
 movement depends heavily on the skill `Rope Lift` to move around platforms, so make sure you set a key for it.
 
-![Rope Lift](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/ropelift.png?raw=true)
+![Rope Lift](https://github.com/sasanquaa/komari/blob/master/.github/images/ropelift.png?raw=true)
 
-![Configuration](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/configuration.png?raw=true)
+![Configuration](https://github.com/sasanquaa/komari/blob/master/.github/images/configuration.png?raw=true)
 
-![Buffs](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/buffs.png?raw=true)
+![Buffs](https://github.com/sasanquaa/komari/blob/master/.github/images/buffs.png?raw=true)
 
 #### Action
 There are two types of action:
@@ -88,7 +88,7 @@ Action `Key` configurations:
 
 Actions added in the list below can be dragged/dropped/reordered.
 
-![Actions](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/actions.png?raw=true)
+![Actions](https://github.com/sasanquaa/komari/blob/master/.github/images/actions.png?raw=true)
 
 #### Condition
 There are four types of condition:
@@ -101,7 +101,7 @@ For `ErdaShowerOffCooldown` condition to work, the skill Erda Shower must be ass
 the quick slots, with Action Customization toggled on and **visible** on screen. The skill
 should also be casted when using this condition or the actions will be re-run.
 
-![Erda Shower](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/erda.png?raw=true)
+![Erda Shower](https://github.com/sasanquaa/komari/blob/master/.github/images/erda.png?raw=true)
 
 #### Linked Key & Linked Action
 Linked key and linked action are useful for combo-oriented class such as Blaster, Cadena, Ark, Mercedes,...
@@ -152,7 +152,7 @@ When `AutoMobbing` is used:
   - Pathing point is to help `AutoMobbing` moves to area with more mobs to detect
   - Try to detect "gaps" between platforms to ignore invalid mob positions
 
-![Auto Mobbing](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/automobbing.png?raw=true)
+![Auto Mobbing](https://github.com/sasanquaa/komari/blob/master/.github/images/automobbing.png?raw=true)
 
 #### Platforms Pathing
 Platforms pathing is currently only supported for Auto Mobbing and Rune Solving. This feature exists to help
@@ -164,7 +164,7 @@ and then try to up jump, rope lift or drop down as appropriate to match the `y`.
 
 Hot keys can be used to add platforms more quickly.
 
-![Platforms](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/platforms.png?raw=true)
+![Platforms](https://github.com/sasanquaa/komari/blob/master/.github/images/platforms.png?raw=true)
 
 #### Capture Modes
 There are three capture modes, the first two are similar to what you see in OBS:
