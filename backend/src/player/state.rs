@@ -51,13 +51,17 @@ const AUTO_MOB_MAX_PATHING_POINTS: usize = 3;
 /// The acceptable y range above and below the detected mob position when matched with a reachable y
 const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 10;
 
+/// The maximum number of times horizontal movement contextual state can be repeated in
+/// auto-mob before aborting.
 const AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 4;
 
+/// The maximum number of times vertical movement contextual state can be repeated in
+/// auto-mob before aborting.
 const AUTO_MOB_VERTICAL_MOVEMENT_REPEAT_COUNT: u32 = 3;
 
 /// Maximum number of times [`Player::Moving`] state can be transitioned to
 /// without changing position
-const UNSTUCK_TRACKER_THRESHOLD: u32 = 7;
+const UNSTUCK_COUNT_THRESHOLD: u32 = 7;
 
 /// The number of times [`Player::Unstucking`] can be transitioned to before entering GAMBA MODE
 const UNSTUCK_GAMBA_MODE_COUNT: u32 = 3;
@@ -399,7 +403,7 @@ impl PlayerState {
     #[inline]
     pub(super) fn track_unstucking(&mut self) -> bool {
         self.unstuck_count += 1;
-        if self.unstuck_count >= UNSTUCK_TRACKER_THRESHOLD {
+        if self.unstuck_count >= UNSTUCK_COUNT_THRESHOLD {
             self.unstuck_count = 0;
             true
         } else {
