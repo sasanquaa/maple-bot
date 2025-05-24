@@ -223,8 +223,8 @@ fn points_from(
     }
     current = from_platform;
 
-    let mut points = vec![(Point::new(from.x, current.y), MovementHint::Infer)];
-    let mut last_point = points.last().copied().unwrap().0;
+    let mut points = vec![];
+    let mut last_point = Point::new(from.x, current.y);
     let double_jump_offset = double_jump_threshold / 2 + DOUBLE_JUMP_EXTRA_OFFSET;
     while went_to.contains_key(&current) {
         let next = went_to[&current];
@@ -356,7 +356,7 @@ mod tests {
     fn make_platforms_with_neighbors(
         platforms: &[Platform],
     ) -> Array<PlatformWithNeighbors, MAX_PLATFORMS_COUNT> {
-        let connected = find_neighbors(platforms, 20, 15, 30);
+        let connected = find_neighbors(platforms, 25, 7, 41);
         let mut array = Array::new();
         for p in connected {
             array.push(p);
@@ -386,10 +386,9 @@ mod tests {
         let from = Point::new(10, 50);
         let to = Point::new(20, 60);
 
-        let points = find_points_with(&platforms, from, to, true, 20, 15, 50).unwrap();
+        let points = find_points_with(&platforms, from, to, true, 25, 7, 41).unwrap();
 
         let expected = vec![
-            (Point::new(10, 50), MovementHint::Infer),
             (Point::new(10, 60), MovementHint::Infer),
             (Point::new(20, 60), MovementHint::Infer),
         ];
@@ -408,7 +407,7 @@ mod tests {
         let from = Point::new(25, 50);
         let to = Point::new(65, 55);
 
-        let points = find_points_with(&platforms, from, to, true, 30, 15, 50).unwrap();
+        let points = find_points_with(&platforms, from, to, true, 25, 7, 41).unwrap();
 
         assert_eq!(points.first().unwrap().0.y, 50);
         assert_eq!(points.last().unwrap().0.y, 55);
@@ -419,15 +418,15 @@ mod tests {
     fn find_points_with_multi_hop_path() {
         let platforms = [
             Platform::new(0..50, 50),
-            Platform::new(0..50, 60),
-            Platform::new(0..50, 70),
+            Platform::new(0..50, 91),
+            Platform::new(0..50, 132),
         ];
         let platforms = make_platforms_with_neighbors(&platforms);
 
         let from = Point::new(10, 50);
-        let to = Point::new(20, 70);
+        let to = Point::new(20, 132);
 
-        let points = find_points_with(&platforms, from, to, true, 26, 7, 41).unwrap();
+        let points = find_points_with(&platforms, from, to, true, 25, 7, 41).unwrap();
 
         // Check that y-values ascend (multi-hop upward movement)
         let ys: Vec<_> = points.iter().map(|(p, _)| p.y).collect();
@@ -436,8 +435,8 @@ mod tests {
             "Expected ascending y values in multi-hop: {ys:?}",
         );
 
-        assert_eq!(points.first().unwrap().0.y, 50);
-        assert_eq!(points.last().unwrap().0.y, 70);
+        assert_eq!(points.first().unwrap().0.y, 91);
+        assert_eq!(points.last().unwrap().0.y, 132);
     }
 
     #[test]
@@ -451,7 +450,7 @@ mod tests {
         let from = Point::new(25, 50);
         let to = Point::new(125, 55);
 
-        let points = find_points_with(&platforms, from, to, true, 20, 15, 20);
+        let points = find_points_with(&platforms, from, to, true, 25, 7, 41);
         assert!(points.is_none());
     }
 
@@ -466,7 +465,7 @@ mod tests {
         let from = Point::new(45, 50); // Near right edge of first platform
         let to = Point::new(60, 52); // Near left edge of second platform
 
-        let points = find_points_with(&platforms, from, to, true, 30, 15, 50).unwrap();
+        let points = find_points_with(&platforms, from, to, true, 25, 7, 41).unwrap();
 
         let has_walk_and_jump = points
             .iter()

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, cmp::Ordering};
+use std::cmp::Ordering;
 
 use log::debug;
 use opencv::core::Point;
@@ -97,10 +97,10 @@ pub fn update_double_jumping_context(
     if !moving.timeout.started {
         // Checks to perform a fall and returns to double jump
         if !double_jumping.forced
+            && !is_intermediate
             && !matches!(state.last_movement, Some(LastMovement::Falling))
             && y_direction < 0
             && y_distance >= FALLING_THRESHOLD
-            && !is_intermediate
             && state.is_stationary
         {
             return Player::Falling(moving.pos(cur_pos), cur_pos, true);
@@ -113,41 +113,38 @@ pub fn update_double_jumping_context(
         state.last_movement = Some(LastMovement::DoubleJumping);
     }
 
-    let state = RefCell::new(state);
     update_moving_axis_context(
         moving,
         cur_pos,
         TIMEOUT,
-        |moving| {
-            let mut state = state.borrow_mut();
-
-            // Mage teleportation requires a direction
-            if !double_jumping.forced || state.config.teleport_key.is_some() {
-                let key_direction = match x_direction.cmp(&0) {
-                    Ordering::Greater => Some((KeyKind::Right, ActionKeyDirection::Right)),
-                    Ordering::Less => Some((KeyKind::Left, ActionKeyDirection::Left)),
-                    _ => None,
-                };
-                if let Some((key, direction)) = key_direction {
-                    let _ = context.keys.send_down(key);
-                    state.last_known_direction = direction;
-                }
-            }
-
-            Player::DoubleJumping(double_jumping.moving(moving))
-        },
+        |moving| Player::DoubleJumping(double_jumping.moving(moving)),
         Some(|| {
             let _ = context.keys.send_up(KeyKind::Right);
             let _ = context.keys.send_up(KeyKind::Left);
         }),
         |mut moving| {
-            let mut state = state.borrow_mut();
-
             if !moving.completed {
+                // Mage teleportation requires a direction
+                if !double_jumping.forced || state.config.teleport_key.is_some() {
+                    let option = match x_direction.cmp(&0) {
+                        Ordering::Greater => {
+                            Some((KeyKind::Right, KeyKind::Left, ActionKeyDirection::Right))
+                        }
+                        Ordering::Less => {
+                            Some((KeyKind::Left, KeyKind::Right, ActionKeyDirection::Left))
+                        }
+                        _ => None,
+                    };
+                    if let Some((key_down, key_up, direction)) = option {
+                        let _ = context.keys.send_down(key_down);
+                        let _ = context.keys.send_up(key_up);
+                        state.last_known_direction = direction;
+                    }
+                }
+
                 let can_continue = !double_jumping.forced
                     && x_distance >= state.double_jump_threshold(is_intermediate);
                 let can_press = double_jumping.forced && x_changed <= FORCE_THRESHOLD;
-
                 if can_continue || can_press {
                     let _ = context
                         .keys
@@ -160,7 +157,7 @@ pub fn update_double_jumping_context(
             }
 
             on_action(
-                &mut state,
+                state,
                 |action| on_player_action(context, cur_pos, double_jumping.forced, action, moving),
                 || {
                     if !ignore_grappling
