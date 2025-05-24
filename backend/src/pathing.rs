@@ -33,7 +33,7 @@ impl Platform {
     }
 }
 
-/// Platforms connected togehter into neighbors
+/// A platform along with its reachable neighbor platforms
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct PlatformWithNeighbors {
     inner: Platform,
@@ -71,7 +71,9 @@ impl Ord for VisitingPlatform {
     }
 }
 
-/// Finds a rectangular bound that contains all the provided platforms
+/// Finds the smallest bounding rectangle that contains all given platforms.
+///
+/// Returns [`None`] if the list of platforms is empty
 pub fn find_platforms_bound(
     minimap: Rect,
     platforms: &Array<PlatformWithNeighbors, MAX_PLATFORMS_COUNT>,
@@ -93,11 +95,13 @@ pub fn find_platforms_bound(
         })
 }
 
-/// Connects platforms into neighbors from the provided `platforms`
+/// Builds a list of `PlatformWithNeighbors` from  `&[Platforms]` by determining which platforms
+/// are reachable from each other.
 ///
-/// One platform is connected to another platform if:
-/// - The two platforms [`Platform::xs`] overlap and one is above the other or can be grappled to
-/// - The two platforms [`Platform::xs`] do not overlap but can double jump from one to another
+/// The following thresholds are used to determine reachability:
+/// - `double_jump_threshold`: minimum x distance required for a double jump
+/// - `jump_threshold`: minimum y distance required for a regular jump
+/// - `grappling_threshold`: maximum allowed y vertical distance to grapple upward
 pub fn find_neighbors(
     platforms: &[Platform],
     double_jump_threshold: i32,
@@ -127,6 +131,12 @@ pub fn find_neighbors(
     vec
 }
 
+/// Finds a sequence of points representing a path from `from` to `to`, using the given
+/// platform map.
+///
+/// `vertical_threshold` represents maximum y distance between two connected platforms to perform
+/// a grappling. This is used as weight score to help prioritize vertical movement over
+/// horizontal movement. If `enable_hint` is true, provides movement hints like `WalkAndJump`.
 pub fn find_points_with(
     platforms: &Array<PlatformWithNeighbors, MAX_PLATFORMS_COUNT>,
     from: Point,
@@ -194,6 +204,10 @@ pub fn find_points_with(
     None
 }
 
+/// Converts a path from the `came_from` graph into a list of `(Point, MovementHint)` pairs
+/// indicating how to move from `from` to `to`.
+///
+/// Adds offsets to handle jump and landing safety margins.
 #[allow(clippy::too_many_arguments)]
 fn points_from(
     came_from: &HashMap<Platform, Platform>,
@@ -282,6 +296,9 @@ fn points_from(
     Some(points)
 }
 
+/// Finds the closest platform underneath or near a given `point`.
+///
+/// If `jump_threshold` is provided, it limits how far vertically the point can be from a platform.
 #[inline]
 fn find_platform(
     platforms: &HashMap<Platform, PlatformWithNeighbors>,
@@ -308,6 +325,11 @@ fn weight_score(current: Platform, neighbor: Platform, vertical_threshold: i32) 
     }
 }
 
+/// Determines whether the two platforms are reachable from one another.
+///
+/// One platform is reachable to another platform if:
+/// - The two platforms [`Platform::xs`] overlap and one is above the other or can be grappled to
+/// - The two platforms [`Platform::xs`] do not overlap but can double jump from one to another
 #[inline]
 fn platforms_reachable(
     from: Platform,
